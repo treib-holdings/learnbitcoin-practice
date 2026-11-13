@@ -30,12 +30,16 @@ install -d -m 700 -o treib -g treib /home/treib/.ssh
 install -m 600 -o treib -g treib /root/.ssh/authorized_keys /home/treib/.ssh/authorized_keys
 
 # SSH: keys only, no root.
-cat > /etc/ssh/sshd_config.d/60-hardening.conf <<'EOF'
+# 00- so it is read first: sshd keeps the first value it sees, and cloud-init
+# may write 50-cloud-init.conf with PasswordAuthentication yes.
+cat > /etc/ssh/sshd_config.d/00-practice-hardening.conf <<'EOF'
 PasswordAuthentication no
 KbdInteractiveAuthentication no
 PermitRootLogin no
 EOF
+sshd -t
 systemctl reload ssh
+sshd -T | grep -E "^(passwordauthentication|permitrootlogin|kbdinteractiveauthentication) "
 
 # Docker from Docker's own signed repository.
 install -m 0755 -d /etc/apt/keyrings

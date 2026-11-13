@@ -8,9 +8,10 @@ Cloudflare tunnel. Status: draft for spike S1, not deployed.
 
 | Name | Serves | Path |
 |---|---|---|
-| practice-electrum.learnbitcoin.com:50002 | Electrum over TLS (Sparrow, Electrum desktop) | DNS-only record to the droplet; nginx stream -> electrs:50001 |
+| practice-electrum.learnbitcoin.com:50002 | Electrum over TLS (Sparrow, Electrum desktop) | DNS-only record to the droplet; electrum-tls (nginx stream) -> electrs:50001 |
 | practice-explorer.learnbitcoin.com | mempool explorer, noindex | tunnel -> mempool-web:8080 |
 | practice-origin.learnbitcoin.com | Esplora REST and the bots API for the practice Worker only | tunnel -> router:8081, behind Cloudflare Access (service token) |
+| ssh-practice.learnbitcoin.com | SSH for the operator | tunnel -> host:22, behind Cloudflare Access (service token) |
 
 Published ports: 80 (ACME HTTP-01 only) and 50002. Docker-published ports
 bypass the host firewall, so nothing else is published; the DigitalOcean cloud
@@ -21,18 +22,23 @@ to Cloudflare Access).
 
 1. `ssh root@<ip> 'bash -s' < ops/bootstrap.sh`, then log in as `treib`.
 2. Copy `ops/` to `/opt/learnbitcoin-practice/ops`; create `ops/.env` with
-   `BITCOIN_RPC_USER`, `BITCOIN_RPC_PASSWORD`, `MARIADB_PASSWORD` (random)
-   and `CLOUDFLARE_TUNNEL_TOKEN` (the operator pastes it; never in git).
+   random `BITCOIN_RPC_USER`, `BITCOIN_RPC_PASSWORD` and `MARIADB_PASSWORD`
+   (generated on the server, mode 600). The operator saves the tunnel token
+   straight from the clipboard, without it passing through anything else:
+   `pbpaste | ssh treib@<ip> /opt/learnbitcoin-practice/ops/save-tunnel-token.sh`
+   (writes `ops/.env.tunnel`, prints only the tunnel ID).
 3. `docker compose build bitcoind && docker compose up -d bitcoind`
 4. Treasury: create the treasury wallet and mine the first ~5,000 blocks to it.
    Regtest halves the subsidy every 150 blocks, so this issues nearly all of
    the chain's ~15,000 practice BTC up front.
-5. `docker compose up -d electrs mempool-db mempool-api mempool-web cloudflared`
-6. First certificate, before the router starts (nginx cannot load the
-   Electrum listener without one): certbot `--standalone` on port 80 for
-   practice-electrum.learnbitcoin.com into /data/letsencrypt; then
-   `docker compose up -d router`. Renewals use the webroot at
-   `ops/nginx/acme`.
+5. `docker compose up -d electrs mempool-db mempool-api mempool-web router cloudflared`
+6. First certificate for practice-electrum.learnbitcoin.com (needs its DNS
+   record and port 80 open): certbot with the webroot `ops/nginx/acme`, into
+   /data/letsencrypt; then `docker compose up -d electrum-tls`, which cannot
+   start without it.
+
+Interim kernel mitigation: `sudo bash ops/mitigations/cve-2026-98432.sh`
+(applied 2026-11-13; removal steps in the script).
 
 ## S1 checks
 

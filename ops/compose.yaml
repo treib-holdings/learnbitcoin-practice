@@ -11,8 +11,9 @@
 # of the droplet allows only these two ports (plus 22 from the operator's IP until SSH
 # moves to Cloudflare Access).
 #
-# Secrets live in ops/.env (never committed): BITCOIN_RPC_USER,
-# BITCOIN_RPC_PASSWORD, MARIADB_PASSWORD, CLOUDFLARE_TUNNEL_TOKEN.
+# Secrets, never committed: ops/.env holds BITCOIN_RPC_USER,
+# BITCOIN_RPC_PASSWORD and MARIADB_PASSWORD (generated on the server);
+# ops/.env.tunnel holds TUNNEL_TOKEN (saved by save-tunnel-token.sh).
 
 name: learnbitcoin-practice
 
@@ -131,28 +132,44 @@ services:
     # robots.txt (Disallow: /) and X-Robots-Tag noindex are added in front, by
     # the router below or a Cloudflare response-header rule. S1: decide which.
 
+  # HTTP: ACME challenges on :80 (published) and the tunnel's origin on :8081.
   router:
     <<: *common
     image: nginx:1.30-alpine   # S1: pin by digest
     container_name: router
     networks: [practice_net]
-    depends_on: [electrs]   # nginx resolves its upstreams at start
     volumes:
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/router.conf:/etc/nginx/nginx.conf:ro
       - ./nginx/acme:/var/www/acme:ro
-      - /data/letsencrypt:/etc/letsencrypt:ro
     ports:
       - "80:80"         # ACME HTTP-01 only; everything else 404
-      - "50002:50002"   # Electrum over TLS -> electrs:50001
+
+  # Electrum over TLS on :50002 (published). Start after the first certificate.
+  electrum-tls:
+    <<: *common
+    image: nginx:1.30-alpine   # S1: pin by digest
+    container_name: electrum-tls
+    networks: [practice_net]
+    volumes:
+      - ./nginx/electrum-tls.conf:/etc/nginx/nginx.conf:ro
+      - /data/letsencrypt:/etc/letsencrypt:ro
+    ports:
+      - "50002:50002"   # -> electrs:50001
 
   # bots: block producer, treasury, faucet, pot, recycler (phase A1).
-  # cloudflared publishes the router's internal port 8081 as the
-  # Access-protected origin, and mempool-web as the explorer:
+
+  # The tunnel. Public hostnames are set in the Cloudflare dashboard:
+  #   practice-explorer -> http://mempool-web:8080
+  #   practice-origin   -> http://router:8081 (Access: service token)
+  #   ssh-practice      -> ssh://host.docker.internal:22 (Access: service token)
   cloudflared:
     <<: *common
     image: cloudflare/cloudflared:2026.10.3
     container_name: cloudflared
     networks: [practice_net]
-    command: ["tunnel", "--no-autoupdate", "run", "--token", "${CLOUDFLARE_TUNNEL_TOKEN}"]
+    env_file:
+      - path: .env.tunnel   # TUNNEL_TOKEN; cloudflared reads it from the environment
+        required: false
+    command: ["tunnel", "--no-autoupdate", "run"]
     extra_hosts:
       - "host.docker.internal:host-gateway"
