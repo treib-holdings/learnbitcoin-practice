@@ -7,7 +7,7 @@ INTERVAL=${INTERVAL:-30}
 
 cli() {
   bitcoin-cli -regtest -rpcconnect=bitcoind -rpcport=18443 \
-    -rpcuser="$BITCOIN_RPC_USER" -rpcpassword="$BITCOIN_RPC_PASSWORD" "$@"
+    -rpcuser=producer -rpcpassword="$PRODUCER_RPC_PASSWORD" "$@"
 }
 
 cli -rpcwait getblockcount >/dev/null

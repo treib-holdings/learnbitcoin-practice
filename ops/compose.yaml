@@ -11,9 +11,11 @@
 # of the droplet allows only these two ports (plus 22 from the operator's IP until SSH
 # moves to Cloudflare Access).
 #
-# Secrets, never committed: ops/.env holds BITCOIN_RPC_USER,
-# BITCOIN_RPC_PASSWORD and MARIADB_PASSWORD (generated on the server);
-# ops/.env.tunnel holds TUNNEL_TOKEN (saved by save-tunnel-token.sh).
+# Secrets, never committed. ops/.env (written by make-secrets.sh on the
+# server): MARIADB_PASSWORD, and an rpcauth login each for mempool-api and the
+# producer (RPCAUTH_* is the salted hash Core checks, *_RPC_PASSWORD the
+# password). electrs and ops/cli.sh use Core's cookie file, so no shared RPC
+# password exists. ops/.env.tunnel holds TUNNEL_TOKEN (save-tunnel-token.sh).
 
 name: learnbitcoin-practice
 
@@ -48,17 +50,15 @@ services:
     command:
       - "-conf=/data/bitcoin/bitcoin.conf"
       - "-datadir=/data/bitcoin"
-      - "-rpcuser=${BITCOIN_RPC_USER}"
-      - "-rpcpassword=${BITCOIN_RPC_PASSWORD}"
+      # No -rpcpassword, so Core writes the cookie file electrs and cli.sh use.
+      - "-rpcauth=${RPCAUTH_MEMPOOL}"
+      - "-rpcauth=${RPCAUTH_PRODUCER}"
     healthcheck:
-      test: ["CMD-SHELL", "bitcoin-cli -conf=/data/bitcoin/bitcoin.conf -datadir=/data/bitcoin -rpcuser=$$BITCOIN_RPC_USER -rpcpassword=$$BITCOIN_RPC_PASSWORD getblockchaininfo > /dev/null"]
+      test: ["CMD-SHELL", "bitcoin-cli -conf=/data/bitcoin/bitcoin.conf -datadir=/data/bitcoin getblockchaininfo > /dev/null"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 1m
-    environment:
-      BITCOIN_RPC_USER: ${BITCOIN_RPC_USER}
-      BITCOIN_RPC_PASSWORD: ${BITCOIN_RPC_PASSWORD}
 
   electrs:
     <<: *common
@@ -78,7 +78,8 @@ services:
       - --daemon-dir=/data/bitcoin
       - --daemon-rpc-addr=bitcoind:18443
       - --db-dir=/data/electrs
-      - --cookie=${BITCOIN_RPC_USER}:${BITCOIN_RPC_PASSWORD}
+      # No --cookie: electrs reads Core's cookie file from the daemon dir. (It
+      # prints its whole config at start, so a password here would land in logs.)
       - --http-addr=0.0.0.0:3000            # Esplora REST, for the wallet (via the Worker)
       - --electrum-rpc-addr=0.0.0.0:50001   # Electrum, for Sparrow (via the TLS proxy) and the explorer
       - --timestamp
@@ -111,8 +112,8 @@ services:
       ELECTRUM_TLS_ENABLED: "false"
       CORE_RPC_HOST: bitcoind
       CORE_RPC_PORT: "18443"
-      CORE_RPC_USERNAME: ${BITCOIN_RPC_USER}
-      CORE_RPC_PASSWORD: ${BITCOIN_RPC_PASSWORD}
+      CORE_RPC_USERNAME: mempool
+      CORE_RPC_PASSWORD: ${MEMPOOL_RPC_PASSWORD}
       DATABASE_ENABLED: "true"
       DATABASE_HOST: mempool-db
       DATABASE_DATABASE: mempool
@@ -170,8 +171,7 @@ services:
     volumes:
       - ./producer/producer.sh:/producer/producer.sh:ro
     environment:
-      BITCOIN_RPC_USER: ${BITCOIN_RPC_USER}
-      BITCOIN_RPC_PASSWORD: ${BITCOIN_RPC_PASSWORD}
+      PRODUCER_RPC_PASSWORD: ${PRODUCER_RPC_PASSWORD}
       INTERVAL: "30"
 
   # The tunnel. Public hostnames are set in the Cloudflare dashboard:

@@ -21,9 +21,11 @@ to Cloudflare Access).
 ## First run (S1)
 
 1. `ssh root@<ip> 'bash -s' < ops/bootstrap.sh`, then log in as `treib`.
-2. Copy `ops/` to `/opt/learnbitcoin-practice/ops`; create `ops/.env` with
-   random `BITCOIN_RPC_USER`, `BITCOIN_RPC_PASSWORD` and `MARIADB_PASSWORD`
-   (generated on the server, mode 600). The operator saves the tunnel token
+2. Copy `ops/` to `/opt/learnbitcoin-practice/ops`; run `ops/make-secrets.sh`
+   on the server. It writes `ops/.env` (mode 600): the MariaDB password and
+   an `rpcauth` login each for mempool-api and the producer. electrs and
+   `ops/cli.sh` use Core's cookie file, so there is no shared RPC password.
+   (`--rotate` replaces the RPC logins.) The operator saves the tunnel token
    straight from the clipboard, without it passing through anything else:
    `pbpaste | ssh treib@<ip> /opt/learnbitcoin-practice/ops/save-tunnel-token.sh`
    (writes `ops/.env.tunnel`, prints only the tunnel ID).
