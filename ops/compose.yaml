@@ -120,6 +120,8 @@ services:
       DATABASE_USERNAME: mempool
       DATABASE_PASSWORD: ${MARIADB_PASSWORD}
       STATISTICS_ENABLED: "true"
+      # Practice coins have no price: no fiat column, no calls to price APIs.
+      FIAT_PRICE_ENABLED: "false"
 
   mempool-web:
     <<: *common
@@ -130,6 +132,7 @@ services:
     environment:
       FRONTEND_HTTP_PORT: "8080"
       BACKEND_MAINNET_HTTP_HOST: mempool-api
+      HISTORICAL_PRICE: "false"
     # robots.txt (Disallow: /) and X-Robots-Tag noindex are added in front, by
     # the router below or a Cloudflare response-header rule. S1: decide which.
 
