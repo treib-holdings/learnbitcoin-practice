@@ -20,3 +20,13 @@ test('descriptor input is validated', () => {
   assert.throws(() => descriptorChecksum('wpkh(é)'), /not allowed/);
   assert.throws(() => accountDescriptor('73C5DA0A', V.abandon.xpub, 0), /lower-case/);
 });
+
+test('Electrum script hash: the protocol documentation example', async () => {
+  const { NETWORK } = await import('@scure/btc-signer');
+  const { electrumScripthash } = await import('../src/index.ts');
+  // From the Electrum protocol docs ("Script Hashes"): the genesis-block address.
+  assert.equal(
+    electrumScripthash('1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa', NETWORK),
+    '8b01df4e368ea28f8dc0423bcf7a4923e3a12d307c875e47a0cfbf90b5c39161',
+  );
+});
