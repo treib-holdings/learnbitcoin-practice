@@ -1,0 +1,14 @@
+{
+  "name": "learnbitcoin-practice",
+  "private": true,
+  "description": "LearnBitcoin practice wallet: a real Bitcoin wallet on a no-value practice network.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22.18.0"
+  },
+  "scripts": {
+    "test": "pnpm -r test",
+    "check": "pnpm -r check"
+  }
+}

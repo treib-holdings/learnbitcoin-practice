@@ -1,0 +1,158 @@
+# LearnBitcoin practice network (regtest), one small VPS.
+#
+# DRAFT for spike S1: not run yet. Unverified points are marked "S1:".
+#
+# Exposure rule. Docker-published ports bypass the host firewall, so only two
+# ports are published, both on purpose:
+#   80     ACME HTTP-01 challenges for the Electrum TLS certificate
+#   50002  Electrum over TLS for Sparrow and Electrum desktop
+# Everything else is reached through the outbound Cloudflare tunnel
+# (cloudflared), by container name. The DigitalOcean cloud firewall in front
+# of the droplet allows only these two ports (plus 22 from the operator's IP until SSH
+# moves to Cloudflare Access).
+#
+# Secrets live in ops/.env (never committed): BITCOIN_RPC_USER,
+# BITCOIN_RPC_PASSWORD, MARIADB_PASSWORD, CLOUDFLARE_TUNNEL_TOKEN.
+
+name: learnbitcoin-practice
+
+networks:
+  practice_net:
+    driver: bridge
+
+x-common: &common
+  restart: unless-stopped
+  logging:
+    driver: json-file
+    options:
+      max-size: "20m"
+      max-file: "3"
+
+services:
+
+  bitcoind:
+    <<: *common
+    build:
+      context: ./bitcoind
+      args:
+        BITCOIN_VERSION: "31.2"
+        BITCOIN_TARBALL_SHA256: "2f38996afaa74dfa469a23bf4727887133dfc09784df1f21ddf1c74d0dc82300"
+    image: learnbitcoin-practice/bitcoind:31.2
+    container_name: bitcoind
+    stop_grace_period: 120s
+    networks: [practice_net]
+    volumes:
+      - /data/bitcoin:/data/bitcoin
+      - ./bitcoind/bitcoin.conf:/data/bitcoin/bitcoin.conf:ro
+    command:
+      - "-conf=/data/bitcoin/bitcoin.conf"
+      - "-datadir=/data/bitcoin"
+      - "-rpcuser=${BITCOIN_RPC_USER}"
+      - "-rpcpassword=${BITCOIN_RPC_PASSWORD}"
+    healthcheck:
+      test: ["CMD-SHELL", "bitcoin-cli -conf=/data/bitcoin/bitcoin.conf -datadir=/data/bitcoin -rpcuser=$$BITCOIN_RPC_USER -rpcpassword=$$BITCOIN_RPC_PASSWORD getblockchaininfo > /dev/null"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 1m
+    environment:
+      BITCOIN_RPC_USER: ${BITCOIN_RPC_USER}
+      BITCOIN_RPC_PASSWORD: ${BITCOIN_RPC_PASSWORD}
+
+  electrs:
+    <<: *common
+    # The electrs image ChainQuery runs (pinned by digest, built 2026-02-01).
+    image: mempool/electrs@sha256:35963870c36a8da5fff8310e94df15869d0e97788bdaa11e63901cdb26fd781a
+    container_name: electrs
+    networks: [practice_net]
+    depends_on:
+      bitcoind:
+        condition: service_healthy
+    user: "1000:1000"
+    volumes:
+      - /data/bitcoin:/data/bitcoin:ro
+      - /data/electrs:/data/electrs
+    command:
+      - --network=regtest
+      - --daemon-dir=/data/bitcoin
+      - --daemon-rpc-addr=bitcoind:18443
+      - --db-dir=/data/electrs
+      - --cookie=${BITCOIN_RPC_USER}:${BITCOIN_RPC_PASSWORD}
+      - --http-addr=0.0.0.0:3000            # Esplora REST, for the wallet (via the Worker)
+      - --electrum-rpc-addr=0.0.0.0:50001   # Electrum, for Sparrow (via the TLS proxy) and the explorer
+      - --timestamp
+
+  mempool-db:
+    <<: *common
+    image: mariadb:11.4   # S1: pin by digest
+    container_name: mempool-db
+    networks: [practice_net]
+    volumes:
+      - /data/mempool-db:/var/lib/mysql
+    environment:
+      MARIADB_DATABASE: mempool
+      MARIADB_USER: mempool
+      MARIADB_PASSWORD: ${MARIADB_PASSWORD}
+      MARIADB_RANDOM_ROOT_PASSWORD: "yes"
+
+  mempool-api:
+    <<: *common
+    image: mempool/backend:v3.3.2   # S1: pin by digest; check regtest support
+    container_name: mempool-api
+    networks: [practice_net]
+    depends_on: [electrs, mempool-db]
+    environment:
+      MEMPOOL_NETWORK: regtest
+      # Electrum backend: mempool's esplora backend breaks /api/v1/address/.
+      MEMPOOL_BACKEND: electrum
+      ELECTRUM_HOST: electrs
+      ELECTRUM_PORT: "50001"
+      ELECTRUM_TLS_ENABLED: "false"
+      CORE_RPC_HOST: bitcoind
+      CORE_RPC_PORT: "18443"
+      CORE_RPC_USERNAME: ${BITCOIN_RPC_USER}
+      CORE_RPC_PASSWORD: ${BITCOIN_RPC_PASSWORD}
+      DATABASE_ENABLED: "true"
+      DATABASE_HOST: mempool-db
+      DATABASE_DATABASE: mempool
+      DATABASE_USERNAME: mempool
+      DATABASE_PASSWORD: ${MARIADB_PASSWORD}
+      STATISTICS_ENABLED: "true"
+
+  mempool-web:
+    <<: *common
+    image: mempool/frontend:v3.3.2   # S1: pin by digest; check bcrt1 address pages
+    container_name: mempool-web
+    networks: [practice_net]
+    depends_on: [mempool-api]
+    environment:
+      FRONTEND_HTTP_PORT: "8080"
+      BACKEND_MAINNET_HTTP_HOST: mempool-api
+    # robots.txt (Disallow: /) and X-Robots-Tag noindex are added in front, by
+    # the router below or a Cloudflare response-header rule. S1: decide which.
+
+  router:
+    <<: *common
+    image: nginx:1.30-alpine   # S1: pin by digest
+    container_name: router
+    networks: [practice_net]
+    depends_on: [electrs]   # nginx resolves its upstreams at start
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/acme:/var/www/acme:ro
+      - /data/letsencrypt:/etc/letsencrypt:ro
+    ports:
+      - "80:80"         # ACME HTTP-01 only; everything else 404
+      - "50002:50002"   # Electrum over TLS -> electrs:50001
+
+  # bots: block producer, treasury, faucet, pot, recycler (phase A1).
+  # cloudflared publishes the router's internal port 8081 as the
+  # Access-protected origin, and mempool-web as the explorer:
+  cloudflared:
+    <<: *common
+    image: cloudflare/cloudflared:2026.10.3
+    container_name: cloudflared
+    networks: [practice_net]
+    command: ["tunnel", "--no-autoupdate", "run", "--token", "${CLOUDFLARE_TUNNEL_TOKEN}"]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

@@ -1,0 +1,43 @@
+{
+  "prfInputV1": "647afaa004179d5237caa9c95d5a6f27321c6a896894332bdbce4ea46e0e7c50",
+  "prf": {
+    "prfOutput": "0101010101010101010101010101010101010101010101010101010101010101",
+    "entropy": "7f4e10d9408a3e0ffd84fbf3890555f1",
+    "wallet": {
+      "mnemonic": "leg identify curve library physical among voyage panda vicious else fever today",
+      "masterFingerprint": "d2eb452b",
+      "xpub": "tpubDDEq4TjKfNxMFBBjPVzeajhe26kzLBAwR8nX2QqDEdpkSMgM7RQQFADKctW8i3cANrBMMDxMcZHEcut1utwp4np8ukhFCitaKLwYBmc6VXj",
+      "receive": [
+        "bcrt1qp7th3dvtkx9vrktcrn5erq0dgjzgc4wjxzl8d6",
+        "bcrt1qzjat44qzthgeaerjweav79gxzclhkcdaahmfhn",
+        "bcrt1qads2wamc652pfz0el9mc5344sv6vrc66dn3vug",
+        "bcrt1qx3dvtwwp7x4ytme4t63cmeddudy2vtmvr9rkwh",
+        "bcrt1qd470clvucd6fc082e9gmy2vt7cvg0uq22wflnd"
+      ],
+      "change": [
+        "bcrt1qhk582r5cyk0jtye5wa9ptq7jcve3nq5ggy3u2p",
+        "bcrt1qfq6gc84g4n0yctutypm04m7hfaxc3wuljzyy8k"
+      ],
+      "receiveDescriptor": "wpkh([d2eb452b/84h/1h/0h]tpubDDEq4TjKfNxMFBBjPVzeajhe26kzLBAwR8nX2QqDEdpkSMgM7RQQFADKctW8i3cANrBMMDxMcZHEcut1utwp4np8ukhFCitaKLwYBmc6VXj/0/*)#7qfsmaym",
+      "changeDescriptor": "wpkh([d2eb452b/84h/1h/0h]tpubDDEq4TjKfNxMFBBjPVzeajhe26kzLBAwR8nX2QqDEdpkSMgM7RQQFADKctW8i3cANrBMMDxMcZHEcut1utwp4np8ukhFCitaKLwYBmc6VXj/1/*)#05v3xg5r"
+    }
+  },
+  "abandon": {
+    "mnemonic": "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
+    "masterFingerprint": "73c5da0a",
+    "xpub": "tpubDC8msFGeGuwnKG9Upg7DM2b4DaRqg3CUZa5g8v2SRQ6K4NSkxUgd7HsL2XVWbVm39yBA4LAxysQAm397zwQSQoQgewGiYZqrA9DsP4zbQ1M",
+    "receive": [
+      "bcrt1q6rz28mcfaxtmd6v789l9rrlrusdprr9pz3cppk",
+      "bcrt1qd7spv5q28348xl4myc8zmh983w5jx32cs707jh",
+      "bcrt1qxdyjf6h5d6qxap4n2dap97q4j5ps6ua8jkxz0z",
+      "bcrt1qynpgs6wap6h9uvy7j0xlesew2w82qn039tzepj",
+      "bcrt1q677973lw0w796gttpy52f296jqaaksz0kadvlr"
+    ],
+    "change": [
+      "bcrt1q9u62588spffmq4dzjxsr5l297znf3z6jkgnhsw",
+      "bcrt1qkwgskuzmmwwvqajnyr7yp9hgvh5y45kg984qvy"
+    ],
+    "receiveDescriptor": "wpkh([73c5da0a/84h/1h/0h]tpubDC8msFGeGuwnKG9Upg7DM2b4DaRqg3CUZa5g8v2SRQ6K4NSkxUgd7HsL2XVWbVm39yBA4LAxysQAm397zwQSQoQgewGiYZqrA9DsP4zbQ1M/0/*)#evh9fu0w",
+    "changeDescriptor": "wpkh([73c5da0a/84h/1h/0h]tpubDC8msFGeGuwnKG9Upg7DM2b4DaRqg3CUZa5g8v2SRQ6K4NSkxUgd7HsL2XVWbVm39yBA4LAxysQAm397zwQSQoQgewGiYZqrA9DsP4zbQ1M/1/*)#gcjy5flk"
+  }
+}

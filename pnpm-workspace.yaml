@@ -1,0 +1,6 @@
+packages:
+  - wallet
+
+# No package may run install scripts unless listed under allowBuilds.
+# minimumReleaseAge stays at pnpm's default (24 h) on purpose: a wallet repo
+# should not install a dependency version in its first day on the registry.
