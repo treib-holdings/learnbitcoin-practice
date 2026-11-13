@@ -62,7 +62,7 @@ def weight_check(mine_to):
     txids = []
     for chunk in (addresses[:2500], addresses[2500:]):
         amounts = json.dumps({a: 0.0001 for a in chunk})
-        txids.append(cli("-rpcwallet=treasury", "-stdin", "sendmany", stdin=f'""\n{amounts}\n'))
+        txids.append(cli("-rpcwallet=treasury", "-named", "-stdin", "sendmany", stdin=f"amounts={amounts}\n"))
     before = cli("getmempoolinfo")
     tx_weights = [cli("getmempoolentry", t)["weight"] for t in txids]
     b1 = cli("getblock", cli("generatetoaddress", 1, mine_to)[0], 1)
