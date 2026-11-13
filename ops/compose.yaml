@@ -159,7 +159,7 @@ services:
   # bots: block producer, treasury, faucet, pot, recycler (phase A1).
 
   # The tunnel. Public hostnames are set in the Cloudflare dashboard:
-  #   practice-explorer -> http://mempool-web:8080
+  #   practice-explorer -> http://router:8082 (adds noindex + robots.txt)
   #   practice-origin   -> http://router:8081 (Access: service token)
   #   ssh-practice      -> ssh://host.docker.internal:22 (Access: service token)
   cloudflared:

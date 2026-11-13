@@ -9,7 +9,7 @@ Cloudflare tunnel. Status: draft for spike S1, not deployed.
 | Name | Serves | Path |
 |---|---|---|
 | practice-electrum.learnbitcoin.com:50002 | Electrum over TLS (Sparrow, Electrum desktop) | DNS-only record to the droplet; electrum-tls (nginx stream) -> electrs:50001 |
-| practice-explorer.learnbitcoin.com | mempool explorer, noindex | tunnel -> mempool-web:8080 |
+| practice-explorer.learnbitcoin.com | mempool explorer, noindex | tunnel -> router:8082 -> mempool-web:8080 |
 | practice-origin.learnbitcoin.com | Esplora REST and the bots API for the practice Worker only | tunnel -> router:8081, behind Cloudflare Access (service token) |
 | ssh-practice.learnbitcoin.com | SSH for the operator | tunnel -> host:22, behind Cloudflare Access (service token) |
 
