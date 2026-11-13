@@ -156,7 +156,23 @@ services:
     ports:
       - "50002:50002"   # -> electrs:50001
 
-  # bots: block producer, treasury, faucet, pot, recycler (phase A1).
+  # One block every 30 s to the treasury wallet. A stopgap until the bots
+  # service (treasury, faucet, pot, recycler; phase A1) takes over mining.
+  producer:
+    <<: *common
+    image: learnbitcoin-practice/bitcoind:31.2
+    container_name: producer
+    networks: [practice_net]
+    depends_on:
+      bitcoind:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "/producer/producer.sh"]
+    volumes:
+      - ./producer/producer.sh:/producer/producer.sh:ro
+    environment:
+      BITCOIN_RPC_USER: ${BITCOIN_RPC_USER}
+      BITCOIN_RPC_PASSWORD: ${BITCOIN_RPC_PASSWORD}
+      INTERVAL: "30"
 
   # The tunnel. Public hostnames are set in the Cloudflare dashboard:
   #   practice-explorer -> http://router:8082 (adds noindex + robots.txt)
