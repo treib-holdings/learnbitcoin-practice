@@ -8,8 +8,8 @@
 #   50002  Electrum over TLS for Sparrow and Electrum desktop
 # Everything else is reached through the outbound Cloudflare tunnel
 # (cloudflared), by container name. The DigitalOcean cloud firewall in front
-# of the droplet allows only these two ports (plus 22 from the operator's IP until SSH
-# moves to Cloudflare Access).
+# of the droplet allows only these two ports; SSH runs through the tunnel,
+# behind Cloudflare Access (Service Auth).
 #
 # Secrets, never committed. ops/.env (written by make-secrets.sh on the
 # server): MARIADB_PASSWORD, and an rpcauth login each for mempool-api and the

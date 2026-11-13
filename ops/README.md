@@ -15,8 +15,10 @@ Cloudflare tunnel. Status: draft for spike S1, not deployed.
 
 Published ports: 80 (ACME HTTP-01 only) and 50002. Docker-published ports
 bypass the host firewall, so nothing else is published; the DigitalOcean cloud
-firewall allows only these two (and SSH from the operator's IP until SSH moves
-to Cloudflare Access).
+firewall allows only these two. SSH has no public port: it runs only through
+the tunnel, behind Cloudflare Access with a service token (Service Auth
+policy). If Access ever fails, add an inbound rule for your current IP on
+port 22 in the cloud firewall to get back in.
 
 ## First run (S1)
 
