@@ -54,9 +54,41 @@ export function newMnemonic(): string {
   return generateMnemonic(wordlist, 128);
 }
 
-/** Lower-case, single spaces, no stray whitespace: how people type words back in. */
+/**
+ * Lower-case, single spaces, no stray whitespace: how people type words back in.
+ *
+ * The words are taken apart one character at a time, and not with a regular
+ * expression. When a regular expression matches, the JavaScript engine keeps
+ * the text it ran on (RegExp.input, and parts of it in RegExp.lastMatch,
+ * leftContext and rightContext) until the next match, where every script in
+ * the page can read it. Split that way, the 12 words would lie there after
+ * the wallet was locked, and beside any other script the page loads. The
+ * same goes for every function here that takes or gives the words: none
+ * runs a regular expression over them (test/words-memory.test.ts).
+ */
 export function normalizeMnemonic(mnemonic: string): string {
-  return mnemonic.trim().toLowerCase().split(/\s+/).join(' ');
+  const words: string[] = [];
+  let word = '';
+  for (const character of mnemonic.toLowerCase()) {
+    if (isSpace(character)) {
+      if (word !== '') words.push(word);
+      word = '';
+    } else {
+      word += character;
+    }
+  }
+  if (word !== '') words.push(word);
+  return words.join(' ');
+}
+
+/**
+ * White space, by the engine's own list: trim() removes exactly the
+ * characters a regular expression calls \s (a space, a tab, a line break,
+ * a no-break space and the like), so a character that trim() leaves nothing
+ * of is one of them.
+ */
+function isSpace(character: string): boolean {
+  return character.trim() === '';
 }
 
 /** True for a valid 12-word English BIP39 phrase (checksum included). */

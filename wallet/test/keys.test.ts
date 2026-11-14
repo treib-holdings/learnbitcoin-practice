@@ -71,6 +71,59 @@ test('typed-in words are normalized and checked', () => {
   assert.throws(() => accountFromMnemonic('not a real phrase at all'));
 });
 
+test('normalizeMnemonic takes words apart at exactly the white space a regular expression would', () => {
+  // The words are split without a regular expression (keys.ts says why).
+  // This is the split it replaced, kept here to compare the two. No real
+  // words go through it.
+  const withPattern = (text: string): string => text.trim().toLowerCase().split(/\s+/).join(' ');
+
+  // Every character there is in one UTF-16 unit, alone between two letters:
+  // the two ways agree on which of them part words.
+  const spaces: number[] = [];
+  for (let code = 0; code <= 0xffff; code += 1) {
+    const text = `a${String.fromCharCode(code)}b`;
+    const tidy = normalizeMnemonic(text);
+    assert.equal(tidy, withPattern(text), `U+${code.toString(16)}`);
+    if (tidy === 'a b') spaces.push(code);
+  }
+  // A space, a tab, the line breaks, a no-break space, the wide and narrow spaces of typography, a byte-order mark.
+  assert.deepEqual(
+    spaces,
+    [0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x20, 0xa0, 0x1680, ...Array.from({ length: 11 }, (_, i) => 0x2000 + i), 0x2028, 0x2029, 0x202f, 0x205f, 0x3000, 0xfeff],
+  );
+
+  // Texts as people leave them, and texts nobody would type.
+  const texts = [
+    '',
+    ' ',
+    ' \t\n ',
+    'word',
+    ' Word ',
+    'one two',
+    'one  two\tthree\nfour\r\nfive',
+    `\u00a0one\u3000two\u2003three\ufeff`,
+    'UPPER lower MiXeD',
+    `caf${String.fromCodePoint(0xc9)} ${String.fromCodePoint(0x130)}stanbul ${String.fromCodePoint(0x1f600)} ${String.fromCodePoint(0x1e9e)}`,
+    `${String.fromCharCode(0xd83d)} a lone half ${String.fromCharCode(0xde00)} of a pair`,
+    `  ${ABANDON.toUpperCase().replaceAll(' ', ' \t ')}\n`,
+  ];
+  for (const text of texts) assert.equal(normalizeMnemonic(text), withPattern(text), JSON.stringify(text));
+  assert.equal(normalizeMnemonic(''), '');
+  assert.equal(normalizeMnemonic(' \n\t '), '');
+
+  // A few thousand made of letters and every kind of white space, the same ones on every run.
+  let seed = 20261114;
+  const below = (n: number): number => {
+    seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+    return Math.floor((seed / 2 ** 32) * n);
+  };
+  const pieces = ['a', 'B', 'zoo', 'Legal', 'WINNER', ...spaces.map((code) => String.fromCharCode(code))];
+  for (let n = 0; n < 3000; n += 1) {
+    const text = Array.from({ length: below(30) }, () => pieces[below(pieces.length)]).join('');
+    assert.equal(normalizeMnemonic(text), withPattern(text), JSON.stringify(text));
+  }
+});
+
 test('a passphrase opens a different wallet', () => {
   assert.notEqual(accountFromMnemonic(ABANDON, 'TREZOR').xpub, accountFromMnemonic(ABANDON).xpub);
 });

@@ -146,9 +146,14 @@ function newestFirst(txs: EsploraTx[]): EsploraTx[] {
 
 /**
  * The wallet's transactions, newest first, one entry each however many of the
- * wallet's addresses a transaction touches. Esplora lists up to 50
- * unconfirmed and the latest 25 confirmed transactions per address, which
- * is plenty for a practice wallet.
+ * wallet's addresses a transaction touches.
+ *
+ * Esplora lists at most 50 of an address's transactions in one answer and
+ * gives the older ones 25 at a time. Every page is read (addressTxsAll in
+ * esplora.ts, which also says where the reading stops: far beyond what an
+ * address of a practice wallet comes to). For most addresses the first
+ * answer is the whole list, so this costs one request for each address in
+ * use.
  */
 export async function walletHistory(state: WalletState, esplora: Esplora): Promise<TxView[]> {
   const own = ownAddresses(state);
@@ -156,7 +161,7 @@ export async function walletHistory(state: WalletState, esplora: Esplora): Promi
   const addresses = new Set([...state.receive, ...state.change].filter((a) => a.used).map((a) => a.address));
   for (const coin of state.coins) addresses.add(coin.address);
 
-  const lists = await inBatches([...addresses], 10, (address) => esplora.addressTxs(address));
+  const lists = await inBatches([...addresses], 10, (address) => esplora.addressTxsAll(address));
   const byId = new Map<string, EsploraTx>();
   for (const tx of lists.flat()) {
     // If a block arrived between two answers, keep the confirmed copy.
