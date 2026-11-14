@@ -356,8 +356,6 @@ test('loadRecord: unreadable for anything that is not a sound version-1 record',
     ['an array holding a record', [words]],
     ['an empty object', {}],
     // The version.
-    ['a higher version', { ...words, v: 2 }],
-    ['a higher version of a passkey record', { ...passkey, v: 2 }],
     ['version 0', { ...words, v: 0 }],
     ['the version as text', { ...words, v: '1' }],
     ['no version', { ...words, v: undefined }],
@@ -471,7 +469,7 @@ test('publicRecord: the record without the 12 words, as a copy', () => {
   // What loadRecord gives for a words wallet holds the words, as it must.
   // This is the way to pass that record on.
   const loaded = loadRecord(holding(new MemoryStorage(), words));
-  assert.ok(loaded !== null && loaded !== 'unreadable');
+  assert.ok(loaded !== null && typeof loaded !== 'string');
   assert.equal(loaded.mnemonic, A.mnemonic);
   assert.ok(!('mnemonic' in publicRecord(loaded)));
   assert.equal(loaded.mnemonic, A.mnemonic);
@@ -578,8 +576,26 @@ test('removeWallet: deletes the record only, and only the wallet this tab loaded
   assert.equal(stored(damaged), 'damaged');
 });
 
+test('a record from a newer version is "newer": never read, never removed', () => {
+  for (const value of [{ ...wordsRecord(A), v: 2 }, { ...passkeyRecord(A), v: 2 }, { v: 7 }, { v: 2, kind: 'unheard-of' }]) {
+    const text = JSON.stringify(value);
+    const local = holding(new MemoryStorage(), text);
+    assert.equal(loadRecord(local), 'newer');
+    assert.equal(removeUnreadable(local), false);
+    assert.equal(removeWallet(local, A.masterFingerprint), false);
+    assert.equal(saveRecordIfNone(local, wordsRecord(B)), false);
+    assert.equal(replaceRecord(local, A.masterFingerprint, wordsRecord(B)), false);
+    assert.equal(stored(local), text, 'left exactly as it was');
+  }
+  // Only a whole number above 1 says "newer". Anything else in `v` is damage.
+  for (const v of [0, 1.5, -2, '2', null, 2 ** 60, [2]]) {
+    assert.equal(loadRecord(holding(new MemoryStorage(), JSON.stringify({ ...wordsRecord(A), v }))), 'unreadable', String(v));
+  }
+  assert.equal(loadRecord(holding(new MemoryStorage(), JSON.stringify([{ v: 2 }]))), 'unreadable');
+});
+
 test('removeUnreadable: deletes only a record that cannot be read', () => {
-  const damaged = holding(new MemoryStorage(), '{"v":2,"kind":"words"}');
+  const damaged = holding(new MemoryStorage(), '{"v":"2","kind":"words"}');
   damaged.map.set('theme', 'dark');
   assert.equal(removeUnreadable(damaged), true);
   assert.deepEqual([...damaged.map.entries()], [['theme', 'dark']]);
@@ -705,12 +721,13 @@ test('judgeUnlock: the edges between the verdicts', () => {
   const wrongKey: WalletRecord = { ...record, xpub: B.xpub };
   assert.equal(judgeUnlock(wrongKey, mine, A.mnemonic), 'tampered');
 
-  // same / changed: the public key fits and the fingerprint does not. Not "same":
-  // the record no longer names the wallet the passkey gives.
+  // same / tampered, the other way round: the public key fits and the fingerprint
+  // does not. Not "same": the record no longer names the wallet the passkey gives.
+  // Not "changed" either: the keys give the public key the record holds.
   const wrongFingerprint: WalletRecord = { ...record, fingerprint: '00000000' };
-  assert.equal(judgeUnlock(wrongFingerprint, mine, A.mnemonic), 'changed');
+  assert.equal(judgeUnlock(wrongFingerprint, mine, A.mnemonic), 'tampered');
 
-  // tampered / changed: the fingerprint decides. With both wrong it is "changed".
+  // tampered / changed: one wrong is "tampered", both wrong is "changed".
   const bothWrong: WalletRecord = { ...record, fingerprint: '00000000', xpub: B.xpub };
   assert.equal(judgeUnlock(bothWrong, mine, A.mnemonic), 'changed');
   // The record of wallet B under passkey A's ID, asked with A's words: a different wallet.

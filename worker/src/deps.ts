@@ -45,8 +45,8 @@ export type Fault =
   | 'origin_auth' // the origin answered with a redirect, 401 or 403: Access or the bots token is wrong
   | 'origin_down' // the origin could not be reached, or answered with a server error
   | 'origin_timeout'
-  | 'origin_shape' // the origin answered 200 with a body the Worker does not understand
-  | 'bot_check_config' // no secret, or the token was made for another host or action than this Worker expects
+  | 'origin_shape' // the origin answered with something the Worker does not understand: a 200 with the wrong body, or a refusal that is not one of its own
+  | 'bot_check_config' // no secret, or the token was made for another host than this Worker expects
   | 'bot_check_down' // the bot check's verify service could not be asked
   | 'events_down' // the events service refused or could not be reached
   | 'handler'; // the handler itself threw
@@ -76,7 +76,7 @@ export type OriginAnswer<T> =
       fault: Fault | null;
     };
 
-/** A 200 from the Esplora API, passed on without reading it. */
+/** A 200 from the Esplora API: read whole, within a time and a size limit, and passed on byte for byte. */
 export interface OriginBody {
   body: ReadableStream<Uint8Array> | null;
   /** The origin's content type, reduced to the two the Worker will send. */
@@ -95,7 +95,10 @@ export interface Origin {
   /**
    * GET one of the Esplora shapes the app uses. `path` begins with a slash and
    * has been rebuilt by the handler from validated parts, for example
-   * "/address/bcrt1q.../utxo". A 404 from the origin is `not_found`.
+   * "/address/bcrt1q.../utxo". A 404 answered in plain text to a transaction
+   * read is `not_found`. Any other answer that is not a 200 is `unavailable`,
+   * and always carries a fault: the handler writes no log line for a chain
+   * read that ends without one.
    */
   esplora(path: string): Promise<OriginAnswer<OriginBody>>;
   /** POST a signed transaction as hex. The value is its transaction ID. A refusal by the node is mapped to a broadcast code. */
@@ -110,7 +113,8 @@ export interface Origin {
 
 /**
  * pass    the token is good for this host, the action "faucet" and this address.
- * fail    the reader's token is bad, spent or expired: they can run the check again.
+ * fail    the reader's token is bad, spent or expired, or was solved for another
+ *         action or another address: they can run the check again. No fault.
  * closed  no site key or secret is configured, so the faucet is closed.
  * down    the answer cannot be trusted (the verify service failed, or the token
  *         was made for another host): the faucet stays shut. Any doubt lands here.

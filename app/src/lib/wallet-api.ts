@@ -34,13 +34,19 @@ import type { Route } from './router.ts';
  * ready       a wallet is here (it may be locked: see `unlocked`)
  * unreadable  something is stored under the wallet's key but cannot be read;
  *             nothing is overwritten until the reader chooses Remove
+ * newer       what is stored was written by a newer version of this page (a
+ *             tab left open across an update). It may be a good wallet, so
+ *             this page never removes it: the one way out is Reload
  * broken      the self-test failed: this browser derives wrong keys, so no
  *             wallet may be made, opened or restored
  */
-export type WalletStatus = 'none' | 'ready' | 'unreadable' | 'broken';
+export type WalletStatus = 'none' | 'ready' | 'unreadable' | 'newer' | 'broken';
 
-/** The stored record without the 12 words. */
-export type PublicRecord = Omit<WalletRecord, 'mnemonic'>;
+/**
+ * The stored record without the 12 words. A record that still holds its words
+ * does not fit this type: pass it through publicRecord() (keystore.ts) first.
+ */
+export type PublicRecord = Omit<WalletRecord, 'mnemonic'> & { mnemonic?: never };
 
 /** The wallet's coins as last read from the practice network. */
 export interface ChainView {
@@ -112,14 +118,22 @@ export type UnlockResult =
   /** The same wallet: its keys are loaded. */
   | { kind: 'unlocked' }
   /**
-   * The keys do not match the public key this browser stored, although the wallet
-   * fingerprint does. The record was rebuilt from the keys and the wallet rescanned;
-   * the keys are loaded. Warn that addresses shown before may belong to another wallet.
+   * The keys fit only one of the two things this browser stored about the wallet
+   * (its public key, its wallet fingerprint), so the stored record had been altered.
+   * It was rebuilt from the keys and the wallet rescanned; the keys are loaded. Say
+   * that the saved details were wrong and have been replaced, and that an address
+   * shown here before this unlock may have belonged to another wallet.
    */
   | { kind: 'tampered' }
   /** A different passkey answered. Nothing changed. `pendingSwitch` is now set: ask before switching. */
   | { kind: 'other-passkey'; tag: string | null; fingerprint: string }
-  /** The same passkey now gives a different wallet. It is never opened and nothing is overwritten. */
+  /**
+   * The stored passkey gave a wallet that fits nothing this browser stored: the
+   * passkey now gives a different wallet, or the whole record was replaced. It is
+   * never opened and nothing is overwritten. The text must allow for both causes
+   * and must not say the addresses shown so far were this wallet's. Ways out: the
+   * 12 words, or Remove and then Open with the passkey.
+   */
   | { kind: 'changed' }
   /** The wallet was removed or replaced in another tab. */
   | { kind: 'gone' }
@@ -329,7 +343,12 @@ export interface WalletApi {
   lock(): void;
   /** The 12 words, or null while locked. Keep them out of anything that outlives the screen. */
   revealWords(): string[] | null;
-  /** Deletes this wallet's record from this browser and drops its keys. Other stored data is left alone. */
+  /**
+   * Deletes this wallet's record from this browser and drops its keys. Other stored
+   * data is left alone. With status "unreadable" it deletes what cannot be read.
+   * "gone": the stored wallet is no longer the one this page loaded (another tab),
+   * or status is "newer" or "none"; nothing was deleted.
+   */
   removeWallet(): 'removed' | 'gone';
   /** The wallet's public descriptors (receive and change), for Settings and the Sparrow page. Null with no wallet. */
   descriptors(): { receive: string; change: string } | null;
@@ -367,7 +386,12 @@ export interface WalletApi {
 
   // ---- sending ----
 
-  /** What a payment would cost, without keys. With no coins loaded yet the answer is "nothing-spendable". */
+  /**
+   * What a payment would cost, without keys. With no coins loaded yet the answer is
+   * "nothing-spendable". Never throws. The Send form checks its own fields first (a
+   * whole fee rate from 1 to 1,000) and never caps the amount at `maxSendable`, which
+   * is what "Send all" would deliver and can be less than an ordinary payment can.
+   */
   plan(request: PaymentRequest): PaymentPlan;
   /** Builds and signs. Nothing is sent. */
   sign(request: PaymentRequest): SignResult;

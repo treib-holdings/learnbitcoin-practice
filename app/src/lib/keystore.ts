@@ -241,13 +241,18 @@ function storedText(local: Storage): string | null | undefined {
 }
 
 /**
- * The wallet in this browser: its record, null when nothing is stored, or
- * "unreadable" when something is stored that is not a sound version-1
- * record (damaged, edited by hand, or written by a newer version of the
- * app). Never throws and never writes: an unreadable record stays exactly
- * as it is until the reader chooses what to do.
+ * The wallet in this browser: its record, null when nothing is stored,
+ * "newer" when what is stored says it was written by a later version of
+ * this app (a whole number above 1 as its `v`), or "unreadable" when it is
+ * anything else that is not a sound version-1 record (damaged, or edited by
+ * hand). Never throws and never writes.
+ *
+ * The two are kept apart because they end differently. An unreadable record
+ * stays as it is until the reader chooses Reload or Remove. A newer record
+ * may be a good wallet, met by a tab that was opened before an update: this
+ * version never removes it, and the only way out it offers is Reload.
  */
-export function loadRecord(local: Storage): WalletRecord | null | 'unreadable' {
+export function loadRecord(local: Storage): WalletRecord | null | 'unreadable' | 'newer' {
   const text = storedText(local);
   if (text === null || text === undefined) return null;
   let value: unknown;
@@ -256,7 +261,15 @@ export function loadRecord(local: Storage): WalletRecord | null | 'unreadable' {
   } catch {
     return 'unreadable';
   }
+  if (isNewer(value)) return 'newer';
   return soundRecord(value) ?? 'unreadable';
+}
+
+/** Whether `value` says it was written by a later version of the format: an object whose `v` is a whole number above 1. */
+function isNewer(value: unknown): boolean {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const v = (value as Record<string, unknown>).v;
+  return typeof v === 'number' && Number.isSafeInteger(v) && v > 1;
 }
 
 /**
@@ -314,7 +327,7 @@ export function saveRecordIfNone(local: Storage, record: WalletRecord): boolean 
  */
 export function replaceRecord(local: Storage, expectFingerprint: string, record: WalletRecord): boolean {
   const stored = loadRecord(local);
-  if (stored === null || stored === 'unreadable' || stored.fingerprint !== expectFingerprint) return false;
+  if (stored === null || typeof stored === 'string' || stored.fingerprint !== expectFingerprint) return false; // nothing, unreadable or newer
   return writeRecord(local, record);
 }
 
@@ -335,7 +348,7 @@ function deleteRecord(local: Storage): boolean {
  */
 export function removeWallet(local: Storage, expectFingerprint: string): boolean {
   const stored = loadRecord(local);
-  if (stored === null || stored === 'unreadable' || stored.fingerprint !== expectFingerprint) return false;
+  if (stored === null || typeof stored === 'string' || stored.fingerprint !== expectFingerprint) return false; // nothing, unreadable or newer
   return deleteRecord(local);
 }
 
@@ -346,10 +359,9 @@ export function removeWallet(local: Storage, expectFingerprint: string): boolean
  * if what is stored now is nothing at all or a sound wallet (one that
  * another tab made in the meantime).
  *
- * "Cannot be read" includes a record written by a newer version of this
- * app, met by a tab that was opened before the update. That record may be
- * a good wallet, and this deletes it all the same: for such a tab "Reload"
- * is the choice that keeps the wallet.
+ * A record written by a newer version of this app is not "unreadable" (see
+ * loadRecord): it may be a good wallet, so this answers false and leaves it
+ * where it is.
  */
 export function removeUnreadable(local: Storage): boolean {
   if (loadRecord(local) !== 'unreadable') return false;
@@ -393,10 +405,11 @@ export function wordsMatchRecord(record: WalletRecord, mnemonic: string): boolea
  * adopt          this browser has no record: take the wallet the passkey gave
  * same           the stored passkey gave the stored wallet: load its keys
  * other-passkey  a different passkey answered: ask before switching wallets
- * changed        the stored passkey gave a different wallet: never open it,
- *                never overwrite the record
- * tampered       the stored passkey gave the stored wallet fingerprint but
- *                another public key: the record was altered; rebuild it
+ * tampered       the stored passkey gave a wallet that fits exactly one of
+ *                the two things the record says about it (its public key,
+ *                its wallet fingerprint): the record was altered; rebuild it
+ * changed        the stored passkey gave a wallet that fits neither: never
+ *                open it, never overwrite the record
  */
 export type UnlockVerdict = 'adopt' | 'same' | 'other-passkey' | 'changed' | 'tampered';
 
@@ -407,18 +420,20 @@ export type UnlockVerdict = 'adopt' | 'same' | 'other-passkey' | 'changed' | 'ta
  *
  * The stored public key is what the app has been showing addresses from,
  * and the stored fingerprint is what names the wallet. "same" needs both to
- * be exactly what the words give. A record whose fingerprint is wrong is
- * "changed", even if its public key is right; a record whose fingerprint
- * is right and whose public key is not is "tampered".
+ * be exactly what the words give. One right and one wrong cannot come from
+ * a passkey (both come from the same 12 words), so the record was altered:
+ * "tampered". The keys are the wallet, so the record is rebuilt from them.
+ * With the public key wrong, the addresses shown since the last unlock were
+ * another wallet's; with only the fingerprint wrong they were this one's.
+ * The text for "tampered" has to be true in both cases.
  *
  * Nothing in a passkey record vouches for either field: whoever can write
- * this browser's storage can change both. A changed public key alone is
- * caught as "tampered". A changed fingerprint gives "changed", whether or
- * not the public key was changed with it: the same answer as for a passkey
- * that really gives another wallet. When both fields were changed, nothing
- * here can tell those two cases apart. So the text for "changed" has to
- * allow for a record that was altered, and must not say that the addresses
- * shown so far were this wallet's.
+ * this browser's storage can change both. When neither fits, nothing here
+ * can tell a record that was replaced whole from a passkey that really
+ * gives another wallet (some do, over a phone's QR code). Both are
+ * "changed": nothing is opened and nothing is overwritten. So the text for
+ * "changed" has to allow for a record that was altered, and must not say
+ * that the addresses shown so far were this wallet's.
  */
 export function judgeUnlock(record: WalletRecord | null, credentialId: string, mnemonic: string): UnlockVerdict {
   if (record === null) return 'adopt';
@@ -426,6 +441,9 @@ export function judgeUnlock(record: WalletRecord | null, credentialId: string, m
   if (record.credentialId !== credentialId) return 'other-passkey';
   const account = accountOf(mnemonic);
   // Words that give no wallet at all cannot be this one. The safe answer is the one that opens nothing.
-  if (account === null || account.masterFingerprint !== record.fingerprint) return 'changed';
-  return account.xpub === record.xpub ? 'same' : 'tampered';
+  if (account === null) return 'changed';
+  const sameKey = account.xpub === record.xpub;
+  const sameFingerprint = account.masterFingerprint === record.fingerprint;
+  if (sameKey && sameFingerprint) return 'same';
+  return sameKey || sameFingerprint ? 'tampered' : 'changed';
 }
