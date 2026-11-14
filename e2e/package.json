@@ -1,0 +1,28 @@
+{
+  "name": "@learnbitcoin/practice-e2e",
+  "version": "0.1.0",
+  "private": true,
+  "description": "End-to-end harness for the practice wallet: a stand-in practice network, a local server that runs the Worker's handlers, and headless Chrome.",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/",
+    "check": "tsc --noEmit -p .",
+    "smoke": "node src/smoke.ts",
+    "dev": "node src/dev.ts",
+    "e2e": "node --test scenarios/",
+    "e2e:live": "node src/live.ts"
+  },
+  "dependencies": {
+    "@learnbitcoin/practice-contract": "workspace:*",
+    "@learnbitcoin/practice-wallet": "workspace:*",
+    "@learnbitcoin/practice-worker": "workspace:*",
+    "@scure/base": "2.4.0",
+    "@scure/btc-signer": "2.4.1",
+    "puppeteer-core": "25.17.0"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "typescript": "6.0.3"
+  }
+}
