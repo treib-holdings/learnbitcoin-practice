@@ -2154,10 +2154,15 @@ async function wordsLeftBehind(module: SessionModule): Promise<string[]> {
 }
 
 test('the 12 words are not left where a regular expression keeps them: after no action can a script read them back', async () => {
-  // The check itself can tell: straight after the wallet package has tidied words, they are there.
+  // The check itself can tell: straight after a regular expression has run over words, they are there.
+  assert.ok(/\s+/.test(` ${B.mnemonic} `));
+  assert.ok(regexpMemory().includes(B.mnemonic), 'a regular expression that matched keeps its text');
+  // The wallet package runs none over them (it did once, to tidy them): after it has handled
+  // words, what a regular expression remembers holds neither phrase.
+  assert.ok(/kept/.test('something kept from before'));
   accountFromMnemonic(` ${A.mnemonic} `);
   normalizeMnemonic(` ${B.mnemonic} `);
-  assert.ok(regexpMemory().includes(B.mnemonic), 'a regular expression that matched keeps its text');
+  assert.ok(!regexpMemory().includes(A.mnemonic) && !regexpMemory().includes(B.mnemonic));
 
   assert.deepEqual(await wordsLeftBehind({ makeSession, passkeyPort }), []);
 

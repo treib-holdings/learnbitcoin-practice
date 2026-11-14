@@ -110,18 +110,15 @@ function refusalInText(text: string): Refusal | null {
     return refusalIn(JSON.parse(text));
   } catch {
     // Not JSON as it stands. One case is still a refusal: a body that lost
-    // its end. The wallet's Esplora client keeps the first 1,000 characters
-    // of a failed answer. The Worker's refusals are shorter than that as
-    // long as the node's words are plain text: a detail is 300 characters
-    // at most, and JSON writes a quote or a backslash in it as two. But it
-    // writes most control characters as six. A detail made mostly of them
-    // (about 135 or more of the 300) makes a body of over 1,000 characters,
-    // a little over 1,800 at the most, and that body arrives without its
-    // end. None of the refusals recorded from the node holds a control
-    // character, and nothing rules one out. This is the guard for that
-    // body, and for any other refusal that was written longer or was cut on
-    // the way. The code comes first in the body, so it can still be read,
-    // and so can what is left of the detail.
+    // its end. The wallet's Esplora client keeps the first 2,000 characters
+    // of a failed answer. The Worker's own refusals are all shorter than
+    // that: a detail is 300 characters at most, JSON writes a quote or a
+    // backslash in it as two and most control characters as six, so the
+    // longest body the Worker can write is a little over 1,800. Those
+    // arrive whole and never come here. This is the guard for any other
+    // refusal: one that was written longer, or was cut on the way. The
+    // code comes first in the body, so it can still be read, and so can
+    // what is left of the detail.
     const code = /^\s*\{\s*"error"\s*:\s*"([^"\\]*)"/.exec(text)?.[1];
     if (code === undefined) return null;
     if (!isErrorCode(code)) return UNKNOWN_CODE;

@@ -217,10 +217,12 @@ const START = new RegExp('^');
  * Wipes what regular expressions remember. When one matches, the browser
  * keeps the text it ran on in RegExp.input (also RegExp.$_, leftContext and
  * rightContext), and every script in the page can read it there. The wallet
- * package tidies the 12 words with a regular expression. Left alone, they
- * would sit in RegExp.input until some other match happened along: after
- * lock(), after "Erase", and with the bot check's script in the page.
- * Matching an empty text puts nothing there in their place.
+ * package runs no regular expression over the 12 words (its tests hold it
+ * to that), and neither should anything here. But one slip anywhere, in
+ * this app or in a library it calls, would leave them in RegExp.input until
+ * some other match happened along: after lock(), after "Erase", and with
+ * the bot check's script in the page. So every action that handles words
+ * ends with this. Matching an empty text puts nothing there in their place.
  *
  * A build tool may drop a call whose answer nobody reads, if it takes the
  * call to do nothing else. Here the match is the whole point. So it is
