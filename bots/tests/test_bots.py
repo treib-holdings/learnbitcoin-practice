@@ -201,6 +201,12 @@ class AlertTests(unittest.TestCase):
         bad = dict(ok, block_age_seconds=600, esplora_height=None, faucet_sats=5, disk_used_pct=90)
         self.assertTrue(all(bots.problems(bad).values()))
 
+    def test_a_refill_on_its_way_is_not_an_empty_faucet(self):
+        bots, _, _ = make()
+        h = {"height": 105, "block_age_seconds": 30, "esplora_height": 105, "faucet_sats": 0,
+             "faucet_pending_sats": 1_000_000_000, "disk_used_pct": 10}
+        self.assertIsNone(bots.problems(h)["faucet"])
+
 
 if __name__ == "__main__":
     unittest.main()

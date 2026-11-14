@@ -229,6 +229,7 @@ class Bots:
             "block_age_seconds": int(self.clock()) - tip_time,
             "esplora_height": esplora_tip,
             "faucet_sats": self.faucet_own_sats(),
+            "faucet_pending_sats": to_sats(self.faucet.call("getbalances")["mine"]["untrusted_pending"]),
             "disk_used_pct": round(used * 100, 1),
         }
 
@@ -240,7 +241,8 @@ class Bots:
             if h["block_age_seconds"] > self.cfg.block_stale_seconds else None,
             "electrs": "electrs is not answering" if lag is None
             else (f"electrs is {lag} blocks behind the node" if lag > 3 else None),
+            # A refill on its way (unconfirmed) is not a problem.
             "faucet": f"The faucet holds {h['faucet_sats']:,} sats; refills may be failing"
-            if h["faucet_sats"] < self.cfg.faucet_sats * 10 else None,
+            if h["faucet_sats"] + h.get("faucet_pending_sats", 0) < self.cfg.faucet_sats * 10 else None,
             "disk": f"Disk {h['disk_used_pct']}% full" if h["disk_used_pct"] > 85 else None,
         }
