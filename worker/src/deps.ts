@@ -51,7 +51,10 @@ export type Fault =
   | 'events_down' // the events service refused or could not be reached
   | 'handler'; // the handler itself threw
 
-/** The one line logged per API request. No path, address, transaction ID, token or client address. */
+/**
+ * The line logged for an API request. No path, address, transaction ID, token or client address.
+ * A request for chain data that ends without a fault writes none.
+ */
 export interface LogLine {
   route: RouteName;
   status: number;
@@ -103,7 +106,11 @@ export interface Origin {
   esplora(path: string): Promise<OriginAnswer<OriginBody>>;
   /** POST a signed transaction as hex. The value is its transaction ID. A refusal by the node is mapped to a broadcast code. */
   broadcast(hex: string): Promise<OriginAnswer<string>>;
-  /** Ask the faucet to pay `address`. The bots' own refusal codes pass through when the contract lists them. */
+  /**
+   * Ask the faucet to pay `address`. Of the bots' refusals only the faucet's own six pass
+   * through (bad_address, own_address, already_paid, busy, refilling, failed), each under
+   * its own status. Any other answer is `unavailable` with a fault.
+   */
   faucet(address: string): Promise<OriginAnswer<FaucetPayment>>;
   /** An address of the pay-it-forward pot. */
   potAddress(): Promise<OriginAnswer<string>>;

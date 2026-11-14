@@ -198,7 +198,11 @@ export type FaucetPhase =
   | 'asking'
   /** Refused for now (limit, busy, refilling). The app asks again by itself at `retryAt`. */
   | 'waiting'
-  /** Promised: `payment` holds the transaction ID and amount. */
+  /**
+   * Promised: `payment` holds the transaction ID and amount. It is null when the faucet
+   * answered that it has paid this address before (the coin is on its way or already
+   * here), and when a coin arrived after a request that had failed.
+   */
   | 'on-its-way'
   /** The coin is in the wallet, unconfirmed. */
   | 'arrived'
@@ -371,10 +375,14 @@ export interface WalletApi {
   /** Moves Receive on to the next unused address. Does nothing while a faucet request runs. */
   newReceiveAddress(): void;
   /**
-   * Call before the bot check's script is added to the page. It locks a passkey
-   * wallet and makes every later move between screens a full page load, so the
-   * script and the wallet's keys are never in one page together. Until that
-   * reload, actions that need keys answer "reload".
+   * Call before the bot check's script is added to the page. It drops a passkey
+   * wallet's keys and tells the router, so that every later move between screens is
+   * a full page load and the script and the keys are never in one page together.
+   * Until that page load, actions that load keys or take typed words answer "reload"
+   * (unlock, unlockWithWords, create, open, restore) and sign() answers "locked". A
+   * wallet made without a passkey goes on signing: its words are in storage, where
+   * that script could read them anyway. askFaucet() does the same by itself just
+   * before it asks for a token, in case a screen forgot.
    */
   beforeBotCheck(): void;
   /**
@@ -395,7 +403,11 @@ export interface WalletApi {
   plan(request: PaymentRequest): PaymentPlan;
   /** Builds and signs. Nothing is sent. */
   sign(request: PaymentRequest): SignResult;
-  /** Sends a signed payment. A second call while one is under way gets the same answer as the first. */
+  /**
+   * Sends a signed payment. A second call with the same payment while it is under way gets
+   * the first call's answer; a different payment waits its turn. With no answer from the
+   * network it can take up to 40 seconds.
+   */
   broadcast(payment: SignedPayment): Promise<BroadcastResult>;
   /** An address of the pay-it-forward pot, for "Pass it on". */
   potAddress(): Promise<PotAddressResult>;
