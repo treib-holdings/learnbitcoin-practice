@@ -217,6 +217,107 @@ export const en = {
   txFee: 'Fee',
   txSize: 'Size',
   txFeeRate: 'Fee rate',
+
+  // -- the Overview --
+  overviewAllCoins: 'See all coins',
+  overviewActivity: 'Recent activity',
+  overviewAllActivity: 'See all activity',
+  /** The small line over what tells this browser's wallet from another. */
+  overviewWallet: "This browser's wallet",
+  /** In front of the four characters this browser knows of its passkey's name. */
+  walletPasskeyHas: 'Passkey name includes',
+  /**
+   * The same label where it is the first thing on the screen to name a
+   * passkey. In Spanish the first mention on a screen carries "(passkey)"
+   * beside the Spanish term; in English the two are alike.
+   */
+  walletPasskeyHasFirst: 'Passkey name includes',
+
+  // -- the Overview of a wallet just opened with a passkey, when nothing was found (SPEC section 6) --
+  emptyOpenedTitle: 'This passkey opened a wallet with no history',
+  emptyOpenedLead:
+    'The practice network knows no coins and no transactions for it. That has three possible causes, the most likely first.',
+  /** The same sentence where it is the first thing on the screen to name a passkey (see walletPasskeyHasFirst). */
+  emptyOpenedLeadFirst:
+    'The practice network knows no coins and no transactions for it. That has three possible causes, the most likely first.',
+  emptyNewTitle: 'It is a new wallet with no coins yet',
+  emptyNewBody:
+    "If you have not used this passkey's wallet before, nothing is wrong. The faucet gives it its first practice coins.",
+  emptyOtherTitle: 'You chose a different practice passkey',
+  emptyOtherBody:
+    'Each practice passkey opens a wallet of its own. If you have made more than one, your coins may be in the wallet of another. The one you just used is named below.',
+  /** On the unlock step that follows "Choose another passkey": the wallet is locked for it. */
+  emptyOtherWhy:
+    'This wallet was locked so that you could choose another passkey. Its own passkey unlocks it again.',
+  emptyOtherSame:
+    'That is the same passkey as before, so it opened the same wallet. If you have another practice passkey, choose again and pick that one.',
+  emptyChangedTitle: 'The same passkey gave a different wallet',
+  emptyChangedBody:
+    'A passkey should give the same wallet every time, so this is the least likely cause. The wallet fingerprint of the wallet it opened is below. If your wallet showed a different one, its 12 words bring it back: remove this wallet under Settings, then restore from the 12 words.',
+
+  // -- the list of transactions: Activity, and the latest few on the Overview --
+  activityLede: 'Every transaction of this wallet, newest first.',
+  activityLoading: 'Loading the activity...',
+  activityEmpty: 'No transactions yet. The first one shows here when coins arrive.',
+  /** Under the cause, when the list could not be read. It names no time: the wallet does not say when it tries next. */
+  activityRetries: 'This page tries again by itself. You can also try now.',
+  /** The same line for a reader who was refused for asking too fast: nothing invites them to ask again at once. */
+  activityRetriesAlone: 'This page tries again by itself.',
+  /** Added while an older list is still shown. */
+  activityStale: 'The list below is as it was last read.',
+  /** Where the list would be, while it has never been read and the screen already says above why the network cannot be read. */
+  activityUnread: 'The list of transactions has not been read yet.',
+  /** On the "Try again" button while the wallet reads again. */
+  activityReading: 'Reading again...',
+
+  // -- the Coins screen --
+  coinsLede: 'A wallet holds coins, not a balance.',
+  coinsWhatTitle: 'What a coin is',
+  coinsWhat:
+    'Each payment this wallet receives is a coin of its own, a UTXO (unspent transaction output). A payment spends whole coins and makes new ones: one for whoever is paid, and one for the change that comes back to this wallet.',
+  coinsGlossary: 'UTXO in the LearnBitcoin glossary',
+  /** {unconfirmed} and {change} are the two marks, as the list shows them. */
+  coinsMarks:
+    '"{unconfirmed}" marks a coin that is not in a block yet. "{change}" marks a coin that came back from a payment this wallet made. A coin with neither mark is confirmed and was received at one of this wallet\'s receive addresses.',
+  coinsEmpty: 'This wallet holds no coins. One shows here as soon as a payment arrives.',
+
+  // -- the screen of one transaction --
+  txLooking: 'Looking up this transaction...',
+  txWaiting: 'Waiting for the practice network to list this transaction...',
+  txWaitingNote:
+    'It was sent a moment ago, and the network takes a few seconds to list a new transaction. This page asks again by itself.',
+  txNotFound:
+    "The practice network lists no transaction with this ID. One sent a moment ago can take a few seconds to show, so try again. An ID from Bitcoin's real network is never listed here.",
+  /** {minutes} is how long the page went on asking. */
+  txNotFoundWaited:
+    "After {minutes} minutes the practice network still does not list this transaction. It may have been dropped, or replaced by another version, before it reached a block. This wallet's activity shows what became of the coins.",
+  /** {amount} carries its unit, as in "25,000 practice sats". */
+  txSumReceived: 'This wallet received {amount}.',
+  txSumSent: 'This wallet sent {amount} in all, the fee included.',
+  txSumInternal: 'This wallet paid itself. Only the fee left it: {amount}.',
+  txSumOther: 'This transaction does not touch this wallet.',
+  txSumOtherNote: "None of its inputs and none of its outputs is at one of this wallet's addresses.",
+  /** {seconds} is the time between two practice blocks. */
+  txStatusUnconfirmed:
+    'Unconfirmed: it is not in a block yet. On the practice network a block comes about every {seconds} seconds.',
+  /** {height} is the block's number, {date} a day such as "November 13, 2026". */
+  txStatusBlockDate: 'Confirmed in block {height}, on {date}.',
+  txStatusBlock: 'Confirmed in block {height}.',
+  txStatusConfirmed: 'Confirmed: it is in a block.',
+  txPartsTitle: 'Inputs and outputs',
+  /** A fact's name, and its two values. */
+  txReplace: 'Can still be replaced',
+  txReplaceYes: 'Yes, until it is in a block',
+  txReplaceNo: 'No, it is in a block',
+  /** Under the facts of an unconfirmed transaction: why it can be replaced. */
+  txReplaceSignals:
+    'It can be replaced because it signals replace-by-fee (RBF): until it is in a block, its sender can send a version that pays a higher fee in its place.',
+  txReplaceSilent:
+    'It does not signal replace-by-fee (RBF). Nodes today take a version that pays a higher fee either way, so it can be replaced until it is in a block.',
+  txReplaceGlossary: 'RBF in the LearnBitcoin glossary',
+  txId: 'Transaction ID',
+  txIdCopied: 'Transaction ID copied',
+  txExplorer: 'See it on the practice explorer',
 } as const;
 
 export const es: Record<keyof typeof en, string> = {
@@ -362,4 +463,79 @@ export const es: Record<keyof typeof en, string> = {
   txFee: 'Comisión',
   txSize: 'Tamaño',
   txFeeRate: 'Tasa de comisión',
+
+  overviewAllCoins: 'Ver todas las monedas',
+  overviewActivity: 'Actividad reciente',
+  overviewAllActivity: 'Ver toda la actividad',
+  overviewWallet: 'La billetera de este navegador',
+  walletPasskeyHas: 'El nombre de su llave de acceso incluye',
+  walletPasskeyHasFirst: 'El nombre de su llave de acceso (passkey) incluye',
+
+  emptyOpenedTitle: 'Se abrió una billetera sin historial',
+  emptyOpenedLead:
+    'La red de práctica no conoce monedas ni transacciones de la billetera que abrió tu llave de acceso. Eso tiene tres causas posibles, de la más probable a la menos probable.',
+  emptyOpenedLeadFirst:
+    'La red de práctica no conoce monedas ni transacciones de la billetera que abrió tu llave de acceso (passkey). Eso tiene tres causas posibles, de la más probable a la menos probable.',
+  emptyNewTitle: 'Es una billetera nueva que todavía no tiene monedas',
+  emptyNewBody:
+    'Si nunca usaste la billetera de esta llave de acceso, no hay ningún problema. El faucet le da sus primeras monedas de práctica.',
+  emptyOtherTitle: 'Elegiste otra llave de acceso de práctica',
+  emptyOtherBody:
+    'Cada llave de acceso de práctica abre su propia billetera. Si creaste más de una, puede que tus monedas estén en la billetera de otra. Abajo se nombra la que acabas de usar.',
+  emptyOtherWhy:
+    'Esta billetera se bloqueó para que pudieras elegir otra llave de acceso. Su propia llave de acceso la vuelve a desbloquear.',
+  emptyOtherSame:
+    'Esa es la misma llave de acceso de antes, así que abrió la misma billetera. Si tienes otra llave de acceso de práctica, vuelve a elegir y selecciona esa.',
+  emptyChangedTitle: 'La misma llave de acceso dio otra billetera',
+  emptyChangedBody:
+    'Una llave de acceso debería dar siempre la misma billetera, así que esta es la causa menos probable. Abajo está la huella de la billetera que se abrió. Si tu billetera mostraba otra, sus 12 palabras la recuperan: quita esta billetera en Configuración y después restaura con las 12 palabras.',
+
+  activityLede: 'Todas las transacciones de esta billetera, de la más nueva a la más antigua.',
+  activityLoading: 'Cargando la actividad...',
+  activityEmpty: 'Todavía no hay transacciones. La primera aparece aquí cuando lleguen monedas.',
+  activityRetries: 'Esta página vuelve a intentarlo sola. También puedes intentarlo ahora.',
+  activityRetriesAlone: 'Esta página vuelve a intentarlo sola.',
+  activityStale: 'La lista de abajo está como se leyó la última vez.',
+  activityUnread: 'La lista de transacciones todavía no se ha leído.',
+  activityReading: 'Leyendo de nuevo...',
+
+  coinsLede: 'Una billetera guarda monedas, no un saldo.',
+  coinsWhatTitle: 'Qué es una moneda',
+  coinsWhat:
+    'Cada pago que esta billetera recibe es una moneda aparte, un UTXO (salida de transacción no gastada). Un pago gasta monedas enteras y crea monedas nuevas: una para quien recibe el pago y otra para el cambio que vuelve a esta billetera.',
+  coinsGlossary: 'UTXO en el glosario de LearnBitcoin',
+  coinsMarks:
+    '"{unconfirmed}" marca una moneda que todavía no está en un bloque. "{change}" marca una moneda que volvió de un pago hecho por esta billetera. Una moneda sin ninguna de las dos marcas está confirmada y se recibió en una dirección de recepción de esta billetera.',
+  coinsEmpty: 'Esta billetera no tiene monedas. Aparece una aquí en cuanto llega un pago.',
+
+  txLooking: 'Buscando esta transacción...',
+  txWaiting: 'Esperando a que la red de práctica muestre esta transacción...',
+  txWaitingNote:
+    'Se envió hace un momento, y la red tarda unos segundos en mostrar una transacción nueva. Esta página vuelve a preguntar sola.',
+  txNotFound:
+    'La red de práctica no muestra ninguna transacción con este txid. Una enviada hace un momento puede tardar unos segundos en aparecer, así que vuelve a intentarlo. Un txid de la red principal de Bitcoin nunca aparece aquí.',
+  txNotFoundWaited:
+    'Después de {minutes} minutos, la red de práctica sigue sin mostrar esta transacción. Puede que se haya descartado, o que otra versión la haya reemplazado, antes de entrar en un bloque. La actividad de esta billetera muestra qué pasó con las monedas.',
+  txSumReceived: 'Esta billetera recibió {amount}.',
+  txSumSent: 'Esta billetera envió {amount} en total, con la comisión incluida.',
+  txSumInternal: 'Esta billetera se pagó a sí misma. Solo salió la comisión: {amount}.',
+  txSumOther: 'Esta transacción no toca esta billetera.',
+  txSumOtherNote: 'Ninguna de sus entradas ni de sus salidas está en una dirección de esta billetera.',
+  txStatusUnconfirmed:
+    'Sin confirmar: todavía no está en un bloque. En la red de práctica llega un bloque más o menos cada {seconds} segundos.',
+  txStatusBlockDate: 'Confirmada en el bloque {height}, el {date}.',
+  txStatusBlock: 'Confirmada en el bloque {height}.',
+  txStatusConfirmed: 'Confirmada: ya está en un bloque.',
+  txPartsTitle: 'Entradas y salidas',
+  txReplace: 'Todavía se puede reemplazar',
+  txReplaceYes: 'Sí, hasta que entre en un bloque',
+  txReplaceNo: 'No, ya está en un bloque',
+  txReplaceSignals:
+    'Se puede reemplazar porque señala Replace-by-Fee (RBF): hasta que entre en un bloque, quien la envió puede enviar en su lugar una versión que pague una comisión más alta.',
+  txReplaceSilent:
+    'No señala Replace-by-Fee (RBF). Hoy los nodos aceptan de todos modos una versión que pague una comisión más alta, así que se puede reemplazar hasta que entre en un bloque.',
+  txReplaceGlossary: 'RBF en el glosario de LearnBitcoin',
+  txId: 'Txid',
+  txIdCopied: 'Txid copiado',
+  txExplorer: 'Verlo en el explorador de práctica',
 };
