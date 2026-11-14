@@ -111,7 +111,7 @@ class FaucetTests(unittest.TestCase):
         bots.pay(LEARNER)
         with self.assertRaises(FaucetError) as e:
             bots.pay(LEARNER)
-        self.assertEqual(e.exception.status, 429)
+        self.assertEqual((e.exception.status, e.exception.code), (429, "already_paid"))
         clock["now"] += 25 * 3600
         bots.pay(LEARNER)
         self.assertEqual(len(node.calls("send")), 2)
@@ -122,16 +122,17 @@ class FaucetTests(unittest.TestCase):
         bots.pay("bcrt1qbbb")
         with self.assertRaises(FaucetError) as e:
             bots.pay("bcrt1qccc")
-        self.assertEqual(e.exception.status, 429)
+        self.assertEqual((e.exception.status, e.exception.code), (429, "busy"))
 
     def test_refuses_other_networks_and_own_addresses(self):
         bots, node, _ = make()
         for bad in ("bc1qcr8te4kr609gcawutmrza0j4xv80jy8z306fyu", "", "x" * 200):
             with self.assertRaises(FaucetError) as e:
                 bots.pay(bad)
-            self.assertEqual(e.exception.status, 400)
-        with self.assertRaises(FaucetError):
+            self.assertEqual((e.exception.status, e.exception.code), (400, "bad_address"))
+        with self.assertRaises(FaucetError) as e:
             bots.pay(POT_ADDR)
+        self.assertEqual(e.exception.code, "own_address")
         self.assertEqual(node.calls("send"), [])
 
     def test_insufficient_funds_relocks_the_pot_coin(self):
@@ -144,7 +145,7 @@ class FaucetTests(unittest.TestCase):
         node.on("faucet", "send", broke)
         with self.assertRaises(FaucetError) as e:
             bots.pay(LEARNER)
-        self.assertEqual(e.exception.status, 503)
+        self.assertEqual((e.exception.status, e.exception.code), (503, "refilling"))
         relock = [c for c in node.calls("lockunspent") if c[2][0] is False]
         self.assertEqual(relock[-1][2][1], [{"txid": "aa" * 32, "vout": 0}])
         self.assertEqual(bots.store.total(), 0)

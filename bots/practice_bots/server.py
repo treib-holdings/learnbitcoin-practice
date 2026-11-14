@@ -5,6 +5,10 @@
   GET  /pot/address   a fresh pot address (bearer token)
   POST /faucet        {"address": "bcrt1..."} -> one faucet payment (bearer token)
 
+Every refusal is JSON {"error": <sentence>, "code": <stable code>}. Faucet codes:
+bad_address, own_address (400), already_paid, busy (429), refilling (503),
+failed (500). Others: bad_request, unauthorized, not_found, unavailable, error.
+
 The practice app's Worker holds the token and checks Turnstile before it
 calls /faucet.
 """
@@ -45,13 +49,13 @@ def make_handler(bots, api_token: str, log=print):
             try:
                 self._send_json(200, fn())
             except FaucetError as e:
-                self._send_json(e.status, {"error": e.message})
+                self._send_json(e.status, {"error": e.message, "code": e.code})
             except RPCError as e:
                 log(f"rpc error: {e}")
-                self._send_json(502, {"error": "The practice network could not do that just now"})
+                self._send_json(502, {"error": "The practice network could not do that just now", "code": "unavailable"})
             except Exception as e:
                 log(f"error: {e!r}")
-                self._send_json(500, {"error": "Something went wrong"})
+                self._send_json(500, {"error": "Something went wrong", "code": "error"})
 
         def do_GET(self):
             path = self.path.split("?")[0]
@@ -61,22 +65,22 @@ def make_handler(bots, api_token: str, log=print):
                 return self._guard(bots.pot_stats)
             if path == "/pot/address":
                 if not self._authorized():
-                    return self._send_json(401, {"error": "unauthorized"})
+                    return self._send_json(401, {"error": "unauthorized", "code": "unauthorized"})
                 return self._guard(bots.pot_address)
-            self._send_json(404, {"error": "not found"})
+            self._send_json(404, {"error": "not found", "code": "not_found"})
 
         def do_POST(self):
             if self.path.split("?")[0] != "/faucet":
-                return self._send_json(404, {"error": "not found"})
+                return self._send_json(404, {"error": "not found", "code": "not_found"})
             if not self._authorized():
-                return self._send_json(401, {"error": "unauthorized"})
+                return self._send_json(401, {"error": "unauthorized", "code": "unauthorized"})
             length = int(self.headers.get("Content-Length") or 0)
             if length <= 0 or length > MAX_BODY:
-                return self._send_json(400, {"error": "Send a small JSON body with an address"})
+                return self._send_json(400, {"error": "Send a small JSON body with an address", "code": "bad_request"})
             try:
                 address = str(json.loads(self.rfile.read(length)).get("address", "")).strip()
             except (ValueError, AttributeError):
-                return self._send_json(400, {"error": "Send JSON like {\"address\": \"bcrt1...\"}"})
+                return self._send_json(400, {"error": "Send JSON like {\"address\": \"bcrt1...\"}", "code": "bad_request"})
             self._guard(lambda: bots.pay(address))
 
     return Handler

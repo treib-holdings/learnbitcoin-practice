@@ -20,9 +20,14 @@ from .rpc import RPCError, to_btc, to_sats
 
 
 class FaucetError(Exception):
-    def __init__(self, status: int, message: str):
+    """A refusal the caller can act on. `code` is stable and machine-readable
+    (the app shows its own text for it, in the reader's language); `message`
+    is for logs and for people calling the API by hand."""
+
+    def __init__(self, status: int, code: str, message: str):
         super().__init__(message)
         self.status = status
+        self.code = code
         self.message = message
 
 
@@ -115,13 +120,13 @@ class Bots:
 
     def _check_address(self, address: str) -> None:
         if not address or len(address) > 100:
-            raise FaucetError(400, "Send a practice-network address")
+            raise FaucetError(400, "bad_address", "Send a practice-network address")
         info = self.node.call("validateaddress", address)
         if not info.get("isvalid") or not address.startswith("bcrt1"):
-            raise FaucetError(400, "That is not a practice-network address (they start with bcrt1)")
+            raise FaucetError(400, "bad_address", "That is not a practice-network address (they start with bcrt1)")
         for wallet in (self.faucet, self.treasury):
             if wallet.call("getaddressinfo", address).get("ismine"):
-                raise FaucetError(400, "That address belongs to the practice network's own wallets")
+                raise FaucetError(400, "own_address", "That address belongs to the practice network's own wallets")
 
     def pay(self, address: str) -> dict:
         """Pay one faucet amount to a learner's address, spending the oldest pot coin first."""
@@ -130,9 +135,9 @@ class Bots:
             now = int(self.clock())
             last = self.store.last_payout_to(address)
             if last is not None and now - last < self.cfg.per_address_hours * 3600:
-                raise FaucetError(429, "This address already got practice coins today")
+                raise FaucetError(429, "already_paid", "This address already got practice coins today")
             if self.store.payouts_since(now - 60) >= self.cfg.per_minute:
-                raise FaucetError(429, "The faucet is busy; try again in a minute")
+                raise FaucetError(429, "busy", "The faucet is busy; try again in a minute")
 
             pot = next(iter(self.pot_coins()), None)
             options = {"add_inputs": True, "replaceable": True}
@@ -154,10 +159,10 @@ class Bots:
                 if pot:
                     self.faucet.call("lockunspent", False, [_outpoint(pot)], True)
                 if e.code == -6:  # insufficient funds: a refill is on its way
-                    raise FaucetError(503, "The faucet is refilling; try again in a minute") from None
+                    raise FaucetError(503, "refilling", "The faucet is refilling; try again in a minute") from None
                 raise
             if not result.get("complete") or not result.get("txid"):
-                raise FaucetError(500, "The faucet could not finish that payment")
+                raise FaucetError(500, "failed", "The faucet could not finish that payment")
             self.store.record(address, result["txid"], self.cfg.faucet_sats, pot, now)
             return {
                 "txid": result["txid"],

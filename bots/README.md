@@ -28,6 +28,11 @@ checks Turnstile before calling `/faucet`.
 | `GET /pot/address` | bearer | a fresh pot address |
 | `POST /faucet` `{"address": "bcrt1..."}` | bearer | `{txid, amount_sats, pot_coin}` |
 
+Every refusal is JSON `{"error": <sentence>, "code": <stable code>}`. The faucet's
+codes: `bad_address`, `own_address` (400), `already_paid`, `busy` (429), `refilling`
+(503), `failed` (500). The app shows its own text for each code, in the reader's
+language; the sentence is for logs and for people calling the API by hand.
+
 ## Tests
 
 ```sh

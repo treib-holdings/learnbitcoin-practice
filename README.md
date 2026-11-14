@@ -15,7 +15,8 @@ teaches before they risk real money.
 - **Real, not faked.** Real transactions on a real chain, built and signed
   in the browser, readable by standard software.
 - **Portable.** Standard BIP39 words and BIP84 descriptors: the same 12 words
-  restore the same practice wallet in Sparrow or Bitcoin Core.
+  restore the same practice wallet in Sparrow, and its descriptors import into
+  Bitcoin Core (which has no 12-word import of its own).
 
 ## Layout
 
