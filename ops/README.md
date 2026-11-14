@@ -80,6 +80,32 @@ Credentials: `ssh -t <server> ops/backup/save-r2-creds.sh <account-id>`
 writes `ops/.rclone.conf` (mode 600) with hidden input. A failed backup
 alerts the ntfy topic. To test a restore: `ops/backup/restore-drill.sh`.
 
+## Starting the chain again
+
+`ops/reset-chain.sh` starts the chain from its first block: the same network,
+host names, settings, secrets and certificate, and no history. Without
+`--yes` it only says what it would do. With it, it stops everything that
+reads or writes the chain, moves the old chain, its index, the explorer's
+database and the faucet's records to `/data/before-reset-<time>/` (nothing is
+deleted), mines 5,000 blocks to a new treasury wallet with a new reward
+address every 100 blocks, builds the index and the explorer again, starts the
+producer and the bots, and checks the result. It prints how to go back to the
+old chain, whether it finished or stopped half-way.
+
+Every practice wallet shows no coins afterwards, so the time for it is after
+the last test and before the first reader. Run it in a session that outlives
+the connection:
+
+```sh
+cd /opt/learnbitcoin-practice/ops
+nohup setsid ./reset-chain.sh --yes > ../reset.log 2>&1 < /dev/null &
+tail -f ../reset.log
+```
+
+It took four and a half minutes on 2026-11-14 (most of it the mining); the
+explorer and the Electrum port were away for that long. A desktop wallet that
+had synced the old chain needs its cached data for this network cleared.
+
 ## Cross-check without the VPS
 
 `tools/regtest-crosscheck/run.sh` runs the wallet library against Bitcoin
