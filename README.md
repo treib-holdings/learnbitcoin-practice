@@ -23,8 +23,9 @@ teaches before they risk real money.
 |---|---|
 | `wallet/` | Keys (passkey PRF or random words), addresses, descriptors, chain scan, payments. Pure TypeScript on the audited @scure / @noble libraries; no WebAssembly. |
 | `ops/` | The practice network: Bitcoin Core (regtest), electrs, mempool explorer, Cloudflare tunnel. |
+| `bots/` | Treasury upkeep, the faucet, the pay-it-forward pot, refills and health alerts, with a small API for the practice app. Every key stays in Bitcoin Core's wallets. |
 | `tools/regtest-crosscheck/` | Checks the wallet library against Bitcoin Core on regtest. |
-| `bots/` | Block producer, faucet and the other scripted counterparties (to come). |
+| `tools/integration/` | End-to-end checks against the live practice network: the wallet, the public Electrum port, and pay-it-forward. |
 
 ## Keys
 

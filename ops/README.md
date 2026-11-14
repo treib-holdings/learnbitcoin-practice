@@ -37,24 +37,28 @@ port 22 in the cloud firewall to get back in.
    the chain's ~15,000 practice BTC up front.
 5. `docker compose up -d electrs mempool-db mempool-api mempool-web router cloudflared`
 6. First certificate for practice-electrum.learnbitcoin.com (needs its DNS
-   record and port 80 open): certbot with the webroot `ops/nginx/acme`, into
-   /data/letsencrypt; then `docker compose up -d electrum-tls`, which cannot
-   start without it.
+   record and port 80 open): `sudo ops/certs/cert.sh issue`, then
+   `docker compose up -d electrum-tls` (it cannot start without the
+   certificate) and `sudo ops/certs/cert.sh install-timer` for renewals.
+7. Bots: `sudo install -d -o 1000 -g 1000 /data/bots`, add `NTFY_TOPIC=` to
+   `ops/.env` for alerts, then `docker compose build bots && docker compose up
+   -d bots`. On first start they create the faucet wallet, refill it from the
+   treasury and consolidate the treasury's small coins. See `bots/README.md`.
 
 Interim kernel mitigation: `sudo bash ops/mitigations/cve-2026-98432.sh`
 (applied 2026-11-13; removal steps in the script).
 
-## S1 checks
+## Checks (spike S1, all run 2026-11-13)
 
-- One block every 30 s for 48 h (bots/producer).
-- Esplora REST and Electrum both serve a BIP84 wallet; the wallet package's
-  scan and send work against it end to end.
-- Sparrow restores the same 12 words (and whether Tools > Restart In offers
-  Regtest, or readers need `-n regtest`).
-- The mempool frontend shows bcrt1 address pages and a queued transaction.
-- `generatetoaddress` honours `blockmaxweight`.
-- electrs and mempool follow an `invalidateblock` reorg.
-- A backup restores cleanly.
+- One block every 30 s (the producer); a 48-hour run is under way.
+- Esplora REST and Electrum both serve a BIP84 wallet:
+  `tools/integration/run-e2e.sh` and `tools/integration/electrum-check.ts`.
+- The mempool frontend shows bcrt1 address and transaction pages.
+- `generatetoaddress` honours `blockmaxweight`, and electrs and mempool follow
+  an `invalidateblock` reorg: `tools/s1-checks/weight_and_reorg.py`.
+- Pay it forward: `tools/integration/run-bots-e2e.sh`.
+- Still to do: Sparrow itself against the Electrum port, and a backup
+  restore drill.
 
 ## Cross-check without the VPS
 
