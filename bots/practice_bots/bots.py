@@ -46,6 +46,7 @@ class Bots:
         self.fetch = fetch or (lambda url: urllib.request.urlopen(url, timeout=10).read().decode())
         self.lock = threading.Lock()  # one wallet-changing operation at a time
         self.last_consolidation: str | None = None
+        self._pot_address: str | None = None  # handed out until it is paid
 
     # -- setup ----------------------------------------------------------------
 
@@ -91,8 +92,22 @@ class Bots:
         return sorted(coins.values(), key=lambda c: (-c["confirmations"], c["txid"], c["vout"]))
 
     def pot_address(self) -> dict:
+        """The pot's current address. Everyone who asks gets the same one until
+        somebody pays it; only then is a new one made. So asking is free: it
+        cannot grow the node's wallet, however often it is called."""
         with self.lock:
-            return {"address": self.faucet.call("getnewaddress", "pot", "bech32")}
+            if self._pot_address is None:
+                self._pot_address = self._unpaid_pot_address()
+            elif self.faucet.call("getreceivedbyaddress", self._pot_address, 0) > 0:
+                self._pot_address = self.faucet.call("getnewaddress", "pot", "bech32")
+            return {"address": self._pot_address}
+
+    def _unpaid_pot_address(self) -> str:
+        """After a restart: a pot address that was never paid, or a new one if there is none."""
+        for entry in self.faucet.call("listreceivedbyaddress", 0, True, False):
+            if entry.get("label") == "pot" and not entry.get("txids") and not entry.get("amount"):
+                return entry["address"]
+        return self.faucet.call("getnewaddress", "pot", "bech32")
 
     def pot_stats(self) -> dict:
         received = [

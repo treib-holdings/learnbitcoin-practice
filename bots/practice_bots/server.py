@@ -2,7 +2,7 @@
 
   GET  /health        node, electrs and faucet status (no auth)
   GET  /pot/stats     the pay-it-forward counter (no auth)
-  GET  /pot/address   a fresh pot address (bearer token)
+  GET  /pot/address   the pot's current address: the same one until it is paid (bearer token)
   POST /faucet        {"address": "bcrt1..."} -> one faucet payment (bearer token)
 
 Every refusal is JSON {"error": <sentence>, "code": <stable code>}. Faucet codes:

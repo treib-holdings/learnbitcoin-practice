@@ -73,6 +73,56 @@ def pot_coin(txid, confs, sats=30_000, vout=0):
     return {"txid": txid, "vout": vout, "amount": Decimal(to_btc(sats)), "confirmations": confs, "address": POT_ADDR}
 
 
+class PotAddressTests(unittest.TestCase):
+    def test_the_same_address_until_it_is_paid(self):
+        bots, node, _ = make()
+        made = []
+        received = {}
+
+        def new_address(*a):
+            made.append(f"bcrt1qpot{len(made)}")
+            return made[-1]
+
+        node.on("faucet", "listreceivedbyaddress", lambda *a: [])
+        node.on("faucet", "getnewaddress", new_address)
+        node.on("faucet", "getreceivedbyaddress", lambda a, minconf: received.get(a, Decimal(0)))
+
+        first = bots.pot_address()["address"]
+        for _ in range(50):
+            self.assertEqual(bots.pot_address()["address"], first)
+        self.assertEqual(made, [first], "asking again must not make new addresses")
+        self.assertEqual(node.calls("getnewaddress")[0][2], ("pot", "bech32"))
+        self.assertEqual(node.calls("getreceivedbyaddress")[0][2], (first, 0), "an unconfirmed payment counts")
+
+        received[first] = Decimal("0.00050000")
+        second = bots.pot_address()["address"]
+        self.assertNotEqual(second, first)
+        self.assertEqual(bots.pot_address()["address"], second)
+        self.assertEqual(len(made), 2)
+
+    def test_after_a_restart_an_unpaid_pot_address_is_reused(self):
+        bots, node, _ = make()
+        node.on("faucet", "listreceivedbyaddress", lambda *a: [
+            {"address": "bcrt1qrefill", "label": "refill", "amount": Decimal(0), "txids": []},
+            {"address": "bcrt1qpaid", "label": "pot", "amount": Decimal("0.001"), "txids": ["aa" * 32]},
+            {"address": "bcrt1qunpaid", "label": "pot", "amount": Decimal(0), "txids": []},
+        ])
+        node.on("faucet", "getreceivedbyaddress", lambda a, minconf: Decimal(0))
+        self.assertEqual(bots.pot_address()["address"], "bcrt1qunpaid")
+        self.assertEqual(node.calls("listreceivedbyaddress")[0][2], (0, True, False))
+        self.assertEqual(bots.pot_address()["address"], "bcrt1qunpaid")
+        self.assertEqual(len(node.calls("listreceivedbyaddress")), 1, "looked up once, then remembered")
+        self.assertEqual(node.calls("getnewaddress"), [])
+
+    def test_after_a_restart_with_every_pot_address_paid_a_new_one_is_made(self):
+        bots, node, _ = make()
+        node.on("faucet", "listreceivedbyaddress", lambda *a: [
+            {"address": "bcrt1qpaid", "label": "pot", "amount": Decimal("0.001"), "txids": ["aa" * 32]},
+        ])
+        node.on("faucet", "getnewaddress", lambda *a: "bcrt1qfresh")
+        self.assertEqual(bots.pot_address()["address"], "bcrt1qfresh")
+
+
 class AmountTests(unittest.TestCase):
     def test_round_trip(self):
         self.assertEqual(to_btc(100_000), "0.00100000")
