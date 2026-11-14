@@ -28,6 +28,9 @@ secret_access_key = $secret
 endpoint = https://$ACCOUNT.r2.cloudflarestorage.com
 acl = private
 no_check_bucket = true
+# rclone 1.60 re-reads each upload by version ID, which R2 does not implement
+# (501). The upload is still checked: R2 verifies the Content-MD5 rclone sends.
+no_head = true
 EOF
 echo "Saved $CONF (mode 600). Checking the token..."
 
