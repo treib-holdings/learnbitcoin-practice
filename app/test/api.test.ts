@@ -174,9 +174,9 @@ test('a refusal with a code this app does not know is "unavailable", whatever th
     '{"error":"LIMIT"}',
     '{"error":"toString"}',
     '{"error":""}',
-    // Long enough that the wallet's Esplora client cuts the body short.
-    `{"error":"something_new","detail":"${'x'.repeat(DETAIL_MAX)}"}`,
-    `{"error":"Something New","detail":"${'x'.repeat(DETAIL_MAX)}"}`,
+    // Long enough that the wallet's Esplora client cuts the body short: it keeps the first 1,000 characters.
+    `{"error":"something_new","detail":"${'x'.repeat(1_000)}"}`,
+    `{"error":"Something New","detail":"${'x'.repeat(1_000)}"}`,
   ];
   for (const status of [400, 403, 404, 429, 500, 502, 503]) {
     for (const body of bodies) {
@@ -195,7 +195,7 @@ test('a refusal with a code this app does not know is "unavailable", whatever th
         const e = await thrownBy(call);
         assert.ok(e instanceof EsploraError, where);
         // The long bodies reach the app without their end, and are still read as refusals.
-        if (body.length > 300) assert.ok(!e.message.endsWith('}'), 'the client cut the body');
+        if (body.length > 1_000) assert.ok(!e.message.endsWith('}'), 'the client cut the body');
         assert.equal(failureOf(e), 'unavailable', where);
       }
       const sent = await thrownBy(() => client().esplora.broadcast('00'));
@@ -361,52 +361,144 @@ test('broadcastFailure: a refusal without the node words has no detail', async (
   }
 });
 
-test('broadcastFailure: a long refusal still gives its code, though the client cut the body', async () => {
-  // The wallet's Esplora client keeps the first 300 characters of a body. A
-  // detail of the full contract length makes the body longer than that, so
-  // what reaches the app is JSON without its end.
+test('broadcastFailure: a detail of exactly 300 characters of text arrives whole', async () => {
+  // The Worker cuts the node's words to DETAIL_MAX characters, and its answer
+  // is longer than they are: there is the wrapper around them, and JSON
+  // writes each quote and backslash in them as two characters. The wallet's
+  // Esplora client keeps the first 1,000 characters of a failed answer, so
+  // each of these answers reaches the app with its end, and the details
+  // line gets all the words the Worker passed on. (Words made of control
+  // characters are the one kind that does not: the next test.)
+  assert.equal(DETAIL_MAX, 300);
+  const [accented, face] = [0xe9, 0x1f600].map((code) => String.fromCodePoint(code));
   const message = 'non-mandatory-script-verify-flag '.repeat(12);
-  const words = `sendrawtransaction RPC error: {"code":-26,"message":"${message}"}`;
-  const detail = words.slice(0, DETAIL_MAX);
-  assert.equal(detail.length, DETAIL_MAX);
-  for (const code of BROADCAST_REFUSALS) {
-    const e = await thrownBy(() => makeApi(refusing(code, detail).fetchFn).esplora.broadcast('00'));
-    assert.ok(e instanceof EsploraError);
-    assert.throws(() => JSON.parse(e.message.slice(e.message.indexOf('{'))), SyntaxError, 'the body was cut');
-    const failure = broadcastFailure(e);
-    assert.equal(failure.reason, code);
-    assert.equal(failureOf(e), code);
-    // What is left of the node's words: a clean start of them, most of the way.
-    assert.ok(failure.detail !== null && failure.detail.length > 200, String(failure.detail?.length));
-    assert.ok(detail.startsWith(failure.detail));
+  const details = [
+    // The node's words as Esplora passes them on, quotes included.
+    `sendrawtransaction RPC error: {"code":-26,"message":"${message}"}`.slice(0, DETAIL_MAX),
+    'x'.repeat(DETAIL_MAX),
+    // The longest answer text can make: every character one that JSON writes as two.
+    '"'.repeat(DETAIL_MAX),
+    '\\'.repeat(DETAIL_MAX),
+    // An escape as the very last thing, and characters outside ASCII.
+    `${'x'.repeat(DETAIL_MAX - 1)}"`,
+    `caf${accented} ${face} `.repeat(40).slice(0, DETAIL_MAX),
+  ];
+  for (const detail of details) {
+    assert.equal(detail.length, DETAIL_MAX);
+    for (const code of BROADCAST_REFUSALS) {
+      const body = JSON.stringify({ error: code, detail });
+      assert.ok(body.length > DETAIL_MAX && body.length <= 1_000, `a body of ${body.length} characters`);
+      const e = await thrownBy(() => makeApi(refusing(code, detail).fetchFn).esplora.broadcast('00'));
+      assert.ok(e instanceof EsploraError);
+      assert.ok(e.message.endsWith(body), 'the client kept the whole body');
+      assert.deepEqual(broadcastFailure(e), { reason: code, detail }, code);
+      assert.equal(failureOf(e), code);
+    }
   }
 });
 
-test('broadcastFailure: a cut that falls inside an escape leaves no half character', async () => {
-  // Every position of the cut, across text full of characters JSON has to
-  // escape: an accented letter, quotes, a backslash, a line separator, a tab,
-  // a new line and a smiling face, which is two units long.
-  const [accented, separator, face] = [0xe9, 0x2028, 0x1f600].map((code) => String.fromCodePoint(code));
-  const tricky = `caf${accented} "quoted" back\\slash ${separator} tab\t new\nline ${face} `;
-  const ends = new Set<string>();
-  for (let pad = 0; pad < 40; pad++) {
-    const detail = ('x'.repeat(pad) + tricky.repeat(12)).slice(0, DETAIL_MAX);
-    // Written with every character above 127 escaped, as some servers write JSON.
-    const body = JSON.stringify({ error: 'refused', detail }).replace(
-      /[^\x00-\x7f]/g,
-      (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`,
-    );
-    const e = await thrownBy(() => makeApi(answering(400, body).fetchFn).esplora.broadcast('00'));
-    const failure = broadcastFailure(e);
-    assert.equal(failure.reason, 'refused');
-    assert.ok(failure.detail !== null && failure.detail.length > 100, `pad ${pad}`);
-    assert.ok(detail.startsWith(failure.detail), `pad ${pad}: ${JSON.stringify(failure.detail.slice(-12))}`);
-    // The smiling face is two units long: half of it is not a character.
-    assert.doesNotMatch(failure.detail, /[\ud800-\udbff]$/, `pad ${pad}`);
-    ends.add(failure.detail.slice(-1));
+test('broadcastFailure: a detail made mostly of control characters makes a body longer than the client keeps, and is still read', async () => {
+  // JSON writes most control characters as six characters each: a
+  // backslash, a "u" and four digits. So the Worker's answer can be longer
+  // than the 1,000 characters the wallet's Esplora client keeps, although
+  // its detail is 300 characters at most. No refusal recorded from the node
+  // holds a control character, but nothing rules one out.
+  const control = String.fromCharCode(1);
+  assert.equal(JSON.stringify(control), '"\\u0001"');
+  // The longest body the Worker can write: 300 of them, under its longest code.
+  assert.equal(JSON.stringify({ error: 'already_sent', detail: control.repeat(DETAIL_MAX) }).length, 1_836);
+  assert.ok(BROADCAST_REFUSALS.every((code) => code.length <= 'already_sent'.length));
+
+  for (const code of BROADCAST_REFUSALS) {
+    const detail = control.repeat(DETAIL_MAX);
+    const head = `{"error":"${code}","detail":"`;
+    const body = JSON.stringify({ error: code, detail });
+    assert.equal(body.length, head.length + 6 * DETAIL_MAX + 2);
+    const e = await thrownBy(() => makeApi(refusing(code, detail).fetchFn).esplora.broadcast('00'));
+    assert.ok(e instanceof EsploraError);
+    assert.ok(e.message.endsWith(body.slice(0, 1_000)) && !e.message.endsWith(body), 'the client cut the body');
+    // The code is read all the same, and the words as far as they arrived
+    // whole: every character whose six-character escape is inside the first
+    // 1,000, and no half of one.
+    const arrived = Math.floor((1_000 - head.length) / 6);
+    assert.ok(arrived > 150 && arrived < DETAIL_MAX);
+    assert.deepEqual(broadcastFailure(e), { reason: code, detail: control.repeat(arrived) }, code);
+    assert.equal(failureOf(e), code);
   }
-  // The cuts really fell in different places, escapes included.
-  assert.ok(ends.size >= 8, [...ends].join(''));
+
+  // Where it starts, for the code "refused". Each control character in
+  // place of a letter makes the body five characters longer.
+  const mixed = (controls: number) => `${control.repeat(controls)}${'z'.repeat(DETAIL_MAX - controls)}`;
+  const sent = async (detail: string) => {
+    const e = await thrownBy(() => makeApi(refusing('refused', detail).fetchFn).esplora.broadcast('00'));
+    assert.ok(e instanceof EsploraError);
+    return { whole: e.message.endsWith('"}'), failure: broadcastFailure(e) };
+  };
+  // 133 of them: 996 characters, and the body arrives whole.
+  assert.equal(JSON.stringify({ error: 'refused', detail: mixed(133) }).length, 996);
+  assert.deepEqual(await sent(mixed(133)), { whole: true, failure: { reason: 'refused', detail: mixed(133) } });
+  // 134: 1,001 characters. Only the closing brace is lost, so the words are still all there.
+  assert.deepEqual(await sent(mixed(134)), { whole: false, failure: { reason: 'refused', detail: mixed(134) } });
+  // 135: 1,006 characters, and the last four letters of the words are lost with the end.
+  assert.deepEqual(await sent(mixed(135)), { whole: false, failure: { reason: 'refused', detail: mixed(135).slice(0, -4) } });
+});
+
+test('broadcastFailure: a refusal longer than the client keeps still gives its code, and its words from their start', async () => {
+  // The guard. Nothing the Worker writes is this long, and of what it does
+  // write only a detail of control characters is long enough to be cut (the
+  // test above). But a body that reaches the app without its end must still
+  // be read: the code, and the node's words as far as the contract lets a
+  // detail go.
+  const words = 'non-mandatory-script-verify-flag '.repeat(60);
+  assert.ok(words.length > 1_500);
+  for (const code of BROADCAST_REFUSALS) {
+    const e = await thrownBy(() => makeApi(refusing(code, words).fetchFn).esplora.broadcast('00'));
+    assert.ok(e instanceof EsploraError);
+    assert.throws(() => JSON.parse(e.message.slice(e.message.indexOf('{'))), SyntaxError, 'the body was cut');
+    assert.deepEqual(broadcastFailure(e), { reason: code, detail: words.slice(0, DETAIL_MAX) });
+    assert.equal(failureOf(e), code);
+  }
+});
+
+test('broadcastFailure: a body cut anywhere, inside an escape included, gives every whole character and no half one', () => {
+  // The same guard, at every position a cut can fall. The text is full of
+  // characters JSON has to escape: an accented letter, quotes, a backslash,
+  // a line separator, a tab, a new line and a smiling face, which is two
+  // units long. It is shorter than a detail may be, so that what comes back
+  // shows where the cut fell.
+  const [accented, separator, face] = [0xe9, 0x2028, 0x1f600].map((code) => String.fromCodePoint(code));
+  const detail = `caf${accented} "quoted" back\\slash ${separator} tab\t new\nline ${face} `.repeat(4);
+  assert.ok(detail.length < DETAIL_MAX);
+  /** The inside of a JSON string, with every character above 127 escaped, as some servers write JSON. */
+  const written = (text: string): string =>
+    JSON.stringify(text)
+      .slice(1, -1)
+      .replace(/[^\x00-\x7f]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`);
+  const head = '{"error":"refused","detail":"';
+  const body = `${head}${written(detail)}"}`;
+  assert.deepEqual(JSON.parse(body), { error: 'refused', detail });
+  /** What the wallet's Esplora client throws for a refused broadcast of which this much arrived. */
+  const arrived = (text: string) => new EsploraError(`Esplora POST /tx failed (400): ${text}`, 400);
+
+  const lengths = new Set<number>();
+  // From the first cut that leaves the code whole, to the cut that loses only the closing brace.
+  for (let cut = '{"error":"refused"'.length; cut < body.length; cut++) {
+    const failure = broadcastFailure(arrived(body.slice(0, cut)));
+    assert.equal(failure.reason, 'refused', `cut at ${cut}`);
+    assert.equal(failureOf(arrived(body.slice(0, cut))), 'refused', `cut at ${cut}`);
+    // Worked out here a second way: the characters of the detail whose whole escape arrived ...
+    const room = Math.max(0, cut - head.length);
+    let whole = 0;
+    while (whole < detail.length && written(detail.slice(0, whole + 1)).length <= room) whole++;
+    // ... less the first half of the smiling face, if the cut fell between its halves.
+    const expected = detail.slice(0, whole).replace(/[\ud800-\udbff]$/, '');
+    assert.equal(failure.detail, expected === '' ? null : expected, `cut at ${cut}`);
+    lengths.add(expected.length);
+  }
+  // The cuts fell after every character of the detail but the first halves of the four faces.
+  assert.equal(lengths.size, detail.length + 1 - 4);
+  // And the body that arrived whole gives all of it.
+  assert.deepEqual(broadcastFailure(arrived(body)), { reason: 'refused', detail });
 });
 
 test('a detail the Worker cut in the middle of a character loses the half', async () => {
@@ -422,10 +514,14 @@ test('broadcastFailure: everything that is not a refusal by the node', async () 
     [refusing('limit').fetchFn, 'limit'],
     [answering(429, 'error code: 1015', 'text/plain').fetchFn, 'limit'],
     [refusing('unavailable').fetchFn, 'unavailable'],
-    // Codes that say the payment never reached the node.
+    // The payment is over the size the Worker takes in one request: it
+    // spends too many coins at once. The reader can send less, so the Send
+    // screen is told as much.
+    [refusing('too_large').fetchFn, 'too_large'],
+    [refusing('too_large', 'the Worker sends no detail with it').fetchFn, 'too_large'],
+    // The other codes that say the payment never reached the node: nothing a smaller payment would mend.
     [refusing('bad_request').fetchFn, 'unavailable'],
     [refusing('forbidden').fetchFn, 'unavailable'],
-    [refusing('too_large').fetchFn, 'unavailable'],
     [refusing('method').fetchFn, 'unavailable'],
     [refusing('not_found').fetchFn, 'unavailable'],
     // A faucet code has no business here.
@@ -447,6 +543,7 @@ test('broadcastFailure never throws, whatever it is handed', () => {
     detail: 'the node said so',
   });
   assert.deepEqual(broadcastFailure(new ApiError(0, 'network')), { reason: 'network', detail: null });
+  assert.deepEqual(broadcastFailure(new ApiError(413, 'too_large')), { reason: 'too_large', detail: null });
   assert.deepEqual(broadcastFailure(new ApiError(429, 'busy', 'x')), { reason: 'unavailable', detail: null });
   for (const odd of [null, undefined, 0, 'dust', {}, [], new Error('x'), Symbol('x'), () => 'dust']) {
     assert.deepEqual(broadcastFailure(odd), { reason: 'unavailable', detail: null });

@@ -20,7 +20,7 @@
 // a passkey prompt that is still open.
 //
 // A sentence is found by its key alone, so it has to be true on every screen
-// that can show it. Four places where that shapes the wording:
+// that can show it. Seven places where that shapes the wording:
 //
 //   - While the faucet waits (FaucetView.phase is "waiting"), `failure` is
 //     "limit", "busy" or "refilling", and the page asks again by itself.
@@ -33,13 +33,52 @@
 //     Unlock. On Create there is no wallet to open and there are no 12 words
 //     yet. On Unlock a wallet is here, so Create refuses. A way out that
 //     fits only one of them says which one it is for.
-//   - A plan can be refused as "too-much" or "below-dust" with maxSendable
-//     0: what the wallet can spend is too small to send once the fee is
-//     paid. Both sentences say what to do then. The Send screen may show a
-//     line of its own for that case in their place.
-//   - "too_large" is never shown for a payment: broadcastFailure reads it as
-//     "unavailable" (lib/api.ts). Wherever it can show, this page built the
-//     request, so the sentence owns the fault.
+//   - A plan can be refused with maxSendable 0. All that says for certain
+//     is that "Send all" cannot be made at this fee rate. Mostly nothing
+//     else can be sent then either: what the wallet can spend is too small
+//     once the fee is paid. The sentences for "too-much" and "below-dust"
+//     say what to do in that case, and say it after an "if", because it is
+//     not always the case. The wallet package names the two exceptions
+//     (PaymentPlan.maxSendable in its send.ts). A wallet can hold coins
+//     that cost more to spend than they hold: "Send all" spends them all
+//     the same, and a payment that leaves them where they are still goes
+//     through. And one coin sent in full to a very short address makes too
+//     small a transaction, where the same coin pays that address once
+//     change comes back. The Send screen may show a line of its own beside
+//     the sentence of a refusal whose maxSendable is 0. That line may say
+//     that "Send all" cannot be made at this fee rate. It must not say
+//     that nothing can be sent, and it does not take the sentence's place:
+//     the sentence has the way out. "bad-fee" comes with maxSendable 0
+//     every time, for a cause of its own: with no fee rate there is no
+//     figure to give.
+//   - "bad-address" is only ever said of text that is not a practice
+//     address: a mistyped one, or an address of another network. So its
+//     sentence has a way out for each: copy it again, and check how it
+//     starts. A good address that this payment cannot pay is "too-small".
+//   - "too-small" is about the size of the transaction in bytes, not the
+//     amount in sats, and its first way out is the opposite of the one for
+//     dust: a smaller amount, so that change comes back and the transaction
+//     has a second output. The sentence says "in bytes" to keep the two
+//     apart. That way out needs one coin to cover the amount, 294 sats of
+//     change and the fee for two outputs, and not every coin can. A coin of
+//     under 657 sats cannot at any fee rate, and the faucet's 100,000 sats
+//     cannot from 809 sat/vB up (the form takes rates up to 1,000). A
+//     wallet with that one coin can then send this address no amount at
+//     all, so the sentence goes on as the dust sentences do: a lower fee
+//     rate, or more practice coins. More coins alone leave a small amount
+//     refused, because the wallet still pays it from one coin where one is
+//     enough. So the sentence says to send a larger amount then.
+//   - "bad-fee" is a fee rate under 1 sat/vB. That limit is this wallet's
+//     own. The practice network's node relays lower rates, so the sentence
+//     never says the network refuses it.
+//   - "too_large" is shown on Send and nowhere else. A payment that spends
+//     more than 675 of this wallet's coins at once makes a transaction
+//     longer than the Worker takes in one request, and broadcastFailure
+//     (lib/api.ts) passes that code on. So the sentence speaks of a
+//     payment, and its way out is to send less at a time. No other request
+//     can grow like that: the faucet's holds an address and a bot-check
+//     token, a chain read and the pot's have no body, and a failed event
+//     is never shown.
 //
 // Rules for every sentence here:
 //   - The cause first, then the way out. Where the fault is ours, it says so.
@@ -74,8 +113,9 @@ export const en = {
     'The practice network has no record of that. If it was sent a moment ago, wait for the next block and look again.',
   method:
     'This page asked the practice network in a way it does not accept. That is a bug on our side. Reload the page and try again.',
+  // The one request that can be too large is a payment (see the top of this file), so this speaks of one.
   too_large:
-    'This page sent the practice network more than it takes in one request. That is a bug on our side. Reload the page and try again.',
+    'This payment spends so many coins at once that it is larger than the practice network takes in one request. Go back and send a smaller amount first, then send the rest.',
   limit: 'You are asking the practice network faster than it allows. Wait a minute, and it will take requests again.',
   unavailable: 'The practice network could not answer just now. The fault is on our side. Try again in a minute.',
   network: 'No answer came back from the practice network. Check your internet connection and try again.',
@@ -119,6 +159,9 @@ export const en = {
     'That amount is too small for the network to carry. Amounts that small are called dust. Send a larger amount. If this wallet cannot send more once the fee is paid, get more practice coins on the Receive screen first.',
   'plan_bad-address':
     'That is not an address this wallet can pay. Practice addresses start with bcrt1. Copy the address again and check how it starts.',
+  'plan_too-small':
+    'This payment would make a transaction too small, in bytes, for the network to accept. That happens only when one coin pays a very short address like this one and no change comes back. Send a smaller amount, so that change comes back and the transaction is large enough. If the fee leaves no room for change, lower the fee rate, or get more practice coins on the Receive screen first and then send a larger amount.',
+  'plan_bad-fee': 'That fee rate is below 1 sat/vB, the lowest this wallet takes. Use a fee rate of 1 or more.',
 
   // -- a passkey step that did not finish --
   passkey_cancelled:
@@ -144,7 +187,7 @@ export const es: Record<keyof typeof en, string> = {
   method:
     'Esta página le pidió algo a la red de práctica de una forma que no acepta. Es un error nuestro. Recarga la página y vuelve a intentarlo.',
   too_large:
-    'Esta página le envió a la red de práctica más de lo que acepta en una sola solicitud. Es un error nuestro. Recarga la página y vuelve a intentarlo.',
+    'Este pago gasta tantas monedas a la vez que es más grande de lo que la red de práctica acepta en una sola solicitud. Vuelve atrás y envía primero un monto menor, y después envía el resto.',
   limit:
     'Estás haciendo solicitudes a la red de práctica más rápido de lo que permite. Espera un minuto y volverá a aceptarlas.',
   unavailable:
@@ -189,6 +232,10 @@ export const es: Record<keyof typeof en, string> = {
     'Ese monto es demasiado pequeño para que la red lo acepte. A montos así de pequeños se les llama polvo (dust). Envía un monto mayor. Si esta billetera no puede enviar más después de pagar la comisión, pide primero más monedas de práctica en la pantalla Recibir.',
   'plan_bad-address':
     'Eso no es una dirección a la que esta billetera pueda pagar. Las direcciones de práctica empiezan con bcrt1. Copia la dirección otra vez y revisa cómo empieza.',
+  'plan_too-small':
+    'Este pago haría una transacción demasiado pequeña, en bytes, para que la red la acepte. Eso solo pasa cuando una sola moneda paga a una dirección muy corta como esta y no vuelve cambio. Envía un monto menor, para que vuelva cambio y la transacción tenga el tamaño suficiente. Si la comisión no deja lugar para el cambio, baja la tasa de comisión, o pide primero más monedas de práctica en la pantalla Recibir y después envía un monto mayor.',
+  'plan_bad-fee':
+    'Esa tasa de comisión es menor que 1 sat/vB, la más baja que acepta esta billetera. Usa una tasa de comisión de 1 o más.',
 
   passkey_cancelled:
     'La ventana de la llave de acceso se cerró o se le acabó el tiempo, así que no cambió nada. Vuelve a intentarlo cuando quieras.',

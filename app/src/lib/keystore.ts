@@ -145,6 +145,9 @@ export function makeRecord(
 const FINGERPRINT = /^[0-9a-f]{8}$/;
 const BASE64URL = /^[A-Za-z0-9_-]+$/;
 
+/** The 64 characters of base64url, each at the place of the number it stands for: "A" is 0 and "_" is 63. */
+const BASE64URL_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+
 /**
  * A passkey's tag: four characters of the alphabet tags are written in
  * (tagFromUserId in passkey.ts). That alphabet is frozen, so this is too.
@@ -162,12 +165,31 @@ const TIME_MAX = 8_640_000_000_000_000;
 
 /**
  * A passkey's ID as passkey.ts writes it: base64url text that can be turned
- * back into bytes. Text one character over a multiple of four is the base64
- * of no bytes at all, so a passkey with such an ID could never be asked for.
+ * back into bytes, in the one spelling those bytes have.
+ *
+ * A character of base64 carries six bits, so four characters hold three
+ * bytes. Text one character over a multiple of four is the base64 of no
+ * bytes at all, so a passkey with such an ID could never be asked for. Text
+ * two characters over holds one more byte and four bits to spare, and text
+ * three over holds two more bytes and two bits to spare. passkey.ts writes
+ * the spare bits as zeros: the last character is then one of "AQgw", or one
+ * of "AEIMQUYcgkosw048".
+ *
+ * Text with anything else in those bits is not an ID. A browser that turns
+ * it back into bytes drops the spare bits without a word, so it would ask
+ * for the very same passkey. That passkey answers under its ID as it is
+ * really written, and judgeUnlock, which compares the two texts, would
+ * take the stored passkey for a different one. A record altered in storage
+ * could use that to slip past "tampered" and "changed".
  */
 function isCredentialId(value: unknown): value is string {
-  if (typeof value !== 'string' || value.length > CREDENTIAL_ID_MAX) return false;
-  return value.length % 4 !== 1 && BASE64URL.test(value);
+  if (typeof value !== 'string' || value.length > CREDENTIAL_ID_MAX || !BASE64URL.test(value)) return false;
+  const over = value.length % 4;
+  if (over === 1) return false;
+  if (over === 0) return true;
+  // The number the last character stands for. Its lowest bits are the spare ones: four of them, or two.
+  const last = BASE64URL_ALPHABET.indexOf(value.charAt(value.length - 1));
+  return last % (over === 2 ? 16 : 4) === 0;
 }
 
 /** A tag as passkey.ts writes it. The app shows the tag, so nothing else may pass as one. */

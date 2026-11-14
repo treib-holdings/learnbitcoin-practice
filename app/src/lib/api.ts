@@ -23,8 +23,16 @@ import { Esplora, EsploraError, type FetchLike } from '@learnbitcoin/practice-wa
 /** Why a request failed: a refusal code from the contract, or "network" when no answer came back. */
 export type ApiFailure = ErrorCode | 'network';
 
-/** Why a payment was not accepted. A code outside this list reads as "unavailable". */
-export type BroadcastFailure = BroadcastRefusal | 'limit' | 'unavailable' | 'network';
+/**
+ * Why a payment was not accepted. Either the node refused it (the
+ * contract's BroadcastRefusal codes), or the payment or its answer was
+ * stopped on the way: "too_large", "limit", "unavailable", "network". Of
+ * those four, "too_large" is the one a reader can do something about: the
+ * payment spends so many coins at once that its transaction is more than
+ * the Worker takes in one request. A code outside this list reads as
+ * "unavailable".
+ */
+export type BroadcastFailure = BroadcastRefusal | 'too_large' | 'limit' | 'unavailable' | 'network';
 
 /** What askFaucet and potAddress throw. `status` is the HTTP status, or 0 when there was no answer. */
 export class ApiError extends Error {
@@ -101,11 +109,19 @@ function refusalInText(text: string): Refusal | null {
   try {
     return refusalIn(JSON.parse(text));
   } catch {
-    // Not JSON as it stands. One case is still a refusal: the wallet's
-    // Esplora client keeps only the start of a body, which cuts a long
-    // "detail" short and leaves JSON without its end. The code comes first
-    // in the body, so it can still be read, and so can what is left of the
-    // detail.
+    // Not JSON as it stands. One case is still a refusal: a body that lost
+    // its end. The wallet's Esplora client keeps the first 1,000 characters
+    // of a failed answer. The Worker's refusals are shorter than that as
+    // long as the node's words are plain text: a detail is 300 characters
+    // at most, and JSON writes a quote or a backslash in it as two. But it
+    // writes most control characters as six. A detail made mostly of them
+    // (about 135 or more of the 300) makes a body of over 1,000 characters,
+    // a little over 1,800 at the most, and that body arrives without its
+    // end. None of the refusals recorded from the node holds a control
+    // character, and nothing rules one out. This is the guard for that
+    // body, and for any other refusal that was written longer or was cut on
+    // the way. The code comes first in the body, so it can still be read,
+    // and so can what is left of the detail.
     const code = /^\s*\{\s*"error"\s*:\s*"([^"\\]*)"/.exec(text)?.[1];
     if (code === undefined) return null;
     if (!isErrorCode(code)) return UNKNOWN_CODE;
@@ -198,7 +214,11 @@ export function broadcastFailure(e: unknown): { reason: BroadcastFailure; detail
     code = failureOf(e);
   }
   if (isBroadcastRefusal(code)) return { reason: code, detail };
-  if (code === 'limit' || code === 'network') return { reason: code, detail: null };
+  // Stopped before the node saw it, for a cause the screen has its own
+  // sentence for. "too_large" is the Worker's cap on a broadcast: the hex of
+  // a transaction that spends several hundred coins is over it, and a
+  // smaller payment is not.
+  if (code === 'too_large' || code === 'limit' || code === 'network') return { reason: code, detail: null };
   // Any other code means the payment never reached the node, or the answer
   // made no sense: nothing the reader did.
   return { reason: 'unavailable', detail: null };

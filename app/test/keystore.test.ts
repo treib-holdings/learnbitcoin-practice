@@ -22,7 +22,7 @@ import {
   saveRecordIfNone,
   wordsMatchRecord,
 } from '../src/lib/keystore.ts';
-import type { WalletRecord } from '../src/lib/keystore.ts';
+import type { UnlockVerdict, WalletRecord } from '../src/lib/keystore.ts';
 import { tagFromUserId } from '../src/lib/passkey.ts';
 
 interface VectorWallet {
@@ -205,7 +205,8 @@ test('makeRecord: refuses a passkey ID, a tag or a time that a record cannot hol
       JSON.stringify(tag),
     );
   }
-  const notIds = ['', 'A', 'AAAAA', 'not base64url!', 'Y3Jl+ZA==', A.mnemonic, 'A'.repeat(1366)];
+  // "QR" and "QUJ" are "QQ" and "QUI" with a stray bit in the last character: see the spelling test below.
+  const notIds = ['', 'A', 'AAAAA', 'not base64url!', 'Y3Jl+ZA==', A.mnemonic, 'A'.repeat(1366), 'QR', 'QUJ', '3q2-7wECAwQFBh'];
   for (const id of notIds) {
     assert.throws(
       () => makeRecord('passkey', A.mnemonic, NOW, { credentialId: id, tag: null }),
@@ -300,6 +301,60 @@ test('what passkey.ts writes is what a record takes: every tag, and an ID up to 
   assert.equal(takes({ credentialId: Buffer.from(new Uint8Array(1024)).toString('base64url') }), false);
 });
 
+test('a passkey ID has one spelling: the spare bits of its last character are zeros', () => {
+  const record = passkeyRecord(A);
+  const takes = (credentialId: string): boolean => loadRecord(holding(new MemoryStorage(), { ...record, credentialId })) !== 'unreadable';
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+  assert.equal(new Set(alphabet).size, 64);
+  /** The text passkey.ts would write for the bytes this text stands for. Reading drops the spare bits; writing puts zeros there. */
+  const asWritten = (text: string): string => Buffer.from(text, 'base64url').toString('base64url');
+
+  // Four characters hold three bytes, with no bit to spare: every character can end such an ID.
+  // Two characters over a multiple of four hold one more byte and four spare bits; three over, two more bytes and two spare bits.
+  const shapes: [name: string, start: string, endings: string][] = [
+    ['a multiple of four', 'AAA', alphabet],
+    ['a multiple of four', '-__-AAA', alphabet],
+    ['two over', 'A', 'AQgw'],
+    ['two over', '-__-P', 'AQgw'],
+    ['three over', 'AA', 'AEIMQUYcgkosw048'],
+    ['three over', '3q2-7wECAwQFBg', 'AEIMQUYcgkosw048'],
+  ];
+  for (const [name, start, endings] of shapes) {
+    const taken: string[] = [];
+    for (const last of alphabet) {
+      const id = `${start}${last}`;
+      const where = `${name}: ${id}`;
+      const isTaken = takes(id);
+      // Worked out here a second way: an ID is taken exactly when writing its bytes again gives the same text.
+      assert.equal(isTaken, asWritten(id) === id, where);
+      if (isTaken) {
+        taken.push(last);
+        continue;
+      }
+      // Refused, though it stands for the very bytes of an ID that is taken:
+      // the same passkey under another spelling, different in the last character only.
+      assert.deepEqual(Buffer.from(id, 'base64url'), Buffer.from(asWritten(id), 'base64url'), where);
+      assert.equal(asWritten(id).slice(0, -1), start, where);
+      assert.ok(endings.includes(asWritten(id).slice(-1)), where);
+    }
+    assert.equal(taken.join(''), endings, `${name}, after ${start}`);
+  }
+  // makeRecord goes by the same rule.
+  assert.doesNotThrow(() => makeRecord('passkey', A.mnemonic, NOW, { credentialId: '3q2-7wECAwQFBg', tag: null }));
+  for (const id of ['3q2-7wECAwQFBh', '3q2-7wECAwQFBv', '3q2-7wECAwQFBgB', '3q2-7wECAwQFBg_']) {
+    assert.throws(() => makeRecord('passkey', A.mnemonic, NOW, { credentialId: id, tag: null }), /^Error: Not a passkey ID$/, id);
+  }
+
+  // Whatever passkey.ts hands over is spelled that way: bytes of every length, with every bit set in the last one.
+  for (let length = 1; length <= 9; length++) {
+    for (const lastByte of [0x00, 0x01, 0x7f, 0x80, 0xfe, 0xff]) {
+      const bytes = new Uint8Array(length).fill(0xa5);
+      bytes[length - 1] = lastByte;
+      assert.equal(takes(Buffer.from(bytes).toString('base64url')), true, `${length} bytes ending in ${lastByte}`);
+    }
+  }
+});
+
 test('a passkey wallet stores nothing secret; a words wallet stores its words', () => {
   const local = new MemoryStorage();
   saveRecordIfNone(local, passkeyRecord(B, PASSKEY_B));
@@ -374,6 +429,10 @@ test('loadRecord: unreadable for anything that is not a sound version-1 record',
     ['a passkey ID of five characters', { ...passkey, credentialId: 'AAAAA' }],
     ['a passkey ID longer than WebAuthn allows', { ...passkey, credentialId: 'A'.repeat(1366) }],
     ['a passkey ID of 200,000 characters', { ...passkey, credentialId: 'x'.repeat(200_000) }],
+    // Text that passkey.ts never writes: the bytes of "QQ" and of "QUI", with a stray bit in the last character.
+    ['a passkey ID of two characters with a stray bit', { ...passkey, credentialId: 'QR' }],
+    ['a passkey ID of three characters with a stray bit', { ...passkey, credentialId: 'QUJ' }],
+    ['a passkey ID of 14 characters with a stray bit', { ...passkey, credentialId: '3q2-7wECAwQFBh' }],
     ['a tag that is not text', { ...passkey, tag: 7 }],
     ['a tag that is null', { ...passkey, tag: null }],
     ['an empty tag', { ...passkey, tag: '' }],
@@ -486,11 +545,13 @@ test('saveRecordIfNone: stops when a record appeared meanwhile', () => {
   assert.equal(saveRecordIfNone(local, ours), false);
   assert.deepEqual(loadRecord(local), theirs, 'their wallet, and its words, are untouched');
 
-  // Something unreadable is in the way: it is not overwritten either.
-  const damaged = holding(new MemoryStorage(), '{"v":2}');
-  assert.equal(saveRecordIfNone(damaged, ours), false);
-  assert.equal(stored(damaged), '{"v":2}');
-  assert.equal(damaged.writes, 0);
+  // Something unreadable is in the way, or a record from a newer version: neither is overwritten.
+  for (const text of ['damaged', '{"v":"2"}', '{"v":2}']) {
+    const inTheWay = holding(new MemoryStorage(), text);
+    assert.equal(saveRecordIfNone(inTheWay, ours), false, text);
+    assert.equal(stored(inTheWay), text);
+    assert.equal(inTheWay.writes, 0, text);
+  }
 });
 
 test('a record that is not sound is never written', () => {
@@ -503,9 +564,10 @@ test('a record that is not sound is never written', () => {
   const sentenceAsTag = { ...passkeyRecord(A), tag: 'not a tag' };
   const unusableId = { ...passkeyRecord(A), credentialId: 'AAAAA' };
   const endlessId = { ...passkeyRecord(A), credentialId: 'A'.repeat(1366) };
+  const respelledId = { ...passkeyRecord(A), credentialId: 'QUJ' };
   const noSuchTime = { ...passkeyRecord(A), createdAt: 1e300 };
   const halfTime = { ...wordsRecord(A), createdAt: NOW + 0.5 };
-  const tagsAndIds = [wordsAsTag, sentenceAsTag, unusableId, endlessId];
+  const tagsAndIds = [wordsAsTag, sentenceAsTag, unusableId, endlessId, respelledId];
   for (const bad of [withWords, mismatched, wordless, newer, ...tagsAndIds, noSuchTime, halfTime]) {
     const empty = new MemoryStorage();
     assert.equal(saveRecordIfNone(empty, bad), false);
@@ -592,6 +654,96 @@ test('a record from a newer version is "newer": never read, never removed', () =
     assert.equal(loadRecord(holding(new MemoryStorage(), JSON.stringify({ ...wordsRecord(A), v }))), 'unreadable', String(v));
   }
   assert.equal(loadRecord(holding(new MemoryStorage(), JSON.stringify([{ v: 2 }]))), 'unreadable');
+});
+
+test('"newer" goes by the number as JSON reads it, however it is written, and by nothing else', () => {
+  const record = wordsRecord(A);
+  const words = JSON.stringify(record);
+  assert.ok(words.startsWith('{"v":1,'));
+  const newer = [
+    '{"v":2}',
+    '{"v":2.0}',
+    '{"v":2e0}',
+    '{"v":20e-1}',
+    ' { "v" : 3 } ',
+    // The largest whole number that can still be told from the one after it.
+    '{"v":9007199254740991}',
+    // A version-1 record in every other respect.
+    words.replace('{"v":1,', '{"v":2,'),
+    // The same field twice: JSON keeps the last.
+    words.replace('{"v":1,', '{"v":1,"v":2,'),
+  ];
+  for (const text of newer) {
+    const local = holding(new MemoryStorage(), text);
+    local.map.set('theme', 'dark');
+    const where = text.slice(0, 30);
+    assert.equal(loadRecord(local), 'newer', where);
+    // It may be a good wallet, so nothing this version can do touches it.
+    assert.equal(removeUnreadable(local), false, where);
+    assert.equal(removeWallet(local, A.masterFingerprint), false, where);
+    assert.equal(replaceRecord(local, A.masterFingerprint, record), false, where);
+    assert.equal(saveRecordIfNone(local, record), false, where);
+    assert.equal(local.writes, 0, where);
+    assert.equal(local.cleared, 0, where);
+    assert.equal(stored(local), text, where);
+    assert.equal(local.map.get('theme'), 'dark');
+  }
+
+  // Anything else is "unreadable": damage, which the reader may remove.
+  const notNewer = [
+    '{"v":"2"}',
+    '{"v":true}',
+    '{"v":[2]}',
+    '{"v":{"v":2}}',
+    '{"v":1.5}',
+    '{"v":0}',
+    '{"v":-2}',
+    // Too large to be told from the next number, and too large to be a number at all.
+    '{"v":9007199254740992}',
+    '{"v":1e400}',
+    // Not the record's own "v": another name, one level down, and inside a
+    // field named __proto__, which JSON reads as a field like any other.
+    '{"V":2}',
+    '{"record":{"v":2}}',
+    '{"__proto__":{"v":2}}',
+    // The answer's own word, stored as text.
+    '"newer"',
+    'newer',
+    // Not JSON.
+    '{"v":2}x',
+  ];
+  for (const text of notNewer) {
+    const local = holding(new MemoryStorage(), text);
+    assert.equal(loadRecord(local), 'unreadable', text);
+    assert.equal(stored(local), text, 'reading it changes nothing');
+    assert.equal(removeUnreadable(local), true, text);
+    assert.equal(stored(local), undefined, text);
+  }
+
+  // Where the last "v" is 1, the record is the version-1 record it says it is.
+  assert.deepEqual(loadRecord(holding(new MemoryStorage(), words.replace('{"v":1,', '{"v":2,"v":1,'))), record);
+});
+
+test('a tab that saw damage does not remove the newer record that took its place', () => {
+  // This tab read something it could not make sense of, and offers Reload
+  // and Remove. Before the reader chooses, a tab running a newer version of
+  // the page puts its wallet there. Remove reads the storage again, inside
+  // the call, and leaves that wallet alone.
+  const local = holding(new MemoryStorage(), 'damaged');
+  assert.equal(loadRecord(local), 'unreadable');
+  const theirs = JSON.stringify({ ...wordsRecord(B), v: 2 });
+  local.map.set(RECORD_KEY, theirs);
+  assert.equal(removeUnreadable(local), false);
+  assert.equal(stored(local), theirs);
+  assert.equal(local.writes, 0);
+
+  // The other way round: the newer tab removes its wallet. Nothing is stored
+  // now, so this tab may make one.
+  local.map.delete(RECORD_KEY);
+  assert.equal(loadRecord(local), null);
+  assert.equal(removeUnreadable(local), false);
+  assert.equal(saveRecordIfNone(local, wordsRecord(A)), true);
+  assert.deepEqual(loadRecord(local), wordsRecord(A));
 });
 
 test('removeUnreadable: deletes only a record that cannot be read', () => {
@@ -736,6 +888,147 @@ test('judgeUnlock: the edges between the verdicts', () => {
   // Words that give no wallet at all, from the stored passkey: nothing is opened, and nothing throws.
   assert.equal(judgeUnlock(record, mine, 'not a phrase'), 'changed');
   assert.equal(judgeUnlock(record, mine, ''), 'changed');
+});
+
+test('judgeUnlock: the pair decides, for either wallet and whatever the wrong value is', () => {
+  const wallets: [own: VectorWallet, passkey: typeof PASSKEY_A, other: VectorWallet][] = [
+    [A, PASSKEY_A, B],
+    [B, PASSKEY_B, A],
+  ];
+  for (const [own, passkey, other] of wallets) {
+    const record = passkeyRecord(own, passkey);
+    const before = structuredClone(record);
+    const id = passkey.credentialId;
+    const otherKey = { xpub: other.xpub, firstAddress: firstOf(other) };
+    // Another wallet's fingerprint, two made-up ones, and the wallet's own with its last character changed.
+    const lastChanged = `${own.masterFingerprint.slice(0, 7)}${own.masterFingerprint.endsWith('0') ? '1' : '0'}`;
+    const wrongFingerprints = [other.masterFingerprint, '00000000', 'ffffffff', lastChanged];
+
+    // Both fit.
+    assert.equal(judgeUnlock(record, id, own.mnemonic), 'same');
+    // The fingerprint fits and the public key does not.
+    assert.equal(judgeUnlock({ ...record, ...otherKey }, id, own.mnemonic), 'tampered');
+    for (const fingerprint of wrongFingerprints) {
+      assert.notEqual(fingerprint, own.masterFingerprint);
+      // The public key fits and the fingerprint does not.
+      assert.equal(judgeUnlock({ ...record, fingerprint }, id, own.mnemonic), 'tampered', fingerprint);
+      // Neither fits.
+      assert.equal(judgeUnlock({ ...record, ...otherKey, fingerprint }, id, own.mnemonic), 'changed', fingerprint);
+    }
+    // Neither fits, seen from the other side: a sound record, and a passkey that now gives another wallet.
+    assert.equal(judgeUnlock(record, id, other.mnemonic), 'changed');
+
+    // It only judges: the record it was handed is as it was.
+    assert.deepEqual(record, before);
+  }
+});
+
+test('a passkey record altered in storage still loads; the next unlock tells, and a "tampered" one is rebuilt', () => {
+  const truth = passkeyRecord(A);
+  const mine = PASSKEY_A.credentialId;
+  const keyOfB = { xpub: B.xpub, firstAddress: firstOf(B) };
+  // What someone who can write this browser's storage might do to the record.
+  // Each result agrees with itself, so loadRecord has nothing to object to:
+  // a passkey record holds nothing that vouches for its public key or its
+  // fingerprint.
+  const alterations: [name: string, fields: Partial<WalletRecord>, verdict: UnlockVerdict][] = [
+    ['nothing', {}, 'same'],
+    ['the public key, and the first address to match', keyOfB, 'tampered'],
+    ['the fingerprint, to that of another wallet', { fingerprint: B.masterFingerprint }, 'tampered'],
+    ['the fingerprint, to a made-up one', { fingerprint: '00000000' }, 'tampered'],
+    ['both, to those of another wallet', { ...keyOfB, fingerprint: B.masterFingerprint }, 'changed'],
+    ['both, the fingerprint made up', { ...keyOfB, fingerprint: 'ffffffff' }, 'changed'],
+  ];
+  for (const [name, fields, verdict] of alterations) {
+    const altered: WalletRecord = { ...truth, ...fields };
+    const text = JSON.stringify(altered);
+    const local = holding(new MemoryStorage(), text);
+    const loaded = loadRecord(local);
+    assert.ok(loaded !== null && typeof loaded !== 'string', name);
+    assert.deepEqual(loaded, altered, name);
+
+    // The stored passkey answers, and its secret gives the 12 words of wallet A.
+    assert.equal(judgeUnlock(loaded, mine, A.mnemonic), verdict, name);
+    // Judging writes nothing. With "changed" that is all there is: the
+    // wallet is not opened, and what is stored stays for the reader to
+    // decide about.
+    assert.equal(local.writes, 0, name);
+    assert.equal(stored(local), text, name);
+    if (verdict !== 'tampered') continue;
+
+    // "tampered": the keys are the wallet, so the record is made again from
+    // them. The replace is guarded by the fingerprint this tab loaded, and
+    // that is the stored one, right or wrong.
+    const rebuilt = makeRecord('passkey', A.mnemonic, loaded.createdAt, { credentialId: mine, tag: loaded.tag ?? null });
+    assert.deepEqual(rebuilt, truth, name);
+    assert.equal(replaceRecord(local, loaded.fingerprint, rebuilt), true, name);
+    const now = loadRecord(local);
+    assert.deepEqual(now, truth, name);
+    assert.ok(now !== null && typeof now !== 'string');
+    assert.equal(judgeUnlock(now, mine, A.mnemonic), 'same', name);
+  }
+
+  // The guard goes by what is stored. A record whose fingerprint was altered
+  // no longer carries the true one, so a replace that expects the true one
+  // is refused, and the altered record stays.
+  const local = holding(new MemoryStorage(), { ...truth, fingerprint: '00000000' });
+  assert.equal(replaceRecord(local, A.masterFingerprint, truth), false);
+  assert.equal(local.writes, 0);
+  assert.equal(replaceRecord(local, '00000000', truth), true);
+  assert.deepEqual(loadRecord(local), truth);
+});
+
+test('a record whose passkey ID was respelled in storage is unreadable, and cannot pass for another passkey', () => {
+  // Ten bytes are 14 characters of base64url, and the last one carries four
+  // spare bits. The ID as passkey.ts writes it has zeros there. The altered
+  // one has a 1 in the lowest of them, and nothing else is different.
+  const idBytes = Uint8Array.from([0xde, 0xad, 0xbe, 0xef, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06]);
+  const written = Buffer.from(idBytes).toString('base64url');
+  const respelled = `${written.slice(0, -1)}h`;
+  assert.deepEqual([written, respelled], ['3q2-7wECAwQFBg', '3q2-7wECAwQFBh']);
+  // A browser turns both into the same bytes (passkey.ts reads an ID with
+  // atob), so asked by either text the same passkey answers, and it answers
+  // under the ID as written.
+  const bytesOf = (text: string): string => atob(text.replaceAll('-', '+').replaceAll('_', '/'));
+  assert.equal(bytesOf(respelled), bytesOf(written));
+  assert.equal(bytesOf(written), String.fromCharCode(...idBytes));
+
+  const truth = makeRecord('passkey', A.mnemonic, NOW, { credentialId: written, tag: '9F6D' });
+  const keyOfB = { xpub: B.xpub, firstAddress: firstOf(B) };
+  const alterations: [name: string, fields: Partial<WalletRecord>, verdict: UnlockVerdict][] = [
+    ['nothing else', {}, 'same'],
+    ['the public key', keyOfB, 'tampered'],
+    ['the fingerprint', { fingerprint: B.masterFingerprint }, 'tampered'],
+    ['the public key and the fingerprint', { ...keyOfB, fingerprint: B.masterFingerprint }, 'changed'],
+  ];
+  for (const [name, fields, verdict] of alterations) {
+    // With the ID as written, the record loads and the next unlock tells what was done to it.
+    const asWritten = loadRecord(holding(new MemoryStorage(), { ...truth, ...fields }));
+    assert.ok(asWritten !== null && typeof asWritten !== 'string', name);
+    assert.equal(judgeUnlock(asWritten, written, A.mnemonic), verdict, name);
+
+    // judgeUnlock compares the two IDs as text. Handed the respelled record,
+    // it would take the stored passkey for a different one, whatever else
+    // was altered: the reader would be asked whether to switch wallets, and
+    // "tampered" and "changed" would never be said.
+    const altered: WalletRecord = { ...truth, ...fields, credentialId: respelled };
+    assert.equal(judgeUnlock(altered, written, A.mnemonic), 'other-passkey', name);
+
+    // So such a record never gets that far. It is unreadable: nothing is
+    // opened, nothing is written, and it stays until the reader removes it.
+    const text = JSON.stringify(altered);
+    const local = holding(new MemoryStorage(), text);
+    assert.equal(loadRecord(local), 'unreadable', name);
+    assert.equal(local.writes, 0, name);
+    assert.equal(stored(local), text, name);
+    assert.equal(replaceRecord(local, truth.fingerprint, truth), false, name);
+    assert.equal(removeWallet(local, truth.fingerprint), false, name);
+    assert.equal(stored(local), text, name);
+    assert.equal(removeUnreadable(local), true, name);
+    assert.equal(loadRecord(local), null, name);
+  }
+  // And no record is ever made with it.
+  assert.throws(() => makeRecord('passkey', A.mnemonic, NOW, { credentialId: respelled, tag: '9F6D' }), /^Error: Not a passkey ID$/);
 });
 
 // -- wordsMatchRecord -------------------------------------------------------------

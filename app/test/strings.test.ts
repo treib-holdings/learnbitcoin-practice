@@ -196,6 +196,7 @@ function each<K extends string>(keys: readonly K[]): Record<K, true> {
 const API_FAILURES: Record<ApiFailure, true> = { ...each(ERROR_CODES), network: true };
 const BROADCAST_FAILURES: Record<BroadcastFailure, true> = {
   ...each(BROADCAST_REFUSALS),
+  too_large: true,
   limit: true,
   unavailable: true,
   network: true,
@@ -207,6 +208,8 @@ const PLAN_FAILURES: Record<PlanFailure, true> = {
   'too-much': true,
   'below-dust': true,
   'bad-address': true,
+  'too-small': true,
+  'bad-fee': true,
 };
 const CEREMONY_FAILURES: Record<CeremonyFailure['kind'], true> = {
   cancelled: true,
@@ -283,14 +286,18 @@ test('errors: each is whole sentences, the cause and then the way out', () => {
 });
 
 test('errors: where the fault is ours, the sentence says so', () => {
-  const ours = ['bad_request', 'method', 'too_large', 'unavailable', 'closed', 'bad_address', 'failed', 'refused'] as const;
+  const ours = ['bad_request', 'method', 'unavailable', 'closed', 'bad_address', 'failed', 'refused'] as const;
   for (const key of ours) {
     assert.match(strings.errors.en[key], /on our side/, key);
     assert.match(strings.errors.es[key], /nuestr[ao]/, key);
   }
-  // And where it is not, the sentence does not take the blame.
-  for (const key of ['network', 'limit', 'already_paid', 'busy', 'plan_too-much', 'passkey_cancelled'] as const) {
+  // And where it is not, the sentence does not take the blame. "too_large"
+  // is one of these: a payment that spends too many coins at once is no bug.
+  const notOurs = ['network', 'limit', 'too_large', 'already_paid', 'busy', 'passkey_cancelled'] as const;
+  const plans = ['plan_too-much', 'plan_below-dust', 'plan_bad-address', 'plan_too-small', 'plan_bad-fee'] as const;
+  for (const key of [...notOurs, ...plans]) {
     assert.doesNotMatch(strings.errors.en[key], /on our side|bug/, key);
+    assert.doesNotMatch(strings.errors.es[key], /nuestr[ao]/, key);
   }
 });
 
@@ -365,35 +372,47 @@ test('errors: a passkey failure fits Create, Open and Unlock alike', () => {
   assert.match(strings.errors.es['passkey_no-prf'], /no puede crear ni abrir/);
 });
 
+/** A wallet that holds confirmed coins of this many sats each, as the planner takes it, and an address to pay. */
+function walletWithCoins(...values: bigint[]) {
+  const words = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
+  const account = watchOnlyAccount(accountFromMnemonic(words).xpub);
+  const coins: Coin[] = values.map((value, index) => {
+    const own = deriveAddress(account, 0, index);
+    return {
+      txid: (0xab + index).toString(16).repeat(32),
+      vout: 0,
+      value,
+      status: { confirmed: true, block_height: 101 },
+      chain: 0,
+      index,
+      address: own.address,
+      script: own.script,
+    };
+  });
+  const state: WalletState = {
+    receive: [],
+    change: [],
+    coins,
+    nextReceiveIndex: values.length,
+    nextChangeIndex: 0,
+    confirmed: values.reduce((sum, value) => sum + value, 0n),
+    unconfirmed: 0n,
+  };
+  return { account, state, to: deriveAddress(account, 0, 7).address };
+}
+
+/** The same, with one coin. */
+function walletWithOneCoin(value: bigint) {
+  return walletWithCoins(value);
+}
+
 test('errors: a refused plan has a way out even when nothing at all can be sent', () => {
   // One coin so small that what is left after the fee is under the dust
   // limit. The planner refuses "send all" as dust and any amount the network
   // would carry as too much, both with nothing sendable. "Send a larger
   // amount" and "send a smaller amount" alone would send the reader round
   // in a circle.
-  const words = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
-  const account = watchOnlyAccount(accountFromMnemonic(words).xpub);
-  const own = deriveAddress(account, 0, 0);
-  const coin: Coin = {
-    txid: 'ab'.repeat(32),
-    vout: 0,
-    value: 400n,
-    status: { confirmed: true, block_height: 101 },
-    chain: 0,
-    index: 0,
-    address: own.address,
-    script: own.script,
-  };
-  const state: WalletState = {
-    receive: [],
-    change: [],
-    coins: [coin],
-    nextReceiveIndex: 1,
-    nextChangeIndex: 0,
-    confirmed: coin.value,
-    unconfirmed: 0n,
-  };
-  const to = deriveAddress(account, 0, 7).address;
+  const { account, state, to } = walletWithOneCoin(400n);
   const reasons: PlanFailure[] = [];
   for (const amount of ['all', 300n] as const) {
     const plan = planPayment(account, state, { to, amount, feeRate: 2n });
@@ -411,14 +430,165 @@ test('errors: a refused plan has a way out even when nothing at all can be sent'
   assert.doesNotMatch(strings.errors.es['plan_too-much'], /todo lo que tiene/);
 });
 
-test('errors: "too_large" speaks of a request the page built, never of a payment', () => {
-  // A broadcast is the one request whose size depends on the reader, and it
-  // can never show this sentence: broadcastFailure reads the code as
-  // "unavailable". Advice about a payment here would reach nobody.
+test('errors: with nothing for "Send all" to deliver, a payment can still go through, and no sentence says otherwise', () => {
+  // maxSendable is what "Send all" would deliver, and 0 when "Send all"
+  // cannot be made. That is not the same as a wallet that can send nothing.
+  // Here the faucet's coin sits beside five small coins, and the fee rate
+  // is 250 sat/vB. Each small coin holds about 300 sats and costs 17,000
+  // to spend. "Send all" spends every coin, so the fee comes to more than
+  // the wallet holds. The large coin alone still pays.
+  const { account, state, to } = walletWithCoins(100_000n, 300n, 310n, 320n, 330n, 340n);
+  const feeRate = 250n;
+  const all = planPayment(account, state, { to, amount: 'all', feeRate });
+  assert.deepEqual(all, { ok: false, reason: 'below-dust', maxSendable: 0n, dust: 294n });
+  const over = planPayment(account, state, { to, amount: 10_000_000n, feeRate });
+  assert.deepEqual(over, { ok: false, reason: 'too-much', maxSendable: 0n, dust: null });
+  const half = planPayment(account, state, { to, amount: 50_000n, feeRate });
+  assert.ok(half.ok);
+  assert.deepEqual([half.amount, half.inputs.length, half.maxSendable], [50_000n, 1, 0n]);
+
+  // So the two sentences name "nothing can be sent" as one case among
+  // others, after an "if", and the way out they give first works here: a
+  // smaller amount than too much, a larger one than "Send all" would deliver.
+  const { en, es } = strings.errors;
+  assert.match(en['plan_too-much'], /\. Send a smaller amount, .*\. If what is left after the fee is too small to send, get more/);
+  assert.match(en['plan_below-dust'], /\. Send a larger amount\. If this wallet cannot send more once the fee is paid, get more/);
+  assert.match(es['plan_too-much'], /\. Envía un monto menor, .*\. Si lo que queda después de la comisión es demasiado pequeño para enviarlo, pide/);
+  assert.match(es['plan_below-dust'], /\. Envía un monto mayor\. Si esta billetera no puede enviar más después de pagar la comisión, pide/);
+  // No sentence for a refused plan says flatly that the wallet can send
+  // nothing. The Send screen's own line for maxSendable 0 must not either
+  // (see the top of errors.ts): what it may say is that "Send all" cannot
+  // be made at this fee rate.
+  for (const reason of Object.keys(PLAN_FAILURES) as PlanFailure[]) {
+    if (reason === 'nothing-spendable' || reason === 'unconfirmed-only') continue; // these two say what the wallet holds
+    assert.doesNotMatch(en[`plan_${reason}`], /nothing can be sent|can send nothing|cannot send anything/i, reason);
+    assert.doesNotMatch(es[`plan_${reason}`], /no (se )?puede enviar nada|nada (se )?puede enviar/i, reason);
+  }
+});
+
+test('errors: a payment too small in bytes is not dust, and its way out works', () => {
+  // The faucet's coin, sent in full to the shortest kind of address there
+  // is. The amount is far above dust. It is the transaction that would be
+  // too small: under 65 bytes, which no node relays.
+  const { account, state } = walletWithOneCoin(100_000n);
+  const anchor = 'bcrt1pfeesnyr2tx';
+  const all = planPayment(account, state, { to: anchor, amount: 'all', feeRate: 2n });
+  assert.ok(!all.ok);
+  assert.equal(all.reason, 'too-small');
+  const en = strings.errors.en[`plan_${all.reason}`];
+  const es = strings.errors.es[`plan_${all.reason}`];
+  // "Too small" is what the dust sentences say of an amount. This one says
+  // what it is that is small, and never calls it dust.
+  assert.match(en, /transaction too small, in bytes/);
+  assert.match(es, /transacción demasiado pequeña, en bytes/);
+  assert.doesNotMatch(en, /dust/);
+  assert.doesNotMatch(es, /polvo|dust/);
+  // Its first way out is the opposite of the one for dust, and here it
+  // works: with less to the recipient, change comes back and the payment
+  // can be made. (Where it cannot work is the next test.)
+  assert.match(en, /Send a smaller amount, so that change comes back/);
+  assert.match(es, /Envía un monto menor, para que vuelva cambio/);
+  assert.match(strings.errors.en['plan_below-dust'], /Send a larger amount/);
+  const less = planPayment(account, state, { to: anchor, amount: 99_000n, feeRate: 2n });
+  assert.ok(less.ok && less.change !== null);
+  // The address was a good one all along, so the sentence for a bad address is never shown for it.
+  assert.notEqual(en, strings.errors.en['plan_bad-address']);
+  assert.doesNotMatch(en, /bcrt1|Copy the address/);
+});
+
+test('errors: a payment too small in bytes has a way out where no smaller amount can be sent', () => {
+  // "Send a smaller amount, so that change comes back" needs one coin to
+  // cover the amount, 294 sats of change and the fee for two outputs. Where
+  // a coin cannot, every amount is refused: under 240 sats as dust, from
+  // there up as too small in bytes, and above what the coin holds after the
+  // fee as too much. The sentence must not leave the reader there.
+  const anchor = 'bcrt1pfeesnyr2tx';
+  type Wallet = ReturnType<typeof walletWithCoins>;
+  /** What the planner says of this payment to the short address: "ok", or its reason. */
+  const answer = (wallet: Wallet, amount: bigint | 'all', feeRate: bigint): string => {
+    const plan = planPayment(wallet.account, wallet.state, { to: anchor, amount, feeRate });
+    return plan.ok ? 'ok' : plan.reason;
+  };
+  /** The payment as planned, which the test expects to go through. */
+  const planned = (wallet: Wallet, amount: bigint | 'all', feeRate: bigint) => {
+    const plan = planPayment(wallet.account, wallet.state, { to: anchor, amount, feeRate });
+    assert.ok(plan.ok, `${amount} at ${feeRate} sat/vB`);
+    return plan;
+  };
+
+  // The second way out, in both languages: a lower fee rate, or more coins and then a larger amount.
+  const en = strings.errors.en['plan_too-small'];
+  const es = strings.errors.es['plan_too-small'];
+  assert.match(en, /\. Send a smaller amount, so that change comes back and the transaction is large enough\. If the fee leaves no room for change, /);
+  assert.match(en, /, lower the fee rate, or get more practice coins on the Receive screen first and then send a larger amount\.$/);
+  assert.match(es, /\. Envía un monto menor, para que vuelva cambio y la transacción tenga el tamaño suficiente\. Si la comisión no deja lugar para el cambio, /);
+  assert.match(es, /, baja la tasa de comisión, o pide primero más monedas de práctica en la pantalla Recibir y después envía un monto mayor\.$/);
+
+  // 1. The faucet's coin at 1,000 sat/vB, the highest rate the form takes.
+  // Two outputs cost 123,000 sats there, more than the coin holds.
+  const faucet = walletWithOneCoin(100_000n);
+  assert.equal(answer(faucet, 'all', 1_000n), 'too-small');
+  assert.deepEqual(
+    [239n, 240n, 8_000n, 8_001n, 100_000n].map((amount) => answer(faucet, amount, 1_000n)),
+    ['below-dust', 'too-small', 'too-small', 'too-much', 'too-much'],
+  );
+  // 240 sats is the least this address can be sent, so it leaves the most
+  // room for change. With no change even there, no larger amount has any.
+  for (let amount = 240n; amount <= 100_000n; amount += 500n) {
+    assert.notEqual(answer(faucet, amount, 1_000n), 'ok', `${amount} sats`);
+  }
+  // It starts at 809 sat/vB: at 808 the coin just covers 240 sats, 294 of change and the fee.
+  assert.equal(answer(faucet, 240n, 809n), 'too-small');
+  const last = planned(faucet, 240n, 808n);
+  assert.deepEqual([last.change, last.fee], [376n, 99_384n]);
+  // "Lower the fee rate" works: at the form's own 2 sat/vB the amount that was refused goes through, with change.
+  assert.equal(answer(faucet, 5_000n, 1_000n), 'too-small');
+  assert.equal(planned(faucet, 5_000n, 2n).change, 94_754n);
+  // "Get more practice coins, then send a larger amount" works too. More
+  // coins alone do not: one coin is still enough for the small amount, so
+  // the wallet pays it from one coin and no change comes back. A larger
+  // amount takes both coins, and two coins are never too small.
+  const twoCoins = walletWithCoins(100_000n, 100_000n);
+  assert.equal(answer(twoCoins, 5_000n, 1_000n), 'too-small');
+  assert.equal(planned(twoCoins, 20_000n, 1_000n).inputs.length, 2);
+  assert.equal(planned(twoCoins, 'all', 1_000n).inputs.length, 2);
+
+  // 2. A coin too small for it at any fee rate: 400 sats, here at 1 sat/vB.
+  // Every amount there is, from 1 sat to all of it.
+  const small = walletWithOneCoin(400n);
+  assert.equal(answer(small, 'all', 1n), 'too-small');
+  const answers = new Set<string>();
+  for (let amount = 1n; amount <= 400n; amount++) answers.add(answer(small, amount, 1n));
+  assert.deepEqual([...answers].sort(), ['below-dust', 'too-much', 'too-small']);
+  // There is no lower fee rate to go to ...
+  assert.equal(answer(small, 300n, 0n), 'bad-fee');
+  // ... so what is left is more coins, and then a larger amount. With the
+  // faucet's coin beside it the same 300 sats are still refused, because
+  // the small coin alone is enough for them. 1,000 sats are more than it
+  // holds: the large coin pays, and change comes back.
+  const withFaucet = walletWithCoins(400n, 100_000n);
+  assert.equal(answer(withFaucet, 300n, 1n), 'too-small');
+  const larger = planned(withFaucet, 1_000n, 1n);
+  assert.deepEqual([larger.inputs.map((coin) => coin.value), larger.change], [[100_000n], 98_877n]);
+  assert.equal(planned(withFaucet, 'all', 1n).inputs.length, 2);
+});
+
+test('errors: "too_large" speaks of a payment that spends too many coins at once', () => {
+  // A broadcast is the one request whose size depends on the reader: the
+  // transaction of a payment that spends several hundred coins is longer
+  // than the Worker takes in one request. broadcastFailure passes that code
+  // on, so this sentence is read on the Send screen and nowhere else. No
+  // bug is behind it and a reload changes nothing. What helps is to send
+  // less at a time.
   const refusal = new ApiError(ERROR_STATUS.too_large, 'too_large');
-  assert.deepEqual(broadcastFailure(refusal), { reason: 'unavailable', detail: null });
-  assert.doesNotMatch(strings.errors.en.too_large, /payment|amount|coins/);
-  assert.doesNotMatch(strings.errors.es.too_large, /pago|monto|monedas/);
+  assert.deepEqual(broadcastFailure(refusal), { reason: 'too_large', detail: null });
+  const { en, es } = strings.errors;
+  assert.match(en.too_large, /^This payment spends so many coins at once/);
+  assert.match(es.too_large, /^Este pago gasta tantas monedas a la vez/);
+  assert.match(en.too_large, /send a smaller amount first, then send the rest\.$/);
+  assert.match(es.too_large, /envía primero un monto menor, y después envía el resto\.$/);
+  assert.doesNotMatch(en.too_large, /bug|on our side|[Rr]eload|This page/);
+  assert.doesNotMatch(es.too_large, /error|nuestr[ao]|[Rr]ecarga|Esta página/);
 });
 
 test('errors: Spanish keeps its word for a request away from the passkey prompt', () => {
@@ -445,4 +615,20 @@ test('errors: the fee text never says the network refuses less than 1 sat/vB', (
   for (const lang of LANGS) {
     assert.doesNotMatch(strings.errors[lang].fee_too_low, /[0-9]/, lang);
   }
+  // The planner's own refusal of a fee rate under 1 does name the number,
+  // and says whose limit it is: this wallet's, not the network's.
+  const { account, state, to } = walletWithOneCoin(100_000n);
+  const plan = planPayment(account, state, { to, amount: 5_000n, feeRate: 0n });
+  assert.ok(!plan.ok);
+  assert.equal(plan.reason, 'bad-fee');
+  const en = strings.errors.en[`plan_${plan.reason}`];
+  const es = strings.errors.es[`plan_${plan.reason}`];
+  assert.match(en, /below 1 sat\/vB, the lowest this wallet takes/);
+  assert.match(es, /menor que 1 sat\/vB, la más baja que acepta esta billetera/);
+  assert.doesNotMatch(en, /network|node/);
+  assert.doesNotMatch(es, /\bred\b|nodo/);
+  // Its way out works: at 1 sat/vB the same payment is planned.
+  assert.match(en, /Use a fee rate of 1 or more/);
+  assert.match(es, /Usa una tasa de comisión de 1 o más/);
+  assert.equal(planPayment(account, state, { to, amount: 5_000n, feeRate: 1n }).ok, true);
 });
