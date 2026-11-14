@@ -57,8 +57,28 @@ Interim kernel mitigation: `sudo bash ops/mitigations/cve-2026-98432.sh`
 - `generatetoaddress` honours `blockmaxweight`, and electrs and mempool follow
   an `invalidateblock` reorg: `tools/s1-checks/weight_and_reorg.py`.
 - Pay it forward: `tools/integration/run-bots-e2e.sh`.
-- Still to do: Sparrow itself against the Electrum port, and a backup
-  restore drill.
+- A backup restores cleanly: `ops/backup/restore-drill.sh` (passed 2026-11-14).
+- Still to do: Sparrow itself against the Electrum port.
+
+## Backups
+
+Nightly at 03:30 UTC (`ops/backup/backup.sh`, installed by
+`sudo ops/backup/install-timer.sh`) to the R2 bucket
+`learnbitcoin-practice-backups`, which has its own token, scoped to that
+bucket only, and a lifecycle rule that deletes objects after 30 days.
+
+- `chain/`: the regtest datadir, Core wallets included, copied at rest. The
+  producer and bots pause for about half a minute, and the node for about 10
+  seconds.
+- `bots/`: the faucet's payout records (SQLite backup API).
+- `manifests/`: height, tip and wallet balances at backup time.
+- Not backed up: secrets (regenerate with `make-secrets.sh`, and fetch the
+  tunnel token again from the dashboard), the electrs index and explorer
+  database (they rebuild), and the certificate (re-issue).
+
+Credentials: `ssh -t <server> ops/backup/save-r2-creds.sh <account-id>`
+writes `ops/.rclone.conf` (mode 600) with hidden input. A failed backup
+alerts the ntfy topic. To test a restore: `ops/backup/restore-drill.sh`.
 
 ## Cross-check without the VPS
 
