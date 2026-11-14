@@ -1465,11 +1465,14 @@ scenario('the reader leaves Create while the passkey prompt is open and stays on
   assert.equal(await page.page.$eval('[data-testid="wallet-open"]', (link) => link.getAttribute('href')), '/wallet/backup');
   await page.click('wallet-open');
   await arrivesAt(page, '/wallet/backup');
+  // The "Wallet made" step shows the 12 words at once, and that is counted under its own screen.
+  await page.settle();
   assert.deepEqual(
     (await counted(s, page)).filter((event) => event.name !== 'pageview'),
     [
       { name: 'Passkey', path: '/', value: 'ok' },
       { name: 'Wallet created', path: '/', value: 'passkey' },
+      { name: 'Words shown', path: '/wallet/backup', value: 'passkey' },
     ],
   );
 });

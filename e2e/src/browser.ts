@@ -124,6 +124,12 @@ export async function launchChrome(): Promise<Chrome> {
     throw error;
   }
   running = browser.process();
+  // Chrome's helper processes (its updater among them) inherit its output
+  // and can outlive it by minutes. A pipe that is still read keeps this
+  // process alive for as long, so the two pipes are let go of: they are read
+  // while there is something to read, and they no longer hold the process open.
+  (running?.stdout as { unref?(): void } | null)?.unref?.();
+  (running?.stderr as { unref?(): void } | null)?.unref?.();
   return {
     browser,
     close: async () => {

@@ -80,7 +80,7 @@ setTimeout(function () {
   app.append(late);
   app.querySelector('[data-testid="leaving"]').remove();
   app.querySelector('[data-testid="off"]').disabled = false;
-}, 250);
+}, 2000);
 `;
 
 let chrome: Chrome;
@@ -232,7 +232,7 @@ test('click, fill and read by data-testid; wait for what comes and for what goes
     // An element that is not there yet, one that leaves, and a button that is still disabled.
     assert.equal(await page.page.$('[data-testid="late"]'), null);
     const ms = await page.timeTo('late');
-    assert.ok(ms >= 200 && ms < 5000, `timeTo counts from the navigation: ${ms} ms`);
+    assert.ok(ms >= 1500 && ms < 8000, `timeTo counts from the navigation: ${ms} ms`);
     assert.equal(await page.text('late'), 'Here now');
     await page.waitForGone('leaving');
     await page.waitFor('late');

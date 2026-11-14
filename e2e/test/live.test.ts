@@ -83,8 +83,9 @@ test('live: pointed at a second stand-in over HTTP, the scenarios run through th
     const [passed, failed, skipped] = summary.slice(1).map(Number);
     assert.equal(failed, 0);
     assert.ok(passed! >= 7, `${passed} passed`);
-    // The two scenarios that drive the stand-in, one from its first line and one by declaration, are reported as skipped.
-    assert.equal(skipped, 2);
+    // The scenarios that drive the stand-in are reported as skipped: the two named below, one from its first
+    // line and one by declaration, and every other local-only scenario of the screens.
+    assert.ok(skipped! >= 2, `${skipped} skipped`);
     assert.match(ran.output, /a funded wallet.*# local only/);
     assert.match(ran.output, /a busy faucet.*# local only/);
 
