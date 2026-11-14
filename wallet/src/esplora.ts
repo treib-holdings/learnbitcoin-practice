@@ -71,6 +71,31 @@ export class EsploraError extends Error {
 
 export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
+/**
+ * How much of a failed answer's body is kept in the error, in characters.
+ * There has to be a limit, because the body can be anything: a whole error
+ * page says no more about what went wrong than its first lines do.
+ *
+ * The limit is there to leave whole what the practice app's own server
+ * answers. That server stands between the app and Esplora and reports every
+ * failure as a short piece of JSON. When the node refuses a transaction, the
+ * JSON carries the node's own words, up to 300 characters of them. JSON
+ * writes a quote or a backslash as two characters, so a body of plain text
+ * can come to a little over 600, and 1,000 leaves it whole with room to
+ * spare. Cut short it is no longer JSON, and the app has to piece the
+ * node's words together from what is left of it.
+ *
+ * One kind of body is longer than the limit all the same. JSON writes most
+ * control characters (the characters below a space; a tab and a line break
+ * are among the few it writes as two) as six characters each. Words made
+ * mostly of those, about 135 or more of the 300, make a body of over 1,000
+ * characters, and of a little over 1,800 when all 300 are. It arrives cut.
+ * A node's words are plain text, so no such body has been seen. If one
+ * comes, the app reads the code and the start of the words from the part
+ * that arrived.
+ */
+const ERROR_BODY_MAX = 1000;
+
 export class Esplora {
   readonly baseUrl: string;
   private readonly fetchFn: FetchLike;
@@ -84,7 +109,7 @@ export class Esplora {
   private async request(path: string, init?: RequestInit): Promise<Response> {
     const res = await this.fetchFn(`${this.baseUrl}${path}`, init);
     if (!res.ok) {
-      const body = (await res.text()).slice(0, 300);
+      const body = (await res.text()).slice(0, ERROR_BODY_MAX);
       throw new EsploraError(`Esplora ${init?.method ?? 'GET'} ${path} failed (${res.status}): ${body}`, res.status);
     }
     return res;

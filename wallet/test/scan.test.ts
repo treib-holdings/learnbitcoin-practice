@@ -72,3 +72,59 @@ test('broadcast posts the hex and returns the txid; errors carry the status', as
   assert.ok(calls.includes('POST /tx'));
   await assert.rejects(esplora.broadcast('00'), (e: unknown) => e instanceof EsploraError && e.status === 400);
 });
+
+test('a failed answer keeps up to 1,000 characters of its body, so a short JSON error arrives whole', async () => {
+  /** What a call throws when the server answers it with this status and body. */
+  const failure = async (status: number, body: string, call: (esplora: Esplora) => Promise<unknown>): Promise<EsploraError> => {
+    try {
+      await call(new Esplora('https://example.test/api', async () => new Response(body, { status })));
+    } catch (e) {
+      assert.ok(e instanceof EsploraError);
+      return e;
+    }
+    assert.fail('the call did not throw');
+  };
+  const broadcast = (esplora: Esplora) => esplora.broadcast('00');
+  const said = 'Esplora POST /tx failed (400): ';
+
+  // A short body is in the message as it came, after the request and the status.
+  assert.equal((await failure(400, 'bad-txns', broadcast)).message, `${said}bad-txns`);
+  const unknown = await failure(404, 'Transaction not found', (esplora) => esplora.tx('ab'.repeat(32)));
+  assert.equal(unknown.status, 404);
+  assert.equal(unknown.message, `Esplora GET /tx/${'ab'.repeat(32)} failed (404): Transaction not found`);
+  assert.equal((await failure(502, '', broadcast)).message, 'Esplora POST /tx failed (502): ');
+
+  // 1,000 characters arrive whole. Of anything longer, the first 1,000 do.
+  assert.equal((await failure(400, 'a'.repeat(1000), broadcast)).message, said + 'a'.repeat(1000));
+  assert.equal((await failure(400, `${'a'.repeat(999)}bc`, broadcast)).message, `${said}${'a'.repeat(999)}b`);
+  assert.equal((await failure(400, 'a'.repeat(50_000), broadcast)).message, said + 'a'.repeat(1000));
+
+  // What the practice app's server answers when the node refuses a
+  // transaction: JSON with a code and the node's own words, up to 300
+  // characters of them. The limit used to be 300 for the whole body, which
+  // cut the longer of these short. Now words of plain text arrive whole and
+  // are still JSON, even 300 quotes or backslashes, each of which JSON
+  // writes as two characters.
+  const nodeWords = `sendrawtransaction RPC error: {"code":-26,"message":"${'non-mandatory-script-verify-flag '.repeat(12)}"}`;
+  for (const detail of [nodeWords.slice(0, 300), 'x'.repeat(300), '"'.repeat(300), '\\'.repeat(300)]) {
+    assert.equal(detail.length, 300);
+    const body = JSON.stringify({ error: 'already_sent', detail });
+    assert.ok(body.length > 300 && body.length <= 1000, `a body of ${body.length} characters`);
+    const e = await failure(400, body, broadcast);
+    assert.equal(e.status, 400);
+    assert.equal(e.message, said + body);
+    assert.deepEqual(JSON.parse(e.message.slice(said.length)), { error: 'already_sent', detail });
+  }
+
+  // One kind of body is still longer than the limit. JSON writes most
+  // control characters as six characters each, so 300 of them make a body
+  // of 1,836 characters. Its first 1,000 are kept, and they are no longer
+  // JSON. Reading the code and the start of the words out of them is the
+  // app's business.
+  const control = String.fromCharCode(1).repeat(300);
+  const longest = JSON.stringify({ error: 'already_sent', detail: control });
+  assert.equal(longest.length, 1836);
+  const cut = await failure(400, longest, broadcast);
+  assert.equal(cut.message, said + longest.slice(0, 1000));
+  assert.throws(() => JSON.parse(cut.message.slice(said.length)), SyntaxError);
+});

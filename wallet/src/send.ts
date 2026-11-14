@@ -30,7 +30,7 @@ export interface PaymentRequest {
   to: string;
   /** In satoshis, or 'all': spend every spendable coin and send the recipient what is left after the fee. */
   amount: bigint | 'all';
-  /** Fee rate in sat/vB (whole numbers, 1 or more). */
+  /** Fee rate in sat/vB (whole numbers, 1 or more; anything under 1 is refused as 'bad-fee'). */
   feeRate: bigint;
   /** Coin-selection strategy; see the coin-selection rabbit hole. Default: 'default'. Not used with 'all'. */
   strategy?: SelectionStrategy;
@@ -63,16 +63,30 @@ export interface SignedPayment {
 }
 
 /**
- * Why a payment cannot be made:
+ * Why a payment cannot be made. The reasons are looked for in this order,
+ * and the first that fits is the answer:
+ *   bad-fee            the fee rate is under 1 sat/vB. That limit is this
+ *                      wallet's own: it takes whole numbers from 1 up. The
+ *                      practice network's node relays lower rates as well
  *   nothing-spendable  the wallet (or the coin-control list) holds no coins
  *   unconfirmed-only   it holds coins, but all are payments still waiting for a block
- *   bad-address        `to` is not a practice-network address. Or, rarely, it is one
- *                      that this payment cannot pay: the transaction would be too
- *                      small to relay (see MIN_RELAY_SIZE)
+ *   bad-address        `to` is not a practice-network address: it is mistyped,
+ *                      or it is an address of another network
  *   below-dust         the amount is under the smallest the network relays to that address
  *   too-much           the coins cannot cover the amount plus the fee
+ *   too-small          the address is a good one and the coins are enough, but
+ *                      the transaction would be too small to relay (see
+ *                      MIN_RELAY_SIZE). Rare: one coin in, no change, and an
+ *                      address that stands for a script of only 4 bytes
  */
-export type PlanFailure = 'nothing-spendable' | 'unconfirmed-only' | 'too-much' | 'below-dust' | 'bad-address';
+export type PlanFailure =
+  | 'nothing-spendable'
+  | 'unconfirmed-only'
+  | 'too-much'
+  | 'below-dust'
+  | 'bad-address'
+  | 'too-small'
+  | 'bad-fee';
 
 export type PaymentPlan =
   | {
@@ -116,7 +130,8 @@ export type PaymentPlan =
       /**
        * The same figure as in a plan, with the same two exceptions: what
        * "send all" would deliver at this fee rate, or 0 when "send all"
-       * cannot be made.
+       * cannot be made. With 'bad-fee' there is no fee rate to work it out
+       * from, so it is 0 then too.
        */
       maxSendable: bigint;
       /** For 'below-dust': the smallest amount this address can be sent. Otherwise null. */
@@ -230,6 +245,16 @@ function outputsOf(draft: Draft): DraftOutput[] {
  * can stand for a script of only 4 bytes (pay-to-anchor, bcrt1pfeesnyr2tx,
  * is the one in use), and then one coin in, one output and no change come
  * to exactly 64.
+ *
+ * planPayment answers "too-small" for that payment, and signPayment does
+ * not sign it. The same coin can still pay the same address where it has
+ * room for change: a little less to the recipient, so that change comes
+ * back, makes a transaction of 95 bytes. It has room when it covers the
+ * amount (240 sats at the least for such an address), 294 sats of change
+ * and the fee for two outputs, 123 vbytes. A coin of under 657 sats never
+ * does, and the faucet's 100,000 sats do not from 809 sat/vB up. That one
+ * coin can then pay such an address no amount at all: what helps is a
+ * lower fee rate, or a second coin and an amount that takes both.
  */
 const MIN_RELAY_SIZE = 65;
 
@@ -254,13 +279,18 @@ function sweepAmount(coins: Coin[], script: Uint8Array, feeRate: bigint): bigint
  * they always arrive at the same coins and the same fee.
  */
 function choose(account: HDKey, state: WalletState, req: PaymentRequest): Choice {
-  if (req.feeRate < 1n) throw new Error('Fee rate must be at least 1 sat/vB');
   const refuse = (reason: PlanFailure, maxSendable = 0n, dust: bigint | null = null): Choice => ({
     ok: false,
     reason,
     maxSendable,
     dust,
   });
+
+  // The fee rate comes first, because every figure below is worked out from
+  // it. A form can hand over a 0, so this is a reason like the others, not
+  // an error. With no rate there is no figure: the most that can be sent is
+  // given as 0.
+  if (req.feeRate < 1n) return refuse('bad-fee');
 
   // What may be spent, in the order given (a coin listed twice counts once).
   const offered = req.coins ?? state.coins;
@@ -295,11 +325,12 @@ function choose(account: HDKey, state: WalletState, req: PaymentRequest): Choice
   });
   const maxSendable = all >= limit && !tooSmallToRelay(everything(all)) ? all : 0n;
   // Every payment leaves through here, so that one the network would not
-  // relay is refused before anything is signed. No reason in the list says
-  // "the transaction would be too small"; the nearest is that this address
-  // cannot be paid this way.
+  // relay is refused before anything is signed. The address is a good one
+  // and the coins are enough: it is the transaction that would be too
+  // small. So that has a reason of its own, and "bad-address" is only ever
+  // said of text that is not a practice address.
   const accept = (draft: Draft): Choice =>
-    tooSmallToRelay(draft) ? refuse('bad-address', maxSendable) : { ok: true, maxSendable, draft };
+    tooSmallToRelay(draft) ? refuse('too-small', maxSendable) : { ok: true, maxSendable, draft };
 
   if (req.amount === 'all') return all >= limit ? accept(everything(all)) : refuse('below-dust', 0n, limit);
   if (req.amount < limit) return refuse('below-dust', maxSendable, limit);
@@ -361,8 +392,9 @@ function choose(account: HDKey, state: WalletState, req: PaymentRequest): Choice
 /**
  * What a payment would cost, or why it cannot be made. Needs no private key:
  * a watch-only account (watchOnlyAccount(xpub)) is enough. Never signs
- * anything. Everything a reader can get wrong comes back as a reason; it
- * throws only for a mistake in the calling code, such as a fee rate under 1.
+ * anything. Whatever a form can hand over comes back as a plan or as a
+ * reason, never as an error: any text for the address, any amount, and any
+ * fee rate, one under 1 included.
  */
 export function planPayment(account: HDKey, state: WalletState, req: PaymentRequest): PaymentPlan {
   const choice = choose(account, state, req);
@@ -391,12 +423,11 @@ export function signPayment(account: HDKey, state: WalletState, req: PaymentRequ
   if (req.amount !== 'all' && req.amount <= 0n) throw new Error('Amount must be positive');
   const choice = choose(account, state, req);
   if (!choice.ok) {
-    if (choice.reason === 'bad-address') {
-      // A practice address refused as "bad" can only be the transaction that is too small (see MIN_RELAY_SIZE).
-      const practice = checkAddress(req.to).kind === 'practice';
-      throw new Error(practice ? 'This payment would make a transaction too small to relay' : 'Not a practice-network address');
-    }
+    if (choice.reason === 'bad-fee') throw new Error('Fee rate must be at least 1 sat/vB');
+    if (choice.reason === 'bad-address') throw new Error('Not a practice-network address');
+    if (choice.reason === 'too-small') throw new Error('This payment would make a transaction too small to relay');
     if (choice.reason === 'below-dust') throw new Error(`Amount is below the dust limit of ${choice.dust} sats`);
+    // What is left: no coins, none that can be spent yet, or not enough of them.
     throw new InsufficientFundsError();
   }
   const { draft } = choice;

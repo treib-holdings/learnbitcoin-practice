@@ -214,7 +214,9 @@ test(`planPayment and signPayment agree on ${CASES} wallets and requests from a 
     );
     const state = stateOf(coins, rnd.int(4));
 
-    // A request: where to, how much, how fast, and sometimes which coins.
+    // A request: sometimes which coins, then where to, how fast and how much.
+    const offered = rnd.next() < 0.15 ? coins.filter(() => rnd.next() < 0.6) : undefined;
+    const pool = (offered ?? coins).filter(spendable);
     const other = HDKey.fromMasterSeed(rnd.bytes(32), TEST_VERSIONS).derive(ACCOUNT_PATH);
     const good = [
       deriveAddress(other, 0, rnd.int(3)).address,
@@ -228,10 +230,14 @@ test(`planPayment and signPayment agree on ${CASES} wallets and requests from a 
       deriveAddress(acct, 1, state.nextChangeIndex).address, // even to its own next change address
     ];
     const bad = [bech32.encode('tb', [0, ...bech32.toWords(rnd.bytes(20))]), 'bc1qcr8te4kr609gcawutmrza0j4xv80jy8z306fyu', ''];
-    const to = rnd.next() < 0.1 ? rnd.pick(bad) : rnd.pick(good);
-    const feeRate = BigInt(rnd.pick([1, 1, 2, 2, 2, 3, 5, 10, 25, 60, 150, 400, 1000]));
-    const offered = rnd.next() < 0.15 ? coins.filter(() => rnd.next() < 0.6) : undefined;
-    const pool = (offered ?? coins).filter(spendable);
+    // The shortest address there is: a program of 2 bytes, which makes a
+    // script of 4. One coin paid to it in full is the one payment that is
+    // too small a transaction to relay. A wallet with a single coin to spend
+    // is sent there half the time, or these cases would hardly ever meet it.
+    const shortest = bech32m.encode('bcrt', [1 + rnd.int(16), ...bech32m.toWords(rnd.bytes(2))]);
+    const to = pool.length === 1 && rnd.next() < 0.5 ? shortest : rnd.next() < 0.1 ? rnd.pick(bad) : rnd.pick(good);
+    // Now and then a fee rate that is none: 0, or less than 0.
+    const feeRate = rnd.next() < 0.04 ? BigInt(-rnd.int(3)) : BigInt(rnd.pick([1, 1, 2, 2, 2, 3, 5, 10, 25, 60, 150, 400, 1000]));
 
     // What the answer must be, worked out without the code under test.
     const check = checkAddress(to);
@@ -239,11 +245,14 @@ test(`planPayment and signPayment agree on ${CASES} wallets and requests from a 
     const scriptBytes = check.kind === 'practice' ? addressScript(check.address).length : 22;
     const sweepFee = feeRate * BigInt(sizeOf(pool.length, 1, scriptBytes));
     const swept = total(pool) - sweepFee;
-    // "Send all" cannot be made if it leaves less than the dust limit, or if
-    // its transaction is too small to relay: one coin in and one output to a
-    // script of under 5 bytes are under 65 bytes.
+    // What the coins reach when all of them are spent: nothing, if that
+    // leaves less than the dust limit.
+    const reach = swept >= limit ? swept : 0n;
+    // "Send all" cannot be made then, and neither if its transaction is too
+    // small to relay: one coin in and one output to a script of under 5
+    // bytes are under 65 bytes.
     const tooSmall = pool.length === 1 && scriptBytes < 5;
-    const most = swept >= limit && !tooSmall ? swept : 0n;
+    const most = tooSmall ? 0n : reach;
     // A coin that costs more to spend (68 vB) than it holds. "Send all" spends it anyway.
     const wasteful = pool.some((c) => c.value <= 68n * feeRate);
 
@@ -251,14 +260,14 @@ test(`planPayment and signPayment agree on ${CASES} wallets and requests from a 
       'all' as const,
       'all' as const,
       BigInt(rnd.int(700)), // tiny: often dust
-      (most * BigInt(rnd.int(1001))) / 1000n, // anywhere up to the most
-      (most * BigInt(rnd.int(1001))) / 1000n,
-      (most * BigInt(rnd.int(1001))) / 1000n,
-      (most * BigInt(rnd.int(1001))) / 1000n,
-      most - BigInt(rnd.int(700)), // a leftover too small, or just big enough, for change
-      most - BigInt(rnd.int(700)),
-      most, // exactly the most
-      most + 1n, // one sat more
+      (reach * BigInt(rnd.int(1001))) / 1000n, // anywhere up to what the coins reach
+      (reach * BigInt(rnd.int(1001))) / 1000n,
+      (reach * BigInt(rnd.int(1001))) / 1000n,
+      (reach * BigInt(rnd.int(1001))) / 1000n,
+      reach - BigInt(rnd.int(700)), // a leftover too small, or just big enough, for change
+      reach - BigInt(rnd.int(700)),
+      reach, // exactly that
+      reach + 1n, // one sat more
       total(pool) + BigInt(rnd.int(500)), // more than the wallet holds
     ]);
     const req: PaymentRequest = { to, amount, feeRate, strategy: rnd.pick(strategies), ...(offered ? { coins: offered } : {}) };
@@ -273,28 +282,33 @@ test(`planPayment and signPayment agree on ${CASES} wallets and requests from a 
       refusals.set(plan.reason, (refusals.get(plan.reason) ?? 0) + 1);
       assert.throws(() => signPayment(acct, state, req), 'what cannot be planned cannot be signed');
       let reason: string;
-      if ((offered ?? coins).length === 0) reason = 'nothing-spendable';
+      // The fee rate is looked at before anything else, and with none there is no "most" to quote.
+      if (feeRate < 1n) reason = 'bad-fee';
+      else if ((offered ?? coins).length === 0) reason = 'nothing-spendable';
       else if (pool.length === 0) reason = 'unconfirmed-only';
+      // "bad-address" is said of every text that is no practice address, and of nothing else.
       else if (check.kind !== 'practice') reason = 'bad-address';
       else if ((amount === 'all' ? swept : amount) < limit) reason = 'below-dust';
-      else if (plan.reason === 'bad-address') {
-        // A practice address is refused for one reason only: the payment
-        // would be one coin, one output of under 5 bytes of script and no
-        // change, which is too small a transaction to relay. Which coins a
-        // payment takes is the wallet's choice, so what is checked here is
-        // that such a payment was possible: one coin alone covers it.
+      else if (plan.reason === 'too-small') {
+        // A payment the coins cover, to a good address, is refused for one
+        // reason only: it would be one coin, one output of under 5 bytes of
+        // script and no change, which is too small a transaction to relay.
+        // Which coins a payment takes is the wallet's choice, so what is
+        // checked here is that such a payment was possible: one coin alone
+        // covers it.
         const alone = feeRate * BigInt(sizeOf(1, 1, scriptBytes));
-        assert.ok(scriptBytes < 5 && (amount === 'all' ? pool.length === 1 : pool.some((c) => c.value - alone >= amount)), 'a practice address was refused');
-        reason = 'bad-address';
+        assert.ok(scriptBytes < 5 && (amount === 'all' ? pool.length === 1 : pool.some((c) => c.value - alone >= amount)), 'a payment that is not too small was refused as one');
+        reason = 'too-small';
       } else reason = 'too-much';
       assert.equal(plan.reason, reason);
-      assert.equal(plan.maxSendable, pool.length === 0 ? 0n : most);
+      assert.equal(plan.maxSendable, reason === 'bad-fee' || pool.length === 0 ? 0n : most);
       assert.equal(plan.dust, reason === 'below-dust' ? limit : null);
       // "Too much" is only ever said of an amount above what send-all would deliver.
       if (reason === 'too-much') assert.ok(amount !== 'all' && amount > swept);
       continue;
     }
 
+    assert.ok(feeRate >= 1n, 'a payment was planned at a fee rate under 1');
     const p = signPayment(acct, state, req);
     assert.deepEqual(state, before, 'signing changes nothing');
     checkAgainstPlan(acct, state, req, plan, p);
@@ -329,9 +343,10 @@ test(`planPayment and signPayment agree on ${CASES} wallets and requests from a 
   t.diagnostic(`${CASES} cases: ${JSON.stringify(seen)}, refused ${JSON.stringify(Object.fromEntries(refusals))}`);
   assert.ok(seen.ok >= 150, `only ${seen.ok} payments were signed`);
   assert.ok(seen.all >= 20 && seen.change >= 40 && seen.noChange >= 40 && seen.controlled >= 10, JSON.stringify(seen));
-  for (const reason of ['nothing-spendable', 'unconfirmed-only', 'bad-address', 'below-dust', 'too-much']) {
-    assert.ok((refusals.get(reason) ?? 0) >= 5, `${reason}: ${refusals.get(reason) ?? 0} cases`);
-  }
+  const reasons = ['bad-fee', 'nothing-spendable', 'unconfirmed-only', 'bad-address', 'below-dust', 'too-much', 'too-small'];
+  for (const reason of reasons) assert.ok((refusals.get(reason) ?? 0) >= 5, `${reason}: ${refusals.get(reason) ?? 0} cases`);
+  // And no reason turned up that is not on the list.
+  assert.deepEqual([...refusals.keys()].sort(), [...reasons].sort());
 });
 
 // -- which coins may be spent -----------------------------------------------------
@@ -431,6 +446,16 @@ test('bad-address: anything checkAddress does not call practice', () => {
   }
   // An empty wallet is said first: no address would help.
   assert.equal(refused(watch, stateOf([]), { to: 'hello', amount: 5_000n, feeRate: 1n }).reason, 'nothing-spendable');
+  // And it is never said of a practice address, whatever else is wrong with
+  // the payment. Pay-to-anchor, sent this one coin in full, would make a
+  // transaction too small to relay: that has a reason of its own.
+  assert.equal(refused(watch, state, { to: 'bcrt1pfeesnyr2tx', amount: 'all', feeRate: 1n }).reason, 'too-small');
+  for (const to of [recipient, TAPROOT, P2WSH, P2PKH, P2SH, 'bcrt1pfeesnyr2tx']) {
+    for (const amount of [-1n, 0n, 1n, 5_000n, 99_000n, 100_000n, 'all'] as const) {
+      const plan = planPayment(watch, state, { to, amount, feeRate: 1n });
+      assert.ok(plan.ok || plan.reason !== 'bad-address', `${to} ${amount}`);
+    }
+  }
 
   // An address in capitals or with spaces around it is the same address.
   const tidy = planned(watch, state, { to: recipient, amount: 5_000n, feeRate: 1n });
@@ -649,7 +674,7 @@ test('pays every kind of practice address, and the output script is the address'
   }
 });
 
-test('a payment that would make a transaction of under 65 bytes is refused before it is signed', () => {
+test('too-small: a payment that would make a transaction of under 65 bytes is refused before it is signed', () => {
   // Bitcoin Core relays no transaction of under 65 bytes, witnesses not
   // counted ("tx-size-small"). One coin in and one output are 60 bytes plus
   // the output's script, and an address with a 2-byte program stands for a
@@ -667,7 +692,8 @@ test('a payment that would make a transaction of under 65 bytes is refused befor
     tx.addOutput({ script, amount: 99_000n });
     return tx.toBytes(true, false).length;
   };
-  const refusal = { ok: false, reason: 'bad-address', maxSendable: 0n, dust: null };
+  // The address is a good one and the coin is enough, so the reason is neither "bad-address" nor "too-much".
+  const refusal = { ok: false, reason: 'too-small', maxSendable: 0n, dust: null };
 
   for (const to of tiny) {
     assert.equal(checkAddress(to).kind, 'practice', to);
@@ -706,6 +732,48 @@ test('a payment that would make a transaction of under 65 bytes is refused befor
     assert.equal(planned(watch, two, { to, amount: 99_900n, feeRate: 2n }).inputs.length, 2);
   }
 
+  // Change is not always to be had. One coin has to cover the amount (240
+  // sats at the least for these addresses), 294 sats of change and the fee
+  // for two outputs, priced at 123 vbytes. Where it cannot, that coin can
+  // pay such an address no amount at all.
+  const alone = (value: bigint) => stateOf([coinAt(account, 0, 0, value, { txid: 'aa'.repeat(32) })]);
+  /** What the plan says of each of these amounts: "ok", or the reason. */
+  const answers = (state: WalletState, to: string, feeRate: bigint, amounts: (bigint | 'all')[]): string[] =>
+    amounts.map((amount) => {
+      const plan = planPayment(watch, state, { to, amount, feeRate });
+      return plan.ok ? 'ok' : plan.reason;
+    });
+  for (const to of tiny) {
+    assert.equal(dustLimit(to), 240n, to);
+    // At 1 sat/vB a coin of 657 sats just does it: 240 + 294 + 123.
+    const exactly: PaymentRequest = { to, amount: 240n, feeRate: 1n };
+    const tight = planned(watch, alone(657n), exactly);
+    assert.deepEqual([tight.change, tight.fee, tight.vsize], [294n, 123n, 123]);
+    checkAgainstPlan(account, alone(657n), exactly, tight, signPayment(account, alone(657n), exactly));
+    assert.deepEqual(answers(alone(657n), to, 1n, [239n, 241n, 565n, 566n, 'all']), ['below-dust', 'too-small', 'too-small', 'too-much', 'too-small']);
+    // One sat less in the coin, and the smallest amount there is leaves 293 sats: no change, so too small.
+    assert.deepEqual(answers(alone(656n), to, 1n, [239n, 240n, 564n, 565n, 'all']), ['below-dust', 'too-small', 'too-small', 'too-much', 'too-small']);
+
+    // The faucet's 100,000 sats, and the highest fee rates the app's form
+    // takes. At 808 sat/vB the coin still covers 240 + 294 + 123 x 808; at
+    // 809 it does not.
+    assert.deepEqual(answers(alone(100_000n), to, 808n, [240n, 322n, 323n, 'all']), ['ok', 'ok', 'too-small', 'too-small']);
+    assert.deepEqual(answers(alone(100_000n), to, 809n, [239n, 240n, 25_572n, 25_573n, 'all']), ['below-dust', 'too-small', 'too-small', 'too-much', 'too-small']);
+    assert.deepEqual(answers(alone(100_000n), to, 1000n, [239n, 240n, 8_000n, 8_001n, 'all']), ['below-dust', 'too-small', 'too-small', 'too-much', 'too-small']);
+    // A second coin does not help a small amount: one coin is still enough
+    // for it, so one coin pays and no change comes back. An amount that
+    // takes both coins goes through, and so does "send all".
+    const pair = stateOf([coinAt(account, 0, 0, 100_000n, { txid: 'aa'.repeat(32) }), coinAt(account, 0, 1, 100_000n, { txid: 'bb'.repeat(32) })]);
+    assert.deepEqual(answers(pair, to, 1000n, [240n, 8_000n, 8_001n, 41_000n, 41_001n, 'all']), ['too-small', 'too-small', 'ok', 'ok', 'too-much', 'ok']);
+    const larger: PaymentRequest = { to, amount: 8_001n, feeRate: 1000n };
+    const taking = planned(watch, pair, larger);
+    assert.equal(taking.inputs.length, 2);
+    checkAgainstPlan(account, pair, larger, taking, signPayment(account, pair, larger));
+  }
+  // With no change to be had, every amount is refused: here each one from 1 sat to all the coin holds.
+  const reasons = new Set(answers(alone(656n), 'bcrt1pfeesnyr2tx', 1n, Array.from({ length: 656 }, (_, i) => BigInt(i + 1))));
+  assert.deepEqual([...reasons].sort(), ['below-dust', 'too-much', 'too-small']);
+
   // One more byte of script is enough. 65 bytes: the smallest transaction this wallet makes.
   const five = bech32m.encode('bcrt', [2, ...bech32m.toWords(Uint8Array.from([1, 2, 3]))]);
   assert.equal(addressScript(five).length, 5);
@@ -720,9 +788,93 @@ test('a payment that would make a transaction of under 65 bytes is refused befor
   assert.equal(stripped(signPayment(account, one, { to: recipient, amount: 'all', feeRate: 2n })), 82);
 });
 
+// -- whatever a form hands over -----------------------------------------------------
+
+test('bad-fee: a fee rate under 1 sat/vB is a reason from planPayment, not an error', () => {
+  const state = stateOf([coinAt(account, 0, 0, 100_000n)]);
+  // With no fee rate nothing can be worked out, so the most that can be sent is given as 0.
+  const refusal = { ok: false, reason: 'bad-fee', maxSendable: 0n, dust: null };
+  for (const feeRate of [0n, -1n, -2n, -1000n]) {
+    for (const amount of [5_000n, 100_000n, 0n, -5n, 'all'] as const) {
+      assert.deepEqual(planPayment(watch, state, { to: recipient, amount, feeRate }), refusal, `${amount} at ${feeRate}`);
+      assert.deepEqual(planPayment(account, state, { to: recipient, amount, feeRate }), refusal, 'with the private key too');
+    }
+    // It is said before anything else: of an empty wallet, of coins still
+    // waiting for a block, of text that is no address.
+    assert.deepEqual(planPayment(watch, stateOf([]), { to: recipient, amount: 5_000n, feeRate }), refusal);
+    const waiting = stateOf([coinAt(account, 0, 0, 100_000n, { confirmed: false })]);
+    assert.deepEqual(planPayment(watch, waiting, { to: recipient, amount: 5_000n, feeRate }), refusal);
+    assert.deepEqual(planPayment(watch, state, { to: 'hello', amount: 5_000n, feeRate }), refusal);
+    assert.deepEqual(planPayment(watch, state, { to: recipient, amount: 5_000n, feeRate, coins: [] }), refusal);
+    // What the plan refuses is not signed.
+    assert.throws(() => signPayment(account, state, { to: recipient, amount: 5_000n, feeRate }), /at least 1 sat\/vB/);
+    assert.throws(() => signPayment(account, state, { to: recipient, amount: 'all', feeRate }), /at least 1 sat\/vB/);
+  }
+  // 1 sat/vB is the lowest rate there is: one input and one output are 110 vbytes, 110 sats.
+  const lowest = planned(watch, state, { to: recipient, amount: 'all', feeRate: 1n });
+  assert.deepEqual([lowest.fee, lowest.vsize, lowest.feeRate], [110n, 110, 1]);
+});
+
+test('planPayment answers with a plan or a reason, and never throws, whatever a form hands over', () => {
+  const reasons = ['bad-fee', 'nothing-spendable', 'unconfirmed-only', 'bad-address', 'below-dust', 'too-much', 'too-small'];
+  const states = [
+    stateOf([]),
+    stateOf([coinAt(account, 0, 0, 100_000n, { confirmed: false })]),
+    stateOf([coinAt(account, 0, 0, 100_000n)]),
+    stateOf([coinAt(account, 0, 0, 100_000n, { txid: 'aa'.repeat(32) }), coinAt(account, 1, 0, 700n, { txid: 'bb'.repeat(32), confirmed: false })], 1),
+  ];
+  // What can be typed or pasted into an address field.
+  const addresses = [
+    '',
+    'hello',
+    ` ${recipient.toUpperCase()}\n`,
+    recipient.slice(0, -1),
+    `bitcoin:${recipient}`,
+    'bcrt1pfeesnyr2tx',
+    P2PKH,
+    'tb1q6rz28mcfaxtmd6v789l9rrlrusdprr9pqcpvkl',
+    'bc1qcr8te4kr609gcawutmrza0j4xv80jy8z306fyu',
+    'q'.repeat(5_000),
+  ];
+  // A form takes whole sats and a whole fee rate. A slip in its own checks could let any of these through.
+  const amounts = ['all', -(10n ** 30n), 0n, 294n, 99_890n, 99_891n, 10n ** 30n] as const;
+  const feeRates = [-(10n ** 30n), 0n, 1n, 1_000n, 10n ** 30n];
+  const seen = new Set<string>();
+  for (const state of states) {
+    for (const to of addresses) {
+      for (const amount of amounts) {
+        for (const feeRate of feeRates) {
+          const where = `${JSON.stringify(to.slice(0, 50))} ${amount} at ${feeRate}, ${state.coins.length} coins`;
+          let plan: PaymentPlan;
+          try {
+            plan = planPayment(watch, state, { to, amount, feeRate });
+          } catch (e) {
+            assert.fail(`planPayment threw for ${where}: ${String(e)}`);
+          }
+          // A fee rate under 1 is "bad-fee" whatever else is asked, and nothing else ever is.
+          assert.equal(!plan.ok && plan.reason === 'bad-fee', feeRate < 1n, where);
+          if (plan.ok) {
+            seen.add('ok');
+            assert.ok(plan.amount > 0n && plan.fee >= feeRate * BigInt(plan.vsize), where);
+            continue;
+          }
+          seen.add(plan.reason);
+          assert.ok(reasons.includes(plan.reason), where);
+          assert.ok(plan.maxSendable >= 0n, where);
+          assert.equal(plan.dust !== null, plan.reason === 'below-dust', where);
+          // And what the plan refuses, signPayment does not sign.
+          assert.throws(() => signPayment(account, state, { to, amount, feeRate }), where);
+        }
+      }
+    }
+  }
+  // Every answer there is came up.
+  assert.deepEqual([...seen].sort(), ['ok', ...reasons].sort());
+});
+
 // -- what signPayment refuses ---------------------------------------------------------
 
-test('signPayment throws where planPayment says no, and both refuse a fee rate under 1', () => {
+test('signPayment throws where planPayment says no', () => {
   const state = stateOf([coinAt(account, 0, 0, 5_000n)]);
   assert.throws(() => signPayment(account, state, { to: recipient, amount: 10_000n, feeRate: 1n }), InsufficientFundsError);
   assert.throws(() => signPayment(account, stateOf([]), { to: recipient, amount: 1_000n, feeRate: 1n }), InsufficientFundsError);
@@ -733,6 +885,15 @@ test('signPayment throws where planPayment says no, and both refuse a fee rate u
   assert.throws(() => signPayment(account, state, { to: recipient, amount: 100n, feeRate: 1n }), /dust limit of 294 sats/);
   assert.throws(() => signPayment(account, state, { to: recipient, amount: 0n, feeRate: 1n }), /positive/);
   assert.throws(() => signPayment(account, state, { to: recipient, amount: 1_000n, feeRate: 0n }), /at least 1/);
-  assert.throws(() => planPayment(watch, state, { to: recipient, amount: 1_000n, feeRate: 0n }), /at least 1/);
-  assert.throws(() => planPayment(watch, state, { to: recipient, amount: 'all', feeRate: -2n }), /at least 1/);
+  assert.throws(() => signPayment(account, state, { to: 'hello', amount: 1_000n, feeRate: 1n }), /practice-network address/);
+  assert.throws(() => signPayment(account, state, { to: 'bcrt1pfeesnyr2tx', amount: 'all', feeRate: 1n }), /too small to relay/);
+  // Each of those is a reason from planPayment, never an error.
+  const reasonFor = (req: PaymentRequest, wallet = state) => refused(watch, wallet, req).reason;
+  assert.equal(reasonFor({ to: recipient, amount: 10_000n, feeRate: 1n }), 'too-much');
+  assert.equal(reasonFor({ to: recipient, amount: 1_000n, feeRate: 1n }, stateOf([])), 'nothing-spendable');
+  assert.equal(reasonFor({ to: recipient, amount: 100n, feeRate: 1n }), 'below-dust');
+  assert.equal(reasonFor({ to: recipient, amount: 0n, feeRate: 1n }), 'below-dust');
+  assert.equal(reasonFor({ to: recipient, amount: 1_000n, feeRate: 0n }), 'bad-fee');
+  assert.equal(reasonFor({ to: 'hello', amount: 1_000n, feeRate: 1n }), 'bad-address');
+  assert.equal(reasonFor({ to: 'bcrt1pfeesnyr2tx', amount: 'all', feeRate: 1n }), 'too-small');
 });
