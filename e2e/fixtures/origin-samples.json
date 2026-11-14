@@ -1,0 +1,564 @@
+{
+  "note": "Recorded from the practice network by tools/integration/origin-samples.ts. Do not edit by hand: run it again.",
+  "samples": [
+    {
+      "what": "tip height",
+      "request": "GET /esplora/blocks/tip/height",
+      "status": 200,
+      "contentType": "text/plain",
+      "body": "6326"
+    },
+    {
+      "what": "an address with no history",
+      "request": "GET /esplora/address/bcrt1qdpwsxpwkt6dc0c0l9vq3xgaz6s0jsjjnnk6ppw",
+      "status": 200,
+      "contentType": "application/json",
+      "body": {
+        "address": "bcrt1qdpwsxpwkt6dc0c0l9vq3xgaz6s0jsjjnnk6ppw",
+        "chain_stats": {
+          "funded_txo_count": 0,
+          "funded_txo_sum": 0,
+          "spent_txo_count": 0,
+          "spent_txo_sum": 0,
+          "tx_count": 0
+        },
+        "mempool_stats": {
+          "funded_txo_count": 0,
+          "funded_txo_sum": 0,
+          "spent_txo_count": 0,
+          "spent_txo_sum": 0,
+          "tx_count": 0
+        }
+      }
+    },
+    {
+      "what": "coins of an address with no history",
+      "request": "GET /esplora/address/bcrt1qdpwsxpwkt6dc0c0l9vq3xgaz6s0jsjjnnk6ppw/utxo",
+      "status": 200,
+      "contentType": "application/json",
+      "body": []
+    },
+    {
+      "what": "transactions of an address with no history",
+      "request": "GET /esplora/address/bcrt1qdpwsxpwkt6dc0c0l9vq3xgaz6s0jsjjnnk6ppw/txs",
+      "status": 200,
+      "contentType": "application/json",
+      "body": []
+    },
+    {
+      "what": "a transaction nobody has seen",
+      "request": "GET /esplora/tx/abababababababababababababababababababababababababababababababab",
+      "status": 404,
+      "contentType": "text/plain",
+      "body": "Transaction not found"
+    },
+    {
+      "what": "not an address",
+      "request": "GET /esplora/address/bcrt1qnotanaddress",
+      "status": 400,
+      "contentType": "text/plain",
+      "body": "Invalid Bitcoin address"
+    },
+    {
+      "what": "a mainnet address",
+      "request": "GET /esplora/address/bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq",
+      "status": 400,
+      "contentType": "text/plain",
+      "body": "Address on invalid network"
+    },
+    {
+      "what": "a path the app never uses",
+      "request": "GET /esplora/nothing/here",
+      "status": 404,
+      "contentType": "text/plain",
+      "body": "endpoint does not exist \"/nothing/here\""
+    },
+    {
+      "what": "pot address without the token",
+      "request": "GET /bots/pot/address",
+      "status": 401,
+      "contentType": "application/json",
+      "body": {
+        "error": "unauthorized",
+        "code": "unauthorized"
+      }
+    },
+    {
+      "what": "pot address",
+      "request": "GET /bots/pot/address",
+      "status": 200,
+      "contentType": "application/json",
+      "body": {
+        "address": "bcrt1qxagpc0v6mxg2dq230xmphn8nuzaasw8uk6v5l9"
+      }
+    },
+    {
+      "what": "pot address, asked again",
+      "request": "GET /bots/pot/address",
+      "status": 200,
+      "contentType": "application/json",
+      "body": {
+        "address": "bcrt1qxagpc0v6mxg2dq230xmphn8nuzaasw8uk6v5l9"
+      }
+    },
+    {
+      "what": "faucet: not a practice address",
+      "request": "POST /bots/faucet",
+      "status": 400,
+      "contentType": "application/json",
+      "body": {
+        "error": "That is not a practice-network address (they start with bcrt1)",
+        "code": "bad_address"
+      }
+    },
+    {
+      "what": "faucet: the network's own address",
+      "request": "POST /bots/faucet",
+      "status": 400,
+      "contentType": "application/json",
+      "body": {
+        "error": "That address belongs to the practice network's own wallets",
+        "code": "own_address"
+      }
+    },
+    {
+      "what": "faucet: malformed body",
+      "request": "POST /bots/faucet",
+      "status": 400,
+      "contentType": "application/json",
+      "body": {
+        "error": "Send JSON like {\"address\": \"bcrt1...\"}",
+        "code": "bad_request"
+      }
+    },
+    {
+      "what": "faucet: paid",
+      "request": "POST /bots/faucet",
+      "status": 200,
+      "contentType": "application/json",
+      "body": {
+        "txid": "2bfbd6c40dbd2ed74b3b180fb96a83a0c0c97cfc4b5d4fe788b99347127a2287",
+        "amount_sats": 100000,
+        "pot_coin": null
+      }
+    },
+    {
+      "what": "faucet: the same address again",
+      "request": "POST /bots/faucet",
+      "status": 429,
+      "contentType": "application/json",
+      "body": {
+        "error": "This address already got practice coins today",
+        "code": "already_paid"
+      }
+    },
+    {
+      "what": "a transaction in the mempool",
+      "request": "GET /esplora/tx/2bfbd6c40dbd2ed74b3b180fb96a83a0c0c97cfc4b5d4fe788b99347127a2287",
+      "status": 200,
+      "contentType": "application/json",
+      "body": {
+        "txid": "2bfbd6c40dbd2ed74b3b180fb96a83a0c0c97cfc4b5d4fe788b99347127a2287",
+        "version": 2,
+        "locktime": 6326,
+        "vin": [
+          {
+            "txid": "9b21f54c3dcdb1fd6f64278c318143b2b5e7c79bdaec80c8656796c2d4e4db90",
+            "vout": 1,
+            "prevout": {
+              "scriptpubkey": "00142b5ea900b654e22d42eb1afe9c2800fffe14a2e9",
+              "scriptpubkey_asm": "OP_0 OP_PUSHBYTES_20 2b5ea900b654e22d42eb1afe9c2800fffe14a2e9",
+              "scriptpubkey_type": "v0_p2wpkh",
+              "scriptpubkey_address": "bcrt1q9d02jq9k2n3z6shtrtlfc2qqlllpfghff9r0w3",
+              "value": 49548322
+            },
+            "scriptsig": "",
+            "scriptsig_asm": "",
+            "witness": [
+              "30440220131045b293f316fbf6c743dc30564073a1a34869fe17c3759152ac5d8664766c02200a12ca47d777d7f6c5030683b4959d9e7acbeb2527c0ece2bf6b19492f66801c01",
+              "0249fcb2da8cbb82bcdbaec3587a2ad9b45c5d9564c9a73dea4be9751a828a3ae7"
+            ],
+            "is_coinbase": false,
+            "sequence": 4294967293
+          }
+        ],
+        "vout": [
+          {
+            "scriptpubkey": "00140f5c1fca67d9e9bc1da636b1642daaadd876423a",
+            "scriptpubkey_asm": "OP_0 OP_PUSHBYTES_20 0f5c1fca67d9e9bc1da636b1642daaadd876423a",
+            "scriptpubkey_type": "v0_p2wpkh",
+            "scriptpubkey_address": "bcrt1qpawpljn8m85mc8dxx6ckgtd24hv8vs36nqqepv",
+            "value": 49448040
+          },
+          {
+            "scriptpubkey": "001453bad37f286c31f4fc50fa7b532c21ecc033ef2f",
+            "scriptpubkey_asm": "OP_0 OP_PUSHBYTES_20 53bad37f286c31f4fc50fa7b532c21ecc033ef2f",
+            "scriptpubkey_type": "v0_p2wpkh",
+            "scriptpubkey_address": "bcrt1q2wadxlegdsclflzslfa4xtppanqr8me0dq2sl8",
+            "value": 100000
+          }
+        ],
+        "size": 222,
+        "weight": 561,
+        "sigops": 1,
+        "fee": 282,
+        "status": {
+          "confirmed": false
+        }
+      }
+    },
+    {
+      "what": "an address with an unconfirmed payment",
+      "request": "GET /esplora/address/bcrt1q2wadxlegdsclflzslfa4xtppanqr8me0dq2sl8",
+      "status": 200,
+      "contentType": "application/json",
+      "body": {
+        "address": "bcrt1q2wadxlegdsclflzslfa4xtppanqr8me0dq2sl8",
+        "chain_stats": {
+          "funded_txo_count": 0,
+          "funded_txo_sum": 0,
+          "spent_txo_count": 0,
+          "spent_txo_sum": 0,
+          "tx_count": 0
+        },
+        "mempool_stats": {
+          "funded_txo_count": 1,
+          "funded_txo_sum": 100000,
+          "spent_txo_count": 0,
+          "spent_txo_sum": 0,
+          "tx_count": 1
+        }
+      }
+    },
+    {
+      "what": "coins of an address, unconfirmed",
+      "request": "GET /esplora/address/bcrt1q2wadxlegdsclflzslfa4xtppanqr8me0dq2sl8/utxo",
+      "status": 200,
+      "contentType": "application/json",
+      "body": [
+        {
+          "txid": "2bfbd6c40dbd2ed74b3b180fb96a83a0c0c97cfc4b5d4fe788b99347127a2287",
+          "vout": 1,
+          "status": {
+            "confirmed": false
+          },
+          "value": 100000
+        }
+      ]
+    },
+    {
+      "what": "a confirmed transaction",
+      "request": "GET /esplora/tx/2bfbd6c40dbd2ed74b3b180fb96a83a0c0c97cfc4b5d4fe788b99347127a2287",
+      "status": 200,
+      "contentType": "application/json",
+      "body": {
+        "txid": "2bfbd6c40dbd2ed74b3b180fb96a83a0c0c97cfc4b5d4fe788b99347127a2287",
+        "version": 2,
+        "locktime": 6326,
+        "vin": [
+          {
+            "txid": "9b21f54c3dcdb1fd6f64278c318143b2b5e7c79bdaec80c8656796c2d4e4db90",
+            "vout": 1,
+            "prevout": {
+              "scriptpubkey": "00142b5ea900b654e22d42eb1afe9c2800fffe14a2e9",
+              "scriptpubkey_asm": "OP_0 OP_PUSHBYTES_20 2b5ea900b654e22d42eb1afe9c2800fffe14a2e9",
+              "scriptpubkey_type": "v0_p2wpkh",
+              "scriptpubkey_address": "bcrt1q9d02jq9k2n3z6shtrtlfc2qqlllpfghff9r0w3",
+              "value": 49548322
+            },
+            "scriptsig": "",
+            "scriptsig_asm": "",
+            "witness": [
+              "30440220131045b293f316fbf6c743dc30564073a1a34869fe17c3759152ac5d8664766c02200a12ca47d777d7f6c5030683b4959d9e7acbeb2527c0ece2bf6b19492f66801c01",
+              "0249fcb2da8cbb82bcdbaec3587a2ad9b45c5d9564c9a73dea4be9751a828a3ae7"
+            ],
+            "is_coinbase": false,
+            "sequence": 4294967293
+          }
+        ],
+        "vout": [
+          {
+            "scriptpubkey": "00140f5c1fca67d9e9bc1da636b1642daaadd876423a",
+            "scriptpubkey_asm": "OP_0 OP_PUSHBYTES_20 0f5c1fca67d9e9bc1da636b1642daaadd876423a",
+            "scriptpubkey_type": "v0_p2wpkh",
+            "scriptpubkey_address": "bcrt1qpawpljn8m85mc8dxx6ckgtd24hv8vs36nqqepv",
+            "value": 49448040
+          },
+          {
+            "scriptpubkey": "001453bad37f286c31f4fc50fa7b532c21ecc033ef2f",
+            "scriptpubkey_asm": "OP_0 OP_PUSHBYTES_20 53bad37f286c31f4fc50fa7b532c21ecc033ef2f",
+            "scriptpubkey_type": "v0_p2wpkh",
+            "scriptpubkey_address": "bcrt1q2wadxlegdsclflzslfa4xtppanqr8me0dq2sl8",
+            "value": 100000
+          }
+        ],
+        "size": 222,
+        "weight": 561,
+        "sigops": 1,
+        "fee": 282,
+        "status": {
+          "confirmed": true,
+          "block_height": 6327,
+          "block_hash": "0b36ba8a31bc7034c09b09c1c5137c76bebcbce0404946e7425564dbd1dd75fd",
+          "block_time": 1794636256
+        }
+      }
+    },
+    {
+      "what": "coins of an address, confirmed",
+      "request": "GET /esplora/address/bcrt1q2wadxlegdsclflzslfa4xtppanqr8me0dq2sl8/utxo",
+      "status": 200,
+      "contentType": "application/json",
+      "body": [
+        {
+          "txid": "2bfbd6c40dbd2ed74b3b180fb96a83a0c0c97cfc4b5d4fe788b99347127a2287",
+          "vout": 1,
+          "status": {
+            "confirmed": true,
+            "block_height": 6327,
+            "block_hash": "0b36ba8a31bc7034c09b09c1c5137c76bebcbce0404946e7425564dbd1dd75fd",
+            "block_time": 1794636256
+          },
+          "value": 100000
+        }
+      ]
+    },
+    {
+      "what": "transactions of an address",
+      "request": "GET /esplora/address/bcrt1q2wadxlegdsclflzslfa4xtppanqr8me0dq2sl8/txs",
+      "status": 200,
+      "contentType": "application/json",
+      "body": [
+        {
+          "txid": "2bfbd6c40dbd2ed74b3b180fb96a83a0c0c97cfc4b5d4fe788b99347127a2287",
+          "version": 2,
+          "locktime": 6326,
+          "vin": [
+            {
+              "txid": "9b21f54c3dcdb1fd6f64278c318143b2b5e7c79bdaec80c8656796c2d4e4db90",
+              "vout": 1,
+              "prevout": {
+                "scriptpubkey": "00142b5ea900b654e22d42eb1afe9c2800fffe14a2e9",
+                "scriptpubkey_asm": "OP_0 OP_PUSHBYTES_20 2b5ea900b654e22d42eb1afe9c2800fffe14a2e9",
+                "scriptpubkey_type": "v0_p2wpkh",
+                "scriptpubkey_address": "bcrt1q9d02jq9k2n3z6shtrtlfc2qqlllpfghff9r0w3",
+                "value": 49548322
+              },
+              "scriptsig": "",
+              "scriptsig_asm": "",
+              "witness": [
+                "30440220131045b293f316fbf6c743dc30564073a1a34869fe17c3759152ac5d8664766c02200a12ca47d777d7f6c5030683b4959d9e7acbeb2527c0ece2bf6b19492f66801c01",
+                "0249fcb2da8cbb82bcdbaec3587a2ad9b45c5d9564c9a73dea4be9751a828a3ae7"
+              ],
+              "is_coinbase": false,
+              "sequence": 4294967293
+            }
+          ],
+          "vout": [
+            {
+              "scriptpubkey": "00140f5c1fca67d9e9bc1da636b1642daaadd876423a",
+              "scriptpubkey_asm": "OP_0 OP_PUSHBYTES_20 0f5c1fca67d9e9bc1da636b1642daaadd876423a",
+              "scriptpubkey_type": "v0_p2wpkh",
+              "scriptpubkey_address": "bcrt1qpawpljn8m85mc8dxx6ckgtd24hv8vs36nqqepv",
+              "value": 49448040
+            },
+            {
+              "scriptpubkey": "001453bad37f286c31f4fc50fa7b532c21ecc033ef2f",
+              "scriptpubkey_asm": "OP_0 OP_PUSHBYTES_20 53bad37f286c31f4fc50fa7b532c21ecc033ef2f",
+              "scriptpubkey_type": "v0_p2wpkh",
+              "scriptpubkey_address": "bcrt1q2wadxlegdsclflzslfa4xtppanqr8me0dq2sl8",
+              "value": 100000
+            }
+          ],
+          "size": 222,
+          "weight": 561,
+          "sigops": 1,
+          "fee": 282,
+          "status": {
+            "confirmed": true,
+            "block_height": 6327,
+            "block_hash": "0b36ba8a31bc7034c09b09c1c5137c76bebcbce0404946e7425564dbd1dd75fd",
+            "block_time": 1794636256
+          }
+        }
+      ]
+    },
+    {
+      "what": "broadcast accepted at under 1 sat/vB (50 sats for 109 vB)",
+      "request": "POST /esplora/tx",
+      "status": 200,
+      "contentType": "text/plain",
+      "body": "5aa66447e078ea31df7fad63fc388dcc84cf2cb0156cd7cfe570d08ab980e8ec"
+    },
+    {
+      "what": "broadcast accepted: a payment with a 294 sat segwit output and a 330 sat taproot output (the dust limits), replacing the cheaper one",
+      "request": "POST /esplora/tx",
+      "status": 200,
+      "contentType": "text/plain",
+      "body": "17fc56db8a195c692262c95f7df5c28cdf1aefc7581c459da0cf81ea906beb91"
+    },
+    {
+      "what": "broadcast: the same transaction again, still unconfirmed",
+      "request": "POST /esplora/tx",
+      "status": 200,
+      "contentType": "text/plain",
+      "body": "17fc56db8a195c692262c95f7df5c28cdf1aefc7581c459da0cf81ea906beb91"
+    },
+    {
+      "what": "transactions of an address that received and spent",
+      "request": "GET /esplora/address/bcrt1q2wadxlegdsclflzslfa4xtppanqr8me0dq2sl8/txs",
+      "status": 200,
+      "contentType": "application/json",
+      "body": [
+        {
+          "txid": "17fc56db8a195c692262c95f7df5c28cdf1aefc7581c459da0cf81ea906beb91",
+          "version": 2,
+          "locktime": 0,
+          "vin": [
+            {
+              "txid": "2bfbd6c40dbd2ed74b3b180fb96a83a0c0c97cfc4b5d4fe788b99347127a2287",
+              "vout": 1,
+              "prevout": {
+                "scriptpubkey": "001453bad37f286c31f4fc50fa7b532c21ecc033ef2f",
+                "scriptpubkey_asm": "OP_0 OP_PUSHBYTES_20 53bad37f286c31f4fc50fa7b532c21ecc033ef2f",
+                "scriptpubkey_type": "v0_p2wpkh",
+                "scriptpubkey_address": "bcrt1q2wadxlegdsclflzslfa4xtppanqr8me0dq2sl8",
+                "value": 100000
+              },
+              "scriptsig": "",
+              "scriptsig_asm": "",
+              "witness": [
+                "304402205bcc6c28bd9695cf4cc7b7efd4de9d7b1d5d1dfff9d4cab9ec3fadd59793fb7c022076572f418ff880e8b6f1034b6d78e744b06b02d7c1565cc5dd715b7c2e97223701",
+                "03b16616422fe46efd4c75b62ed89673400b803314216e1768918c61608fdbb7a1"
+              ],
+              "is_coinbase": false,
+              "sequence": 4294967293
+            }
+          ],
+          "vout": [
+            {
+              "scriptpubkey": "00148dfe41820d5bbc3db7ca762a8af870560fc3d206",
+              "scriptpubkey_asm": "OP_0 OP_PUSHBYTES_20 8dfe41820d5bbc3db7ca762a8af870560fc3d206",
+              "scriptpubkey_type": "v0_p2wpkh",
+              "scriptpubkey_address": "bcrt1q3hlyrqsdtw7rmd72wc4g47rs2c8u85sxqppdqt",
+              "value": 20000
+            },
+            {
+              "scriptpubkey": "001422cf46374e38adb2aefb1c61de0a89650c91d86c",
+              "scriptpubkey_asm": "OP_0 OP_PUSHBYTES_20 22cf46374e38adb2aefb1c61de0a89650c91d86c",
+              "scriptpubkey_type": "v0_p2wpkh",
+              "scriptpubkey_address": "bcrt1qyt85vd6w8zkm9thmr3sauz5fv5xfrkrv2y7w8h",
+              "value": 78876
+            },
+            {
+              "scriptpubkey": "00145624e811184be12be702f3fcf69b98d59ad264f6",
+              "scriptpubkey_asm": "OP_0 OP_PUSHBYTES_20 5624e811184be12be702f3fcf69b98d59ad264f6",
+              "scriptpubkey_type": "v0_p2wpkh",
+              "scriptpubkey_address": "bcrt1q2cjwsygcf0sjhecz7070dxuc6kddye8kfs8dph",
+              "value": 294
+            },
+            {
+              "scriptpubkey": "5120297180f9cfcb565c6183bc96385c91e21d673fa24e061c9386530118e84308a8",
+              "scriptpubkey_asm": "OP_PUSHNUM_1 OP_PUSHBYTES_32 297180f9cfcb565c6183bc96385c91e21d673fa24e061c9386530118e84308a8",
+              "scriptpubkey_type": "v1_p2tr",
+              "scriptpubkey_address": "bcrt1p99ccp7w0edt9ccvrhjtrshy3ugwkw0azfcrpeyux2vq336zrpz5qvm2nyd",
+              "value": 330
+            }
+          ],
+          "size": 296,
+          "weight": 857,
+          "sigops": 1,
+          "fee": 500,
+          "status": {
+            "confirmed": true,
+            "block_height": 6328,
+            "block_hash": "70a08b90b77f54e411b5f124cceb86b7e04ffadc671f49cd223d84b98de851a8",
+            "block_time": 1794636286
+          }
+        },
+        {
+          "txid": "2bfbd6c40dbd2ed74b3b180fb96a83a0c0c97cfc4b5d4fe788b99347127a2287",
+          "version": 2,
+          "locktime": 6326,
+          "vin": [
+            {
+              "txid": "9b21f54c3dcdb1fd6f64278c318143b2b5e7c79bdaec80c8656796c2d4e4db90",
+              "vout": 1,
+              "prevout": {
+                "scriptpubkey": "00142b5ea900b654e22d42eb1afe9c2800fffe14a2e9",
+                "scriptpubkey_asm": "OP_0 OP_PUSHBYTES_20 2b5ea900b654e22d42eb1afe9c2800fffe14a2e9",
+                "scriptpubkey_type": "v0_p2wpkh",
+                "scriptpubkey_address": "bcrt1q9d02jq9k2n3z6shtrtlfc2qqlllpfghff9r0w3",
+                "value": 49548322
+              },
+              "scriptsig": "",
+              "scriptsig_asm": "",
+              "witness": [
+                "30440220131045b293f316fbf6c743dc30564073a1a34869fe17c3759152ac5d8664766c02200a12ca47d777d7f6c5030683b4959d9e7acbeb2527c0ece2bf6b19492f66801c01",
+                "0249fcb2da8cbb82bcdbaec3587a2ad9b45c5d9564c9a73dea4be9751a828a3ae7"
+              ],
+              "is_coinbase": false,
+              "sequence": 4294967293
+            }
+          ],
+          "vout": [
+            {
+              "scriptpubkey": "00140f5c1fca67d9e9bc1da636b1642daaadd876423a",
+              "scriptpubkey_asm": "OP_0 OP_PUSHBYTES_20 0f5c1fca67d9e9bc1da636b1642daaadd876423a",
+              "scriptpubkey_type": "v0_p2wpkh",
+              "scriptpubkey_address": "bcrt1qpawpljn8m85mc8dxx6ckgtd24hv8vs36nqqepv",
+              "value": 49448040
+            },
+            {
+              "scriptpubkey": "001453bad37f286c31f4fc50fa7b532c21ecc033ef2f",
+              "scriptpubkey_asm": "OP_0 OP_PUSHBYTES_20 53bad37f286c31f4fc50fa7b532c21ecc033ef2f",
+              "scriptpubkey_type": "v0_p2wpkh",
+              "scriptpubkey_address": "bcrt1q2wadxlegdsclflzslfa4xtppanqr8me0dq2sl8",
+              "value": 100000
+            }
+          ],
+          "size": 222,
+          "weight": 561,
+          "sigops": 1,
+          "fee": 282,
+          "status": {
+            "confirmed": true,
+            "block_height": 6327,
+            "block_hash": "0b36ba8a31bc7034c09b09c1c5137c76bebcbce0404946e7425564dbd1dd75fd",
+            "block_time": 1794636256
+          }
+        }
+      ]
+    },
+    {
+      "what": "an address that received and spent",
+      "request": "GET /esplora/address/bcrt1q2wadxlegdsclflzslfa4xtppanqr8me0dq2sl8",
+      "status": 200,
+      "contentType": "application/json",
+      "body": {
+        "address": "bcrt1q2wadxlegdsclflzslfa4xtppanqr8me0dq2sl8",
+        "chain_stats": {
+          "funded_txo_count": 1,
+          "funded_txo_sum": 100000,
+          "spent_txo_count": 1,
+          "spent_txo_sum": 100000,
+          "tx_count": 2
+        },
+        "mempool_stats": {
+          "funded_txo_count": 0,
+          "funded_txo_sum": 0,
+          "spent_txo_count": 0,
+          "spent_txo_sum": 0,
+          "tx_count": 0
+        }
+      }
+    },
+    {
+      "what": "tip height, later",
+      "request": "GET /esplora/blocks/tip/height",
+      "status": 200,
+      "contentType": "text/plain",
+      "body": "6328"
+    }
+  ]
+}

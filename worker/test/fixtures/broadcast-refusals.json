@@ -1,0 +1,101 @@
+{
+  "note": "Recorded from the practice network by tools/integration/origin-samples.ts. Do not edit by hand: run it again.",
+  "refusals": [
+    {
+      "what": "dust: a 200 sat output",
+      "request": "POST /esplora/tx",
+      "status": 400,
+      "contentType": "text/plain",
+      "body": "sendrawtransaction RPC error: {\"code\":-26,\"message\":\"dust, tx with dust output must be 0-fee\"}",
+      "expect": "dust"
+    },
+    {
+      "what": "dust: a 293 sat output (one below the limit)",
+      "request": "POST /esplora/tx",
+      "status": 400,
+      "contentType": "text/plain",
+      "body": "sendrawtransaction RPC error: {\"code\":-26,\"message\":\"dust, tx with dust output must be 0-fee\"}",
+      "expect": "dust"
+    },
+    {
+      "what": "dust: a 329 sat taproot output (one below its limit)",
+      "request": "POST /esplora/tx",
+      "status": 400,
+      "contentType": "text/plain",
+      "body": "sendrawtransaction RPC error: {\"code\":-26,\"message\":\"dust, tx with dust output must be 0-fee\"}",
+      "expect": "dust"
+    },
+    {
+      "what": "fee too low: 5 sats for 110 vB",
+      "request": "POST /esplora/tx",
+      "status": 400,
+      "contentType": "text/plain",
+      "body": "sendrawtransaction RPC error: {\"code\":-26,\"message\":\"min relay fee not met, 5 < 11\"}",
+      "expect": "fee_too_low"
+    },
+    {
+      "what": "fee too low: no fee at all",
+      "request": "POST /esplora/tx",
+      "status": 400,
+      "contentType": "text/plain",
+      "body": "sendrawtransaction RPC error: {\"code\":-26,\"message\":\"min relay fee not met, 0 < 11\"}",
+      "expect": "fee_too_low"
+    },
+    {
+      "what": "not a transaction",
+      "request": "POST /esplora/tx",
+      "status": 400,
+      "contentType": "text/plain",
+      "body": "sendrawtransaction RPC error: {\"code\":-22,\"message\":\"TX decode failed. Make sure the tx has at least one input.\"}",
+      "expect": "refused"
+    },
+    {
+      "what": "half a transaction",
+      "request": "POST /esplora/tx",
+      "status": 400,
+      "contentType": "text/plain",
+      "body": "sendrawtransaction RPC error: {\"code\":-22,\"message\":\"TX decode failed. Make sure the tx has at least one input.\"}",
+      "expect": "refused"
+    },
+    {
+      "what": "coin already being spent: a second payment from the same coin, same fee",
+      "request": "POST /esplora/tx",
+      "status": 400,
+      "contentType": "text/plain",
+      "body": "sendrawtransaction RPC error: {\"code\":-26,\"message\":\"insufficient fee, rejecting replacement 7b26b885c31cfe9e0220647dfb006208db13815dc70b8a5a3e54c70ab2d9b8d5, not enough additional fees to relay; 0.00 < 0.00000015\"}",
+      "expect": "coin_spent"
+    },
+    {
+      "what": "coin already being spent: a second payment from the same coin, lower fee",
+      "request": "POST /esplora/tx",
+      "status": 400,
+      "contentType": "text/plain",
+      "body": "sendrawtransaction RPC error: {\"code\":-26,\"message\":\"insufficient fee, rejecting replacement 425ac48ceeada6c87e65630b0995b08732a669aa70fd99fc444b3f4bc6a5c220, less fees than conflicting txs; 0.0000015 < 0.000005\"}",
+      "expect": "coin_spent"
+    },
+    {
+      "what": "unconfirmed chain: payment 65 in a row",
+      "request": "POST /esplora/tx",
+      "status": 400,
+      "contentType": "text/plain",
+      "body": "sendrawtransaction RPC error: {\"code\":-26,\"message\":\"too-large-cluster\"}",
+      "expect": "refused"
+    },
+    {
+      "what": "already in a block: the same transaction sent again",
+      "request": "POST /esplora/tx",
+      "status": 400,
+      "contentType": "text/plain",
+      "body": "sendrawtransaction RPC error: {\"code\":-27,\"message\":\"Transaction outputs already in utxo set\"}",
+      "expect": "already_sent"
+    },
+    {
+      "what": "coin already spent in a block",
+      "request": "POST /esplora/tx",
+      "status": 400,
+      "contentType": "text/plain",
+      "body": "sendrawtransaction RPC error: {\"code\":-25,\"message\":\"bad-txns-inputs-missingorspent\"}",
+      "expect": "coin_spent"
+    }
+  ]
+}
