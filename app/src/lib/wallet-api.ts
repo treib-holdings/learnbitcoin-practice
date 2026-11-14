@@ -1,0 +1,378 @@
+// What a screen may ask of the wallet, and what it is told back.
+//
+// Types only. wallet.svelte.ts builds the one object that satisfies WalletApi
+// and exports it as `wallet`. Screens and components use that object and
+// nothing beneath it: no keystore, no passkey module, no API client. So the
+// rules about keys, storage and other tabs live in one place.
+//
+// Three rules hold for every member:
+//   1. Properties are reactive: read them in markup or in $derived and the
+//      screen follows the wallet.
+//   2. Actions never throw. Every way an action can end is a `kind` (or an
+//      `ok: false` with a `reason`), so a screen can give each one its own
+//      text: the cause, then the way out.
+//   3. The 12 words and private keys are never held in a property. They come
+//      out through revealWords() only, and only while the wallet is unlocked.
+
+import type { AppConfig, FaucetPayment } from '@learnbitcoin/practice-contract';
+import type {
+  PaymentPlan,
+  PaymentRequest,
+  PlanFailure,
+  SignedPayment,
+  TxView,
+  WalletState,
+} from '@learnbitcoin/practice-wallet';
+import type { ApiFailure, BroadcastFailure } from './api.ts';
+import type { WalletRecord } from './keystore.ts';
+import type { Route } from './router.ts';
+
+// -- what is here ---------------------------------------------------------------
+
+/**
+ * none        this browser has no practice wallet
+ * ready       a wallet is here (it may be locked: see `unlocked`)
+ * unreadable  something is stored under the wallet's key but cannot be read;
+ *             nothing is overwritten until the reader chooses Remove
+ * broken      the self-test failed: this browser derives wrong keys, so no
+ *             wallet may be made, opened or restored
+ */
+export type WalletStatus = 'none' | 'ready' | 'unreadable' | 'broken';
+
+/** The stored record without the 12 words. */
+export type PublicRecord = Omit<WalletRecord, 'mnemonic'>;
+
+/** The wallet's coins as last read from the practice network. */
+export interface ChainView {
+  /** Null until the first scan of this wallet has finished. Never show a total of 0 in its place. */
+  state: WalletState | null;
+  /** A full scan is running. */
+  scanning: boolean;
+  /** Why the latest scan or refresh failed. Null after one that worked. */
+  error: ApiFailure | null;
+  /** When `state` was last confirmed against the network, in ms since 1970. */
+  checkedAt: number | null;
+  /** When the app will next try again by itself after a failure, in ms since 1970. */
+  retryAt: number | null;
+  /** Height of the practice chain, when known. */
+  tip: number | null;
+  /** True once the tip has not moved for four block intervals. */
+  slow: boolean;
+}
+
+/** The address the Receive screen shows. It stays until the reader asks for another. */
+export interface ReceiveView {
+  address: string;
+  /** Its place on the receive chain: m/84'/1'/0'/0/<index>. */
+  index: number;
+  /** Sats seen arriving at this address since it was first shown, confirmed or not. */
+  arrived: bigint;
+}
+
+/** Something that just happened, for the screen's one role="status" region. Outcomes only. */
+export type Notice =
+  | { id: number; kind: 'coins-arrived'; sats: bigint }
+  | { id: number; kind: 'confirmed' }
+  | { id: number; kind: 'payment-sent' }
+  | { id: number; kind: 'unlocked' }
+  | { id: number; kind: 'locked' };
+
+// -- how a passkey ceremony can fail ------------------------------------------------
+
+export type CeremonyFailure =
+  /** Refused, dismissed or timed out. Offer: try again, choose another passkey, use the 12 words. */
+  | { kind: 'cancelled'; timedOut: boolean }
+  /** The passkey answered without the secret a wallet is made from. `tag` names it when known. */
+  | { kind: 'no-prf'; tag: string | null }
+  /** Anything else. `name` is the browser's error name, for a details line only. */
+  | { kind: 'error'; name: string }
+  /** Another passkey prompt is still open. */
+  | { kind: 'busy' }
+  /** The bot check has loaded in this page (see beforeBotCheck): the page must be reloaded first. */
+  | { kind: 'reload' }
+  /** The self-test failed (status is "broken"). */
+  | { kind: 'broken' };
+
+// -- create -----------------------------------------------------------------------
+
+export type CreateResult =
+  /** The wallet exists, its record is stored and its keys are loaded. `created` is now set: go to Backup. */
+  | { kind: 'created' }
+  /** The passkey was made but the follow-up prompt was refused. `setup` is now set: show "Finish setting up". */
+  | { kind: 'unfinished' }
+  /** A wallet appeared in this browser meanwhile (another tab). */
+  | { kind: 'exists' }
+  /** This browser refuses to store anything, so nothing was made. */
+  | { kind: 'no-storage' }
+  | CeremonyFailure;
+
+// -- unlock, open, switch ---------------------------------------------------------
+
+export type UnlockResult =
+  /** The same wallet: its keys are loaded. */
+  | { kind: 'unlocked' }
+  /**
+   * The keys do not match the public key this browser stored, although the wallet
+   * fingerprint does. The record was rebuilt from the keys and the wallet rescanned;
+   * the keys are loaded. Warn that addresses shown before may belong to another wallet.
+   */
+  | { kind: 'tampered' }
+  /** A different passkey answered. Nothing changed. `pendingSwitch` is now set: ask before switching. */
+  | { kind: 'other-passkey'; tag: string | null; fingerprint: string }
+  /** The same passkey now gives a different wallet. It is never opened and nothing is overwritten. */
+  | { kind: 'changed' }
+  /** The wallet was removed or replaced in another tab. */
+  | { kind: 'gone' }
+  | CeremonyFailure;
+
+export type UnlockWordsResult =
+  /** The words are this wallet's: keys loaded for this page. Nothing was stored. */
+  | 'unlocked'
+  /** Not 12 valid words. */
+  | 'invalid'
+  /** Valid words, but for another wallet. Point to Remove, then Restore. */
+  | 'other-wallet'
+  | 'gone'
+  | 'reload'
+  | 'broken';
+
+export type OpenResult =
+  /** The wallet is now in this browser and unlocked; its first scan has started. */
+  | { kind: 'opened' }
+  | { kind: 'exists' }
+  | { kind: 'no-storage' }
+  | CeremonyFailure;
+
+export type SwitchResult = 'switched' | 'gone' | 'no-storage' | 'nothing-pending';
+
+// -- restore ----------------------------------------------------------------------
+
+export interface WordsCheck {
+  /** The input, normalised: lower case, split on white space. */
+  words: string[];
+  /** Positions (from 0) of words that are not in the BIP39 English list. */
+  unknown: number[];
+  /** True for exactly 12 known words with a good checksum. */
+  valid: boolean;
+}
+
+export type RestoreResult =
+  /** Practice history was found: the record is stored and the wallet is open. */
+  | { kind: 'restored' }
+  /**
+   * No practice history for these words. Nothing is stored; the words wait in
+   * memory (`pendingRestore` is true) for keepRestored() or eraseRestored().
+   */
+  | { kind: 'empty' }
+  | { kind: 'invalid' }
+  | { kind: 'exists' }
+  | { kind: 'no-storage' }
+  /** The scan failed, so nothing is known yet. The words were dropped: ask again. */
+  | { kind: 'failed'; reason: ApiFailure }
+  | { kind: 'reload' }
+  | { kind: 'broken' };
+
+export type KeepResult = 'restored' | 'exists' | 'no-storage' | 'nothing-pending';
+
+// -- the faucet -------------------------------------------------------------------
+
+export type FaucetPhase =
+  | 'idle'
+  /** The bot check is running. */
+  | 'checking'
+  /** The request is with the faucet. */
+  | 'asking'
+  /** Refused for now (limit, busy, refilling). The app asks again by itself at `retryAt`. */
+  | 'waiting'
+  /** Promised: `payment` holds the transaction ID and amount. */
+  | 'on-its-way'
+  /** The coin is in the wallet, unconfirmed. */
+  | 'arrived'
+  /** The coin has a confirmation. */
+  | 'confirmed'
+  /** Stopped. `failure` says why. */
+  | 'failed';
+
+/**
+ * no-token  the bot check gave no token (blocked, failed to load, or dismissed)
+ * gave-up   three minutes of waiting and asking again did not get through
+ */
+export type FaucetFailure = ApiFailure | 'no-token' | 'gave-up';
+
+export interface FaucetView {
+  phase: FaucetPhase;
+  payment: FaucetPayment | null;
+  /** Set while "waiting" (why the last try was refused) and when "failed". */
+  failure: FaucetFailure | null;
+  /** While "waiting": when the next try starts, in ms since 1970. */
+  retryAt: number | null;
+}
+
+/**
+ * Runs the bot check and resolves to its token, or null if there is none to
+ * be had. `fresh` is true when the last token has been used up and the check
+ * must run again.
+ */
+export type TokenSource = (fresh: boolean) => Promise<string | null>;
+
+// -- sending ----------------------------------------------------------------------
+
+export type SignResult =
+  /** Signed, not sent. `view` is the payment as the review shows it. */
+  | { ok: true; payment: SignedPayment; view: TxView }
+  /** locked: call unlock() first. Otherwise the reason planPayment would give. */
+  | { ok: false; reason: 'locked' | PlanFailure };
+
+export type BroadcastResult =
+  | { ok: true; txid: string }
+  /** `detail` is the node's own words, for a details line only. */
+  | { ok: false; reason: BroadcastFailure; detail: string | null };
+
+export type PotAddressResult = { ok: true; address: string } | { ok: false; reason: ApiFailure };
+
+// -- one transaction --------------------------------------------------------------
+
+export type TxLookup =
+  | { kind: 'found'; view: TxView }
+  /** The faucet or a broadcast just returned this ID and the network does not list it yet. Ask again shortly. */
+  | { kind: 'waiting' }
+  | { kind: 'not-found' }
+  | { kind: 'failed'; reason: ApiFailure };
+
+// -- the wallet -------------------------------------------------------------------
+
+export interface WalletApi {
+  // ---- state (reactive, read-only) ----
+
+  readonly status: WalletStatus;
+  /** The wallet in this browser, without its words. Null unless status is "ready". */
+  readonly record: PublicRecord | null;
+  /**
+   * True when sign() and revealWords() will work without a prompt. A wallet made
+   * without a passkey is always unlocked; a passkey wallet is unlocked from one
+   * ceremony until lock(), a reload or the tab's end.
+   */
+  readonly unlocked: boolean;
+  /** Public settings, usable at once: built-in values first, the Worker's once they load. */
+  readonly config: AppConfig;
+  /** Whether this browser can make and use the wallet's passkeys. Null while that is being found out. */
+  readonly passkeyOffered: boolean | null;
+  /** False when this browser refuses to store anything: Create and Restore must say so and stop. */
+  readonly canStore: boolean;
+  /** For a wallet made without a passkey: whether the browser agreed to keep its data. Null: not asked or not known. */
+  readonly persisted: boolean | null;
+
+  /** Set when a passkey was made but its setup is unfinished: show "Finish setting up", which calls finishSetup(). */
+  readonly setup: { tag: string | null } | null;
+  /** Set straight after a create, until ackCreated(): Backup opens as the "Wallet made" step with the words shown. */
+  readonly created: 'passkey' | 'words' | null;
+  /** Set after unlock() met a different passkey, until confirmSwitch() or cancelSwitch(). */
+  readonly pendingSwitch: { tag: string | null; fingerprint: string } | null;
+  /** True while restored words with no practice history wait for keepRestored() or eraseRestored(). */
+  readonly pendingRestore: boolean;
+  /**
+   * True from openWithPasskey() until coins are seen, when the first scan found no
+   * history. The overview then explains the likely causes instead of a bare empty state.
+   */
+  readonly openedEmpty: boolean;
+
+  readonly chain: ChainView;
+  /** Newest first. Null until loaded; loading starts when a screen that shows activity is watched. */
+  readonly history: TxView[] | null;
+  readonly historyError: ApiFailure | null;
+
+  /** Null until the first scan has finished. */
+  readonly receive: ReceiveView | null;
+  readonly faucet: FaucetView;
+
+  /** The latest outcome worth announcing. A new one has a new id. */
+  readonly notice: Notice | null;
+
+  // ---- making and opening a wallet ----
+
+  /** Starts the passkey prompt, so call it from a tap. */
+  createWithPasskey(): Promise<CreateResult>;
+  /** Retries the follow-up prompt for the passkey in `setup`. Call it from a tap. */
+  finishSetup(): Promise<CreateResult>;
+  /** Makes 12 random words and stores them in this browser. */
+  createWithWords(): Promise<CreateResult>;
+  /** Clears `created` once the reader has moved on from the "Wallet made" step. */
+  ackCreated(): void;
+
+  /** No wallet here: lets the reader pick a practice passkey and adopts its wallet. Call it from a tap. */
+  openWithPasskey(): Promise<OpenResult>;
+
+  /**
+   * Loads a passkey wallet's keys. "stored" asks for the passkey this browser
+   * remembers; "picker" lets the reader choose any practice passkey. Call it
+   * from a tap. A wallet made without a passkey answers "unlocked" at once.
+   */
+  unlock(how?: 'stored' | 'picker'): Promise<UnlockResult>;
+  /** Loads a passkey wallet's keys from its 12 words, for this page only. */
+  unlockWithWords(words: string): UnlockWordsResult;
+  /** After "other-passkey": make that wallet this browser's wallet. */
+  confirmSwitch(): SwitchResult;
+  cancelSwitch(): void;
+
+  /** Checks typed words without keeping them. Cheap: safe on every keystroke. */
+  checkWords(input: string): WordsCheck;
+  /** Scans for the words' practice history first; stores them only if some is found. */
+  restore(words: string): Promise<RestoreResult>;
+  /** After "empty": store the words in this browser anyway. */
+  keepRestored(): KeepResult;
+  /** After "empty": forget the words. Nothing was stored. */
+  eraseRestored(): void;
+
+  // ---- keys ----
+
+  /** Drops a passkey wallet's keys. Looking and receiving go on working. */
+  lock(): void;
+  /** The 12 words, or null while locked. Keep them out of anything that outlives the screen. */
+  revealWords(): string[] | null;
+  /** Deletes this wallet's record from this browser and drops its keys. Other stored data is left alone. */
+  removeWallet(): 'removed' | 'gone';
+  /** The wallet's public descriptors (receive and change), for Settings and the Sparrow page. Null with no wallet. */
+  descriptors(): { receive: string; change: string } | null;
+
+  // ---- the chain ----
+
+  /**
+   * Tells the wallet which screen is open (null: none), so it reads the network
+   * only as often as that screen needs. Called by App.svelte alone, on every
+   * route change.
+   */
+  watch(screen: Route['name'] | null): void;
+  /** A full scan now. Resolves when it has finished or failed; `chain` says which. */
+  refresh(): Promise<void>;
+  /** One transaction by ID, from what the wallet already holds or from the network. */
+  lookupTx(txid: string): Promise<TxLookup>;
+
+  // ---- receiving ----
+
+  /** Moves Receive on to the next unused address. Does nothing while a faucet request runs. */
+  newReceiveAddress(): void;
+  /**
+   * Call before the bot check's script is added to the page. It locks a passkey
+   * wallet and makes every later move between screens a full page load, so the
+   * script and the wallet's keys are never in one page together. Until that
+   * reload, actions that need keys answer "reload".
+   */
+  beforeBotCheck(): void;
+  /**
+   * Asks the faucet to pay the receive address, waiting and asking again by itself
+   * where that can help. Progress is in `faucet`. Resolves when the request has
+   * been promised or has failed for good.
+   */
+  askFaucet(getToken: TokenSource): Promise<void>;
+
+  // ---- sending ----
+
+  /** What a payment would cost, without keys. With no coins loaded yet the answer is "nothing-spendable". */
+  plan(request: PaymentRequest): PaymentPlan;
+  /** Builds and signs. Nothing is sent. */
+  sign(request: PaymentRequest): SignResult;
+  /** Sends a signed payment. A second call while one is under way gets the same answer as the first. */
+  broadcast(payment: SignedPayment): Promise<BroadcastResult>;
+  /** An address of the pay-it-forward pot, for "Pass it on". */
+  potAddress(): Promise<PotAddressResult>;
+}

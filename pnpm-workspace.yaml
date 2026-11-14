@@ -1,4 +1,5 @@
 packages:
+  - contract
   - wallet
 
 # No package may run install scripts unless listed under allowBuilds.

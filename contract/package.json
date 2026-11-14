@@ -1,0 +1,19 @@
+{
+  "name": "@learnbitcoin/practice-contract",
+  "version": "0.1.0",
+  "private": true,
+  "description": "What the practice app and its Worker agree on: paths, bodies, error codes and events.",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "node --test test/",
+    "check": "tsc --noEmit -p ."
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "typescript": "6.0.3"
+  }
+}
