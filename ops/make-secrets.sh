@@ -3,49 +3,54 @@
 #
 # Bitcoin Core RPC has no shared password:
 #   - electrs and ops/cli.sh use Core's cookie file (nothing to leak in logs)
-#   - mempool-api and the producer each get their own rpcauth login
+#   - mempool-api, the producer and the bots each get their own rpcauth login
 #     (Core stores only a salted HMAC; the password lives only in .env)
 #
-#   ops/make-secrets.sh            create .env if missing (keeps an existing one)
-#   ops/make-secrets.sh --rotate   new RPC logins, keeps MARIADB_PASSWORD
+#   ops/make-secrets.sh            add whatever is missing, keep everything else
+#   ops/make-secrets.sh --rotate   new RPC logins for every service; keeps the
+#                                  MariaDB password, the bots API token and any
+#                                  other entries (such as NTFY_TOPIC)
 set -euo pipefail
 cd "$(dirname "$0")"
 umask 077
+exec python3 - "$@" <<'PY'
+import hmac
+import os
+import secrets
+import sys
 
-rotate=false
-[ "${1:-}" = "--rotate" ] && rotate=true
-if [ -f .env ] && [ "$rotate" = false ]; then
-  echo ".env exists; use --rotate for new RPC logins"
-  cut -d= -f1 .env
-  exit 0
-fi
+rotate = "--rotate" in sys.argv[1:]
+services = ["mempool", "producer", "bots"]
 
-mariadb=$(grep -E '^MARIADB_PASSWORD=' .env 2>/dev/null | cut -d= -f2- || true)
-[ -n "$mariadb" ] || mariadb=$(openssl rand -hex 32)
+entries = {}
+if os.path.exists(".env"):
+    for line in open(".env"):
+        line = line.rstrip("\n")
+        if line and not line.startswith("#") and "=" in line:
+            key, value = line.split("=", 1)
+            entries[key] = value.strip("'")
 
-# Prints "user:salt$hmac" then the password, as Bitcoin Core's share/rpcauth/rpcauth.py does.
-rpcauth() {
-  python3 - "$1" <<'PY'
-import hmac, secrets, sys
-user = sys.argv[1]
-salt = secrets.token_hex(16)
-password = secrets.token_hex(32)
-print(f"{user}:{salt}${hmac.new(salt.encode(), password.encode(), 'sha256').hexdigest()}")
-print(password)
+
+def rpcauth(user):
+    """As Bitcoin Core's share/rpcauth/rpcauth.py: user:salt$hmac, plus the password."""
+    salt = secrets.token_hex(16)
+    password = secrets.token_hex(32)
+    return f"{user}:{salt}${hmac.new(salt.encode(), password.encode(), 'sha256').hexdigest()}", password
+
+
+entries.setdefault("MARIADB_PASSWORD", secrets.token_hex(32))
+for service in services:
+    auth_key, password_key = f"RPCAUTH_{service.upper()}", f"{service.upper()}_RPC_PASSWORD"
+    if rotate or auth_key not in entries or password_key not in entries:
+        entries[auth_key], entries[password_key] = rpcauth(service)
+entries.setdefault("BOTS_API_TOKEN", secrets.token_urlsafe(32))
+
+with open(".env.new", "w") as f:
+    for key, value in entries.items():
+        # Single quotes keep compose from reading the "$" in rpcauth values as a variable.
+        f.write(f"{key}='{value}'\n" if key.startswith("RPCAUTH_") else f"{key}={value}\n")
+os.replace(".env.new", ".env")
+print("wrote .env:")
+for key in entries:
+    print(key)
 PY
-}
-
-{ read -r mempool_auth; read -r mempool_pw; } < <(rpcauth mempool)
-{ read -r producer_auth; read -r producer_pw; } < <(rpcauth producer)
-
-# Single quotes: compose must not read the "$" in rpcauth values as variables.
-cat > .env.new <<EOF
-MARIADB_PASSWORD=$mariadb
-RPCAUTH_MEMPOOL='$mempool_auth'
-MEMPOOL_RPC_PASSWORD=$mempool_pw
-RPCAUTH_PRODUCER='$producer_auth'
-PRODUCER_RPC_PASSWORD=$producer_pw
-EOF
-mv .env.new .env
-echo "wrote .env:"
-cut -d= -f1 .env
