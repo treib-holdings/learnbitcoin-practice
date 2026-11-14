@@ -397,6 +397,316 @@ test('transactions of an address: the waiting ones first as they arrived, then n
   assert.deepEqual(now.slice(0, 3), [later, more[48], more[47]], 'one waits; then the newest of the block, last in first');
 });
 
+// -- a long list, page by page ----------------------------------------------------
+
+/** One list the practice network gave, as tools/integration/address-lists.ts wrote it down. */
+interface RecordedList {
+  /** "GET /esplora/address/<target>/txs/chain/<txid>": the address and the ID are left as names. */
+  request: string;
+  status: number;
+  count: number;
+  unconfirmed: number;
+  confirmedCount: number;
+  /** Where each listed transaction stands in the order the 60 payments were sent: 1 is the first. */
+  sentOrder: number[];
+  note?: string;
+}
+interface RecordedStep {
+  state: string;
+  /** The address's own count of its transactions: in blocks, and waiting. */
+  stats?: { chain: number; mempool: number };
+  lists: RecordedList[];
+  reachedByChainPages?: number;
+}
+const addressLists: { steps: RecordedStep[] } = readJson('../fixtures/address-lists.json');
+
+test('replaying the recording of a long list: an address with 60 transactions is listed page by page as the practice network listed it', async () => {
+  // As the recording was made: one faucet coin, then 60 small payments to one of the wallet's own
+  // addresses, each spending the change of the one before. 30 of them, a block, 30 more, a block.
+  const { origin, esplora, coin: faucetCoin } = await withFaucetCoin();
+  const target = receive(1).address;
+  const changeAddress = change(0).address;
+  let coin = faucetCoin;
+  /** The payments' IDs, oldest first. */
+  const sent: string[] = [];
+  const payTarget = async (count: number): Promise<void> => {
+    for (let n = 0; n < count; n++) {
+      const left = coin.value - 600n - 200n;
+      const tx = rawTx(coin, [{ address: target, amount: 600n }, { address: changeAddress, amount: left }]);
+      assert.equal((await send(origin, tx.hex)).status, 200, `payment ${sent.length + 1}`);
+      sent.push(tx.txid);
+      coin = { txid: tx.txid, vout: 1, value: left, chain: 1, index: 0 };
+    }
+  };
+  const order = (list: { txid: string }[]) => list.map((tx) => sent.indexOf(tx.txid) + 1);
+
+  // The requests of the recording that the stand-in has no answer for. The Worker carries none of
+  // them, so the app cannot ask them: a list of the waiting ones alone, and two ways to page that
+  // go by a query string. The stand-in reads no query string, and says so: it refuses such a
+  // question in its own words, where the practice network gave a list.
+  const notCarried = new Set<string>();
+  let replayed = 0;
+  let refusedOutLoud = 0;
+
+  /** Asks every list of one recorded step, and holds each answer to the recording: how many, of which kind, in which order. */
+  const replay = async (step: RecordedStep): Promise<void> => {
+    if (step.stats) {
+      const stats = await esplora.address(target);
+      assert.deepEqual({ chain: stats.chain_stats.tx_count, mempool: stats.mempool_stats.tx_count }, { chain: step.stats.chain, mempool: step.stats.mempool }, step.state);
+    }
+    /** The last ID of the page of confirmed ones asked for last: what the recording's next "<txid>" stands for. */
+    let lastOfPage: string | undefined;
+    const reached = new Set<number>();
+    for (const list of step.lists) {
+      const what = `${step.state}: ${list.request}${list.note ? ` (${list.note})` : ''}`;
+      if (list.request.includes('?')) {
+        // Asked all the same, with an ID that is one of the address's own: no list comes back
+        // that could be taken for the practice network's.
+        const question = list.request.replace('<target>', target).replace('<txid>', lastOfPage ?? sent[0]!);
+        assert.doesNotMatch(question, /[<>]/, what);
+        const got = await ask(origin, question);
+        assert.deepEqual(
+          got,
+          {
+            status: 400,
+            contentType: 'text/plain',
+            body: `stand-in origin: the stand-in reads no query string, and was asked ${JSON.stringify(question.split(' ')[1])}`,
+          },
+          what,
+        );
+        assert.equal(list.status, 200, `${what}: the practice network answered it`);
+        refusedOutLoud += 1;
+      }
+      if (list.request.includes('?') || list.request.endsWith('/txs/mempool')) {
+        notCarried.add(list.request);
+        continue;
+      }
+      const paged = list.request.includes('/txs/chain');
+      if (list.request.endsWith('/<txid>')) assert.ok(lastOfPage, `${what}: the page before it gave an ID to ask by`);
+      const request = list.request
+        .replace('<target>', target)
+        .replace('<change>', changeAddress)
+        .replace('<txid>', lastOfPage ?? '');
+      assert.doesNotMatch(request, /[<>]/, what);
+
+      const got = await ask(origin, request);
+      assert.equal(got.status, list.status, what);
+      assert.equal(got.contentType, 'application/json', what);
+      const rows = got.body as { txid: string; status: { confirmed: boolean } }[];
+      assert.equal(rows.length, list.count, what);
+      assert.equal(rows.filter((row) => !row.status.confirmed).length, list.unconfirmed, what);
+      assert.equal(rows.filter((row) => row.status.confirmed).length, list.confirmedCount, what);
+      assert.deepEqual(order(rows), list.sentOrder, what);
+      replayed += 1;
+      if (paged) {
+        lastOfPage = rows.at(-1)?.txid;
+        for (const n of order(rows)) reached.add(n);
+      }
+    }
+    if (step.reachedByChainPages !== undefined) assert.equal(reached.size, step.reachedByChainPages, `${step.state}: reached page by page`);
+  };
+
+  const [a, b, c, changeStep] = addressLists.steps;
+  assert.ok(a && b && c && changeStep);
+  assert.deepEqual(addressLists.steps.map((step) => step.state), ['30 unconfirmed', '30 confirmed, 30 unconfirmed', '60 confirmed', 'the change address, in all 60']);
+
+  // A: 30 payments wait.
+  await payTarget(30);
+  await replay(a);
+  assert.deepEqual(order(await esplora.addressTxsAll(target)), a.lists[0]!.sentOrder, 'all 30, in one answer');
+
+  // B: a block takes them, and 30 more wait. The first page is full at 50: the 30 that wait,
+  // then only the newest 20 of the 30 in the block.
+  origin.mine();
+  await payTarget(30);
+  await replay(b);
+  const first = b.lists[0]!;
+  assert.deepEqual([first.count, first.unconfirmed, first.confirmedCount], [50, 30, 20]);
+  // The wallet's client reads on from the last confirmed one of that page, and has all 60.
+  const sixty = Array.from({ length: 60 }, (_, i) => i + 1);
+  const requestsBefore = origin.requests().length;
+  assert.deepEqual(order(await esplora.addressTxsAll(target)), [...sixty.slice(30), ...sixty.slice(0, 30).reverse()]);
+  assert.deepEqual(
+    origin.requests().slice(requestsBefore).map((request) => request.path),
+    [`/esplora/address/${target}/txs`, `/esplora/address/${target}/txs/chain/${sent[10]}`],
+    'two requests: the first page, then what comes after payment 11',
+  );
+
+  // C: another block. All 60 are in blocks, and the first page is the newest 50 of them.
+  origin.mine();
+  await replay(c);
+  assert.deepEqual(order(await esplora.addressTxsAll(target)), [...sixty].reverse());
+
+  // The change address took part in all 60 as well: paid by each, and spent from by all but the first.
+  await replay(changeStep);
+  assert.deepEqual(order(await esplora.addressTxsAll(changeAddress)), [...sixty].reverse());
+
+  // Every list of the recording was either replayed or is one the stand-in does not carry.
+  assert.equal(replayed, 12);
+  assert.equal(replayed + [...addressLists.steps].flatMap((step) => step.lists).filter((list) => notCarried.has(list.request)).length, 18);
+  assert.deepEqual([...notCarried].sort(), [
+    'GET /esplora/address/<target>/txs/mempool',
+    'GET /esplora/address/<target>/txs?after_txid=<txid>',
+    'GET /esplora/address/<target>/txs?max_txs=100',
+  ]);
+  // What the practice network answered to the four questions with a query string, as recorded:
+  // the part of the list after a given ID (10 of the 60, and then none), and a longer page (all
+  // 60 at once). So the real server does have more to give than its first 50. The stand-in
+  // refused each of the four.
+  assert.deepEqual(
+    addressLists.steps.flatMap((step) => step.lists.filter((list) => list.request.includes('?')).map((list) => [step.state, list.request.split('?')[1], list.status, list.count])),
+    [
+      ['30 confirmed, 30 unconfirmed', 'after_txid=<txid>', 200, 10],
+      ['30 confirmed, 30 unconfirmed', 'max_txs=100', 200, 60],
+      ['60 confirmed', 'after_txid=<txid>', 200, 10],
+      ['60 confirmed', 'after_txid=<txid>', 200, 0],
+    ],
+  );
+  assert.equal(refusedOutLoud, 4);
+  assert.deepEqual(await ask(origin, `GET /esplora/address/${target}/txs/mempool`), {
+    status: 404,
+    contentType: 'text/plain',
+    body: 'endpoint does not exist "/address/' + target + '/txs/mempool"',
+  });
+});
+
+test('the older pages of a list: 25 confirmed ones at a time, newest first, after the transaction named; an empty list at the end', async () => {
+  const { origin, esplora } = standIn();
+  const address = receive(0).address;
+  const ids = (list: { txid: string }[]) => list.map((tx) => tx.txid);
+  const page = async (after?: string) => ids((await ask(origin, `GET /esplora/address/${address}/txs/chain${after === undefined ? '' : `/${after}`}`)).body);
+
+  // No history: both shapes answer an empty list, as the address's first page does.
+  assert.deepEqual(await ask(origin, `GET /esplora/address/${address}/txs/chain`), { status: 200, contentType: 'application/json', body: [] });
+  assert.deepEqual(await page('ab'.repeat(32)), []);
+
+  // 130 payments: 100 in blocks (five blocks of 20), then 30 that wait. Oldest first.
+  const paid: string[] = [];
+  for (let block = 0; block < 5; block++) {
+    for (let n = 0; n < 20; n++) paid.push(origin.fund(address, 1_000n, { confirmed: false }));
+    origin.mine();
+  }
+  const confirmed = paid.slice(0, 100).reverse(); // newest first: the last block first and, inside a block, the last arrival first
+  for (let n = 0; n < 30; n++) paid.push(origin.fund(address, 1_000n, { confirmed: false }));
+  const waiting = paid.slice(100);
+
+  // The first page: the 30 that wait, then the newest 20 in blocks.
+  assert.deepEqual(ids(await esplora.addressTxs(address)), [...waiting, ...confirmed.slice(0, 20)]);
+  // The confirmed ones alone, from the top: 25. The waiting ones are never among them.
+  assert.deepEqual(await page(), confirmed.slice(0, 25));
+  // After any one of them: the next 25 in the same order, or as many as are left.
+  assert.deepEqual(await page(confirmed[24]), confirmed.slice(25, 50));
+  assert.deepEqual(await page(confirmed[19]), confirmed.slice(20, 45), 'by the last confirmed one of the first page');
+  assert.deepEqual(await page(confirmed[0]), confirmed.slice(1, 26));
+  assert.deepEqual(await page(confirmed[74]), confirmed.slice(75, 100));
+  assert.deepEqual(await page(confirmed[89]), confirmed.slice(90, 100), 'a short page: the last one');
+  assert.deepEqual(await page(confirmed[98]), [confirmed[99]]);
+  assert.deepEqual(await page(confirmed[99]), [], 'after the oldest: an empty list');
+  // Every transaction comes as the address's first page gives it: the same fields, a block and its time.
+  const [whole] = (await ask(origin, `GET /esplora/address/${address}/txs/chain/${confirmed[18]}`)).body as { txid: string; status: { confirmed: boolean } }[];
+  assert.equal(whole?.txid, confirmed[19]);
+  assert.equal(whole?.status.confirmed, true);
+  assert.deepEqual(whole, (await esplora.addressTxs(address))[49]);
+
+  // An ID that is not in the list gives nothing: one nobody knows, one that still waits, and
+  // one of another address. (From the server's source: it looks down the list for the ID.)
+  const elsewhere = origin.fund(SOMEONE, 1_000n);
+  for (const other of ['ab'.repeat(32), waiting[0]!, elsewhere]) assert.deepEqual(await page(other), [], other);
+  // An ID in capitals is the same ID. Text that is no ID is read as none: the first page.
+  assert.deepEqual(await page(confirmed[24]!.toUpperCase()), confirmed.slice(25, 50));
+  for (const text of ['abc', 'x'.repeat(64), `${confirmed[24]}0`, '']) assert.deepEqual(await page(text), confirmed.slice(0, 25), JSON.stringify(text));
+  // The address is checked as in every other shape, and nothing may follow the ID.
+  assert.deepEqual(await ask(origin, 'GET /esplora/address/bcrt1qnotanaddress/txs/chain'), { status: 400, contentType: 'text/plain', body: 'Invalid Bitcoin address' });
+  assert.equal((await ask(origin, `GET /esplora/address/${address}/txs/chain/${confirmed[24]}/more`)).status, 404);
+  assert.equal((await ask(origin, `POST /esplora/address/${address}/txs/chain`)).status, 404);
+
+  // The wallet's client puts the pages together: all 130, each once, the waiting ones first.
+  const before = origin.requests().length;
+  assert.deepEqual(ids(await esplora.addressTxsAll(address)), [...waiting, ...confirmed]);
+  assert.deepEqual(
+    origin.requests().slice(before).map((request) => request.path.slice(`/esplora/address/${address}`.length)),
+    ['/txs', `/txs/chain/${confirmed[19]}`, `/txs/chain/${confirmed[44]}`, `/txs/chain/${confirmed[69]}`, `/txs/chain/${confirmed[94]}`],
+    'five requests: 50, 25, 25, 25 and the last 5',
+  );
+
+  // A block takes the 30. A page asked for by the same ID as before holds what it held: what is new goes on top.
+  origin.mine();
+  assert.deepEqual(await page(confirmed[24]), confirmed.slice(25, 50));
+  assert.deepEqual(await page(), [...waiting].reverse().slice(0, 25));
+  assert.deepEqual(ids(await esplora.addressTxsAll(address)), [...[...waiting].reverse(), ...confirmed]);
+});
+
+test('a question to Esplora that carries a query string is refused out loud, at both doors: the stand-in reads none', async () => {
+  const { origin, esplora } = standIn();
+  const address = receive(0).address;
+  const paid: string[] = [];
+  for (let n = 0; n < 60; n++) paid.push(origin.fund(address, 1_000n, { confirmed: false }));
+  origin.mine();
+  const newestFirst = [...paid].reverse();
+  const refusal = (question: string) => ({
+    status: 400,
+    contentType: 'text/plain',
+    body: `stand-in origin: the stand-in reads no query string, and was asked ${JSON.stringify(question)}`,
+  });
+
+  // The first page as it is: 50 of the 60.
+  assert.equal((await ask(origin, `GET /esplora/address/${address}/txs`)).body.length, 50);
+  // The real server reads a query string. Asked for what comes after the last ID of that page
+  // it lists the other 10, and asked for 100 at once it lists all 60 (the recording). The
+  // stand-in knows neither. It used to drop the query and answer with the first 50 again: a
+  // list that looks right and is not. Now each such question fails where it is asked.
+  const questions = [
+    `/esplora/address/${address}/txs?after_txid=${newestFirst[49]}`,
+    `/esplora/address/${address}/txs?max_txs=100`,
+    `/esplora/address/${address}/txs/chain?max_txs=100`,
+    `/esplora/address/${address}/txs/chain/${newestFirst[24]}?max_txs=1`,
+    `/esplora/address/${address}/utxo?x`,
+    `/esplora/address/${address}?after_txid=${newestFirst[0]}`,
+    `/esplora/tx/${paid[0]}?x=1`,
+    '/esplora/blocks/tip/height?x=1',
+    '/esplora/nothing?x=1',
+  ];
+  for (const question of questions) assert.deepEqual(await ask(origin, `GET ${question}`), refusal(question), question);
+  // A broadcast as well: the node is not shown the transaction.
+  origin.fund(receive(1).address, 5_000n);
+  const coin = (await esplora.addressUtxos(receive(1).address))[0]!;
+  const payment = rawTx({ txid: coin.txid, vout: coin.vout, value: BigInt(coin.value), chain: 0, index: 1 }, [{ address: SOMEONE, amount: 4_000n }]);
+  assert.deepEqual(await ask(origin, 'POST /esplora/tx?x=1', { body: payment.hex }), refusal('/esplora/tx?x=1'));
+  assert.equal((await ask(origin, `GET /esplora/tx/${payment.txid}`)).status, 404, 'the node was not shown it');
+  // The same transaction, sent without the query string, is taken.
+  assert.equal((await send(origin, payment.hex)).status, 200);
+
+  // A question mark with nothing after it is no query string, to the real server either.
+  assert.equal((await ask(origin, 'GET /esplora/blocks/tip/height?')).body, String(origin.height()));
+  // The bots are another matter. The real ones cut a query string off and answer as if it had
+  // not been there (bots/practice_bots/server.py), and so does the stand-in.
+  assert.equal((await ask(origin, 'GET /bots/health?x=1')).status, 200);
+  // requests() goes on listing the path alone.
+  assert.deepEqual(origin.requests().at(-1), { method: 'GET', path: '/bots/health' });
+  assert.ok(origin.requests().some((request) => request.path === `/esplora/address/${address}/txs` && request.method === 'GET'));
+  assert.ok(origin.requests().every((request) => !request.path.includes('?')));
+
+  // Over a socket: the same refusal, and the same answer without the query string.
+  const { url, close } = await origin.listen();
+  try {
+    for (const question of questions.slice(0, 2)) {
+      const response = await fetch(`${url}${question}`);
+      assert.deepEqual(
+        { status: response.status, contentType: response.headers.get('content-type'), body: await response.text() },
+        refusal(question),
+        question,
+      );
+    }
+    const plain = await fetch(`${url}/esplora/address/${address}/txs`);
+    assert.equal(((await plain.json()) as unknown[]).length, 50);
+  } finally {
+    await close();
+  }
+
+  // Nothing changes for the wallet's client, which asks without one: all 60, in two requests.
+  assert.equal((await esplora.addressTxsAll(address)).length, 60);
+});
+
 // -- broadcasts the recording does not cover ----------------------------------------
 
 /** What Esplora answers when the node refuses a transaction with these words. */

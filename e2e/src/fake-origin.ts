@@ -58,6 +58,9 @@ export interface FakeOrigin {
   /**
    * Answers in-process, as the origin would, for any URL whose path starts
    * with /esplora/ or /bots/ (the host is ignored). No socket is opened.
+   * One thing is refused that the real origin answers: a question under
+   * /esplora/ that carries a query string (400, in the stand-in's own
+   * words). The stand-in reads none, and would answer it wrongly.
    */
   fetch(input: string | URL | Request, init?: RequestInit): Promise<Response>;
   /** Serves the same over HTTP on a free port of 127.0.0.1. `url` has no trailing slash. */
@@ -139,19 +142,29 @@ export function makeFakeOrigin(options: FakeOriginOptions = {}): FakeOrigin {
 
   /**
    * The Esplora API (electrs). `path` is what follows /esplora. The real
-   * server knows many more paths; this one knows the six the wallet uses.
+   * server knows many more paths; this one knows the eight the app uses:
+   * the seven reads the Worker carries, and the broadcast.
    */
   function esplora(method: string, path: string, body: string): Answer {
     if (method === 'GET' && path === '/blocks/tip/height') return text(200, String(chain.height()));
 
-    const address = /^\/address\/([^/]*)(\/utxo|\/txs)?$/.exec(path);
+    const address = /^\/address\/([^/]*)(\/utxo|\/txs|\/txs\/chain(?:\/([^/]*))?)?$/.exec(path);
     if (method === 'GET' && address) {
-      const [, asked = '', list] = address;
+      const [, asked = '', list, after] = address;
       const found = scriptOf(asked);
       if ('error' in found) return text(400, found.error);
       const script = hex.encode(found.script);
       if (list === '/utxo') return json(200, chain.utxoJson(script));
       if (list === '/txs') return json(200, chain.txsJson(script));
+      if (list !== undefined) {
+        // The older pages of a long list: the confirmed ones that come
+        // after the transaction named. Text there that is no transaction
+        // ID is not refused: the real server (by its source) reads it as
+        // no ID at all, and answers with the first page. An ID in capitals
+        // is the same ID.
+        const isId = after !== undefined && /^[0-9a-f]{64}$/i.test(after);
+        return json(200, chain.chainTxsJson(script, isId ? after.toLowerCase() : undefined));
+      }
       return json(200, chain.addressJson(asked, script));
     }
 
@@ -211,10 +224,12 @@ export function makeFakeOrigin(options: FakeOriginOptions = {}): FakeOrigin {
   }
 
   /**
-   * One request in, one answer out. `length` is what the request's
-   * Content-Length says (0 when it has none). "slow" means there is never an answer.
+   * One request in, one answer out. `query` is what follows the path, from
+   * its question mark on ("" when nothing does). `length` is what the
+   * request's Content-Length says (0 when it has none). "slow" means there
+   * is never an answer.
    */
-  function answer(method: string, path: string, authorization: string | null, body: string, length: number): Answer | 'slow' {
+  function answer(method: string, path: string, query: string, authorization: string | null, body: string, length: number): Answer | 'slow' {
     seen.push({ method, path });
     if (mode === 'slow') return 'slow';
     if (mode === 'down') return page(502, 'Bad Gateway');
@@ -229,6 +244,14 @@ export function makeFakeOrigin(options: FakeOriginOptions = {}): FakeOrigin {
     let reply: Answer;
     if (!isEsplora && !path.startsWith('/bots/')) reply = page(404, 'Not Found');
     else if (method !== 'GET' && method !== 'POST') reply = page(403, 'Forbidden');
+    // The real Esplora reads a query string, and answers differently for
+    // it: "?after_txid=" gives the part of a list after that transaction,
+    // "?max_txs=" a longer page (e2e/fixtures/address-lists.json). This
+    // stand-in knows none of that. Left to answer as if the query were not
+    // there, it would hand back a list that looks right and is not. So it
+    // refuses, in words of its own that nobody can take for Esplora's. The
+    // app cannot meet this: the Worker passes no query string on.
+    else if (isEsplora && query !== '') reply = text(400, `stand-in origin: the stand-in reads no query string, and was asked ${JSON.stringify(`${path}${query}`)}`);
     else if (isEsplora) reply = esplora(method, path.slice('/esplora'.length), body);
     // The bots are stopped: the router finds nobody to pass the request on to.
     else if (bots.mode() === 'down') reply = page(502, 'Bad Gateway');
@@ -243,7 +266,8 @@ export function makeFakeOrigin(options: FakeOriginOptions = {}): FakeOrigin {
     const body = await request.text();
     // Over a socket, a body given as a stream goes out without a Content-Length.
     const length = init?.body instanceof ReadableStream ? 0 : Buffer.byteLength(body);
-    const reply = answer(request.method, new URL(request.url).pathname, request.headers.get('authorization'), body, length);
+    const asked = new URL(request.url);
+    const reply = answer(request.method, asked.pathname, asked.search, request.headers.get('authorization'), body, length);
     if (reply !== 'slow') {
       return new Response(reply.body, { status: reply.status, headers: { 'Content-Type': reply.type, ...reply.headers } });
     }
@@ -271,9 +295,9 @@ export function makeFakeOrigin(options: FakeOriginOptions = {}): FakeOrigin {
       request.on('end', () => {
         let reply: Answer | 'slow';
         try {
-          const path = new URL(request.url ?? '/', 'http://stand-in').pathname;
+          const asked = new URL(request.url ?? '/', 'http://stand-in');
           const length = Number(request.headers['content-length']) || 0;
-          reply = answer(request.method ?? 'GET', path, request.headers.authorization ?? null, Buffer.concat(chunks).toString('utf8'), length);
+          reply = answer(request.method ?? 'GET', asked.pathname, asked.search, request.headers.authorization ?? null, Buffer.concat(chunks).toString('utf8'), length);
         } catch (error) {
           // A fault in the stand-in itself: say so, and keep serving.
           reply = text(500, `stand-in origin: ${error instanceof Error ? error.message : String(error)}`);

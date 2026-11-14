@@ -36,6 +36,10 @@ const BLOCK_SECONDS = 30;
 const CLUSTER_LIMIT = 64;
 /** The node relays no transaction of fewer bytes than this, counted without its witnesses. */
 const SMALLEST_SIZE = 65;
+/** Esplora lists at most this many of an address's transactions in one answer (GET /address/<address>/txs). */
+const FIRST_PAGE = 50;
+/** And this many confirmed ones on each further page (GET /address/<address>/txs/chain/<txid>). */
+const CHAIN_PAGE = 25;
 
 interface ChainBlock {
   height: number;
@@ -592,17 +596,50 @@ export function makeChain(opts: { height: number; clock: () => number; seed: str
   }
 
   /**
-   * GET /address/<address>/txs: at most 50. The waiting ones come first, in
-   * the order they arrived; then those in blocks, newest first.
+   * The transactions of a script that are in blocks, newest first: by block
+   * from the tip down and, inside one block, the later arrival first. (The
+   * real server goes by a transaction's place in its block, last first. A
+   * block here has no order of its own, and arrival is an order a block
+   * could have: nothing arrives before what it spends.)
+   */
+  const confirmedOf = (script: string) =>
+    filed(script)
+      .filter((tx) => tx.block)
+      .sort((a, b) => (b.block?.height ?? 0) - (a.block?.height ?? 0) || b.seq - a.seq);
+
+  /**
+   * GET /address/<address>/txs: at most 50, all told. The waiting ones come
+   * first, in the order they arrived; then those in blocks, newest first,
+   * for as much room as the waiting ones leave. So 30 waiting and 30 in
+   * blocks are listed as the 30 and then the newest 20, as the practice
+   * network was seen to do (e2e/fixtures/address-lists.json).
    */
   function txsJson(script: string) {
-    const all = filed(script);
-    const unconfirmed = all.filter((tx) => !tx.block).slice(0, 50);
-    const confirmed = all
-      .filter((tx) => tx.block)
-      .sort((a, b) => (b.block?.height ?? 0) - (a.block?.height ?? 0) || b.seq - a.seq)
-      .slice(0, 50 - unconfirmed.length);
+    const unconfirmed = filed(script)
+      .filter((tx) => !tx.block)
+      .slice(0, FIRST_PAGE);
+    const confirmed = confirmedOf(script).slice(0, FIRST_PAGE - unconfirmed.length);
     return [...unconfirmed, ...confirmed].map(txJson);
+  }
+
+  /**
+   * GET /address/<address>/txs/chain and /txs/chain/<txid>: how the rest of
+   * a long list is reached. Only transactions in blocks, newest first, 25
+   * at most: the newest 25 when no ID is given, otherwise the 25 that come
+   * after that transaction in the list. Past the oldest one the answer is
+   * an empty list, and that is how a reader knows it has them all.
+   *
+   * An ID that is not in the list (unknown, another address's, or still
+   * waiting for a block) also gives an empty list: the server looks down
+   * the list for it and finds nothing after it. That much is read from the
+   * server's source (electrs); the rest was recorded from the practice
+   * network.
+   */
+  function chainTxsJson(script: string, after?: string) {
+    const confirmed = confirmedOf(script);
+    if (after === undefined) return confirmed.slice(0, CHAIN_PAGE).map(txJson);
+    const at = confirmed.findIndex((tx) => tx.txid === after);
+    return (at === -1 ? [] : confirmed.slice(at + 1, at + 1 + CHAIN_PAGE)).map(txJson);
   }
 
   return {
@@ -627,5 +664,6 @@ export function makeChain(opts: { height: number; clock: () => number; seed: str
     addressJson,
     utxoJson,
     txsJson,
+    chainTxsJson,
   };
 }

@@ -18,9 +18,11 @@
 // never refuse (unless a test tells one to) and a recorder in place of the
 // events service. Nothing here opens a socket.
 //
-// Two tests put a fault of their own on the way from the Worker to the origin
+// A few tests put a fault of their own on the way from the Worker to the origin
 // (a wrong token for the bots, a body that arrives in pieces, something in
-// between that answers for Esplora). Each says so where it does.
+// between that answers for Esplora, or for the older pages of a long list
+// alone, or that refuses the unspent coins of an address that holds too
+// many). Each says so where it does.
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
@@ -60,6 +62,7 @@ import {
   type Coin,
   type FetchLike,
   type PaymentRequest,
+  type WalletState,
 } from '@learnbitcoin/practice-wallet';
 import {
   configFromEnv,
@@ -81,7 +84,7 @@ import { ApiError, api as readyMadeApi, broadcastFailure, failureOf, makeApi } f
 import { DEFAULT_CONFIG, loadConfig } from '../../app/src/lib/config.ts';
 import { initEvents, track, trackPage } from '../../app/src/lib/events.ts';
 import { faucetWidgetOptions } from '../../app/src/lib/turnstile.ts';
-import { wranglerConfig } from '../../worker/test/fakes.ts';
+import { costOf, wranglerConfig } from '../../worker/test/fakes.ts';
 import { makeFakeOrigin, type FakeOriginOptions } from '../src/fake-origin.ts';
 
 // -- the stack ----------------------------------------------------------------
@@ -165,6 +168,14 @@ interface StackOptions {
   botsToken?: string;
   /** What carries the Worker's requests to the origin. Default: nothing stands in between. */
   transport?: (send: FetchLike) => FetchLike;
+  /**
+   * What the limiter for chain reads lets a count go up to, counted the way
+   * Cloudflare's limiter counts (worker/test/fakes.ts, countingLimiter, has
+   * the rule): a call passes while the count for its key is below this, and
+   * then adds its weight. Default: no such limit, and the limiter never
+   * refuses by itself.
+   */
+  chainBudget?: number;
   /** Other surroundings for the Worker than the local ones. */
   deps?: Partial<Pick<Deps, 'config' | 'botCheck' | 'forwardEvent'>>;
 }
@@ -178,7 +189,26 @@ function stack(options: StackOptions = {}) {
   const botChecks: { token: string; address: string }[] = [];
   /** The limiters a test has told to refuse. */
   const over = new Set<keyof Limits>();
-  const limiter = (name: keyof Limits): Limiter => ({ limit: async () => ({ success: !over.has(name) }) });
+  /**
+   * Every call to a limiter, in order: which limiter, what the call counted for (its weight, or
+   * 1 when it named none), and the count it went to when that is not the reader's main one (the
+   * word the Worker added to the reader's key, as in "older-pages").
+   */
+  const counted: { limiter: keyof Limits; cost: number; apart: string }[] = [];
+  /** How far each count of the limiter for chain reads has got, by key, when the stack was given a budget. */
+  const used = new Map<string, number>();
+  const limiter = (name: keyof Limits): Limiter => ({
+    limit: async (asked) => {
+      const cost = costOf(asked);
+      counted.push({ limiter: name, cost, apart: asked.key.split(':')[1] ?? '' });
+      if (over.has(name)) return { success: false };
+      if (name !== 'chain' || options.chainBudget === undefined) return { success: true };
+      const count = used.get(asked.key) ?? 0;
+      if (count >= options.chainBudget) return { success: false };
+      used.set(asked.key, count + cost);
+      return { success: true };
+    },
+  });
 
   const deps: Deps = {
     config: configFromEnv(LOCAL_VARS),
@@ -240,6 +270,9 @@ function stack(options: StackOptions = {}) {
     forwarded,
     botChecks,
     over,
+    counted,
+    /** How far the counts of the limiter for chain reads have got, all of them added up. */
+    chainUsed: () => [...used.values()].reduce((sum, count) => sum + count, 0),
     /** Waits for what the handler left to finish after its answers (an event on its way on). */
     settled: () => Promise.all(pending.splice(0)),
     /**
@@ -528,6 +561,9 @@ test('a chain read leaves a log line only when something is broken', async () =>
     () => s.api.esplora.address(me),
     () => s.api.esplora.addressUtxos(me),
     () => s.api.esplora.addressTxs(me),
+    // The two shapes by which a list longer than one page is read to its end.
+    () => s.api.esplora.addressTxsChain(me),
+    () => s.api.esplora.addressTxsChain(me, funding),
     () => s.api.esplora.tx(funding),
   ];
   for (const read of reads) await read();
@@ -537,7 +573,9 @@ test('a chain read leaves a log line only when something is broken', async () =>
     ['a transaction the chain does not know', 404, 'not_found', () => ask(`/tx/${'ab'.repeat(32)}`)],
     ['a wrong method', 405, 'method', () => ask(`/address/${me}`, { method: 'POST' })],
     ['a shape the Worker does not carry', 404, 'not_found', () => ask(`/tx/${funding}/hex`)],
-    ['another such shape', 404, 'not_found', () => ask(`/address/${me}/txs/chain/${funding}`)],
+    ['another such shape', 404, 'not_found', () => ask(`/address/${me}/txs/mempool`)],
+    ['a paging shape with something after the ID', 404, 'not_found', () => ask(`/address/${me}/txs/chain/${funding}/`)],
+    ['a paging shape with a query string', 404, 'not_found', () => ask(`/address/${me}/txs/chain?max_txs=100`)],
     ['a query string', 404, 'not_found', () => ask(`/address/${me}?after=${funding}`)],
     ['text that is no address', 404, 'not_found', () => ask(`/address/${broken}/utxo`)],
   ];
@@ -686,6 +724,279 @@ test('an address read reaches the chain for every address there is, and for no o
   assert.deepEqual([counts.good, counts.bad], [[good.length, 0], [0, bad.length]], 'every address was passed on, and nothing made to be wrong was');
   assert.ok(counts.either[0]! > 50 && counts.either[1]! > 50, 'the texts that may be either were some of each');
   t.diagnostic(`passed on: ${good.length} addresses and ${counts.either[0]} texts that turned out to be one; turned away: ${bad.length + counts.either[1]!}`);
+});
+
+// -- a long history ---------------------------------------------------------------
+
+test('a long history: an address that took part in 60 transactions shows all 60, and in 130 all 130, read page by page through the Worker', async () => {
+  const s = stack();
+  const me = receive(0).address;
+  /** Everything the address was paid, oldest first. */
+  const paid: string[] = [];
+  const pay = (count: number): void => {
+    for (let n = 0; n < count; n++) paid.push(s.network.fund(me, 1_000n, { confirmed: false }));
+  };
+  /** What the Worker asked the origin about this address's transactions since `from`, as the part of each path after the address. */
+  const asked = (from: number): string[] =>
+    s.network
+      .requests()
+      .slice(from)
+      .map((request) => request.path)
+      .filter((path) => path.startsWith(`/esplora/address/${me}/txs`))
+      .map((path) => path.slice(`/esplora/address/${me}`.length));
+  /** The wallet's history, read through the app's client and the Worker, and checked against what was paid. */
+  const read = async (waiting: number) => {
+    const state = await scanWallet(watch, s.api.esplora);
+    assert.equal(state.coins.length, paid.length);
+    assert.deepEqual(state.receive.filter((address) => address.used).map((address) => address.index), [0], 'one address holds it all');
+    const from = s.network.requests().length;
+    const history = await walletHistory(state, s.api.esplora);
+    const pages = asked(from);
+
+    assert.equal(history.length, paid.length, `all ${paid.length}`);
+    assert.equal(new Set(history.map((tx) => tx.txid)).size, paid.length, 'each one once');
+    assert.deepEqual(new Set(history.map((tx) => tx.txid)), new Set(paid));
+    assert.ok(history.every((tx) => tx.direction === 'received' && tx.net === 1_000n));
+    // Newest first: the ones that wait, then the ones in blocks from the tip down.
+    const confirmed = paid.slice(0, paid.length - waiting).reverse();
+    assert.ok(history.slice(0, waiting).every((tx) => !tx.confirmed));
+    assert.deepEqual(new Set(history.slice(0, waiting).map((tx) => tx.txid)), new Set(paid.slice(paid.length - waiting)));
+    assert.ok(history.slice(waiting).every((tx) => tx.confirmed));
+    const heights = history.slice(waiting).map((tx) => tx.height ?? 0);
+    assert.deepEqual(heights, [...heights].sort((x, y) => y - x), 'from the tip down');
+    // The Worker adds nothing and loses nothing: this is the history the wallet reads from the origin itself.
+    assert.deepEqual(history, await walletHistory(state, new Esplora(`${ORIGIN}/esplora`, s.network.fetch)));
+    return { pages, confirmed };
+  };
+
+  // 60, as the practice network was measured with: 30 in a block, 30 that wait. Esplora lists 50
+  // at once (the 30 that wait, then the newest 20 of the block). The other 10 are on a second
+  // page, asked for by the last confirmed transaction of the first: the 20th newest in the block.
+  pay(30);
+  s.network.mine();
+  pay(30);
+  const first = await read(30);
+  assert.deepEqual(first.pages, ['/txs', `/txs/chain/${first.confirmed[19]}`]);
+  // With the first page alone, as the wallet read history before, 10 of the 60 would be missing.
+  assert.equal((await s.api.esplora.addressTxs(me)).length, 50);
+
+  // The same 60, all in blocks: 50, then 10.
+  s.network.mine();
+  const settled = await read(0);
+  assert.deepEqual(settled.pages, ['/txs', `/txs/chain/${settled.confirmed[49]}`]);
+
+  // 130: 100 in blocks, 30 that wait. 50, then three full pages of 25, then the last 5.
+  pay(40);
+  s.network.mine();
+  pay(30);
+  const many = await read(30);
+  assert.equal(paid.length, 130);
+  assert.deepEqual(many.pages, [
+    '/txs',
+    `/txs/chain/${many.confirmed[19]}`,
+    `/txs/chain/${many.confirmed[44]}`,
+    `/txs/chain/${many.confirmed[69]}`,
+    `/txs/chain/${many.confirmed[94]}`,
+  ]);
+  // How the limiter for chain reads was told to count that history. The first page counts as
+  // one read, like every other read. Each older page asked for by an ID counts as 50 (the
+  // Worker's OLDER_PAGE_COST), in a count of its own: four of the 120 such pages a reader may
+  // ask for in a minute.
+  const cost = (from: number) => s.counted.slice(from).map((call) => `${call.limiter} ${call.cost}${call.apart === '' ? '' : ` ${call.apart}`}`);
+  const before = s.counted.length;
+  await walletHistory(await scanWallet(watch, s.api.esplora), s.api.esplora);
+  const forHistory = cost(before).slice(-5);
+  assert.deepEqual(forHistory, ['chain 1', 'chain 50 older-pages', 'chain 50 older-pages', 'chain 50 older-pages', 'chain 50 older-pages']);
+  // Everything before those five was the scan, and each of its reads counted as one.
+  assert.ok(cost(before).length > 40);
+  assert.deepEqual(new Set(cost(before).slice(0, -5)), new Set(['chain 1']));
+  // The newest 25 confirmed ones, asked for with no ID, count as one read too.
+  const plain = s.counted.length;
+  await s.api.esplora.addressTxsChain(me);
+  assert.deepEqual(cost(plain), ['chain 1']);
+
+  // A page crosses the Worker byte for byte, like every chain read.
+  for (const tail of ['/txs/chain', `/txs/chain/${many.confirmed[44]}`]) {
+    const direct = await s.network.fetch(`${ORIGIN}/esplora/address/${me}${tail}`);
+    const through = await s.page(`${API.esplora}/address/${me}${tail}`);
+    assert.equal(through.status, 200, tail);
+    assert.equal(through.headers.get('Content-Type'), 'application/json; charset=utf-8', tail);
+    const body = await through.text();
+    assert.equal(body, await direct.text(), tail);
+    assert.equal((JSON.parse(body) as unknown[]).length, 25, tail);
+  }
+  // Past the oldest transaction the list is empty, and so it is after an ID the address does not know.
+  assert.deepEqual(await s.api.esplora.addressTxsChain(me, many.confirmed[99]), []);
+  assert.deepEqual(await s.api.esplora.addressTxsChain(me, 'ab'.repeat(32)), []);
+
+  // Well over a hundred requests went through the handler for this, each with an address in
+  // its URL and some with a transaction ID as well. Not one left a log line.
+  assert.ok(s.handled() > 100, `${s.handled()} requests`);
+  assert.deepEqual(s.lines, []);
+
+  // The pages count against the reader's budget for chain reads. Over it, the history is not
+  // read at all: the wallet is told to wait, never handed a list that stops short.
+  const state = await scanWallet(watch, s.api.esplora);
+  s.over.add('chain');
+  assert.equal(failureOf(await thrownBy(() => walletHistory(state, s.api.esplora))), 'limit');
+  s.over.delete('chain');
+  assert.deepEqual(s.lines, [], 'asking too fast is nobody\'s fault');
+});
+
+test('a long history: when a later page cannot be read, the whole read fails and the log says what kind of request broke', async () => {
+  // The fault put here on purpose: something on the way to Esplora answers every request for an
+  // older page with an error page of its own. First pages, and everything else, go through.
+  const s = stack({
+    transport: (send) => async (input, init) =>
+      input.includes('/txs/chain')
+        ? new Response('<html><h1>502 Bad Gateway</h1></html>', { status: 502, headers: { 'Content-Type': 'text/html' } })
+        : send(input, init),
+  });
+  const me = receive(0).address;
+  for (let n = 0; n < 49; n++) s.network.fund(me, 1_000n, { confirmed: false });
+  s.network.mine();
+  const state = await scanWallet(watch, s.api.esplora);
+
+  // 49 transactions fit the first page, so no older page is asked for and the history is whole.
+  assert.equal((await walletHistory(state, s.api.esplora)).length, 49);
+  assert.deepEqual(s.lines, []);
+
+  // The 50th fills the page. Now the wallet has to ask whether there are more, and that request breaks.
+  s.network.fund(me, 1_000n);
+  const later = await scanWallet(watch, s.api.esplora);
+  const e = await thrownBy(() => walletHistory(later, s.api.esplora));
+  assert.ok(e instanceof EsploraError);
+  assert.equal(e.status, 502);
+  assert.equal(failureOf(e), 'unavailable');
+  // One line: the route, the statuses and the fault. Nothing of the address or the ID the URL held.
+  assert.deepEqual(s.lines, [line('esplora_read', 502, 502, 'origin_down')]);
+  assert.doesNotMatch(JSON.stringify(s.lines), /bcrt1|[0-9a-f]{64}|chain/);
+});
+
+test('a long history: a flood of questions for older pages is held to 120 a minute for one reader, and a wallet still reads the longest list it reads', async () => {
+  // What wrangler.jsonc lets the limiter for chain reads count up to, counted the way
+  // Cloudflare's limiter counts: for each reader by themselves. Everything below happens inside
+  // one minute.
+  const budget = (wranglerConfig().ratelimits as Array<{ name: string; simple: { limit: number } }>).find((limiter) => limiter.name === 'CHAIN_LIMIT')?.simple.limit;
+  assert.equal(budget, 6000);
+  const s = stack({ chainBudget: budget });
+  // A wallet with one address that has a long list: 1,100 payments, all in blocks. That is more
+  // than the wallet reads of one address's list (1,025).
+  const me = receive(0);
+  for (let n = 0; n < 1_100; n++) s.network.fund(me.address, 1_000n, { confirmed: false });
+  s.network.mine();
+  const olderPages = (): number => s.network.requests().filter((request) => request.path.startsWith(`/esplora/address/${me.address}/txs/chain/`)).length;
+
+  // The flood comes from somebody else (a reader at another address, one of those set aside for
+  // examples): 6,000 questions about the wallet's address, each for the page after 64 hex
+  // characters that are no transaction at all. The Worker can refuse neither on sight: anyone
+  // may read any address, and any 64 hex characters could be an ID. Each question that gets
+  // through makes Esplora read down the whole list of the address to look for its ID.
+  const stranger = { headers: { 'CF-Connecting-IP': '203.0.113.9' } };
+  let empty = 0;
+  let turnedAway = 0;
+  for (let n = 0; n < 6_000; n++) {
+    const response = await s.page(`${API.esplora}/address/${me.address}/txs/chain/${n.toString(16).padStart(64, 'e')}`, stranger);
+    const body = await response.text();
+    if (response.status === 200) {
+      assert.equal(body, '[]');
+      empty += 1;
+    } else {
+      assert.equal(response.status, 429);
+      assert.deepEqual(JSON.parse(body), { error: 'limit' });
+      turnedAway += 1;
+    }
+  }
+  // Each counts as 50 (the Worker's OLDER_PAGE_COST), so 120 of them take the stranger's count
+  // of older pages to the limiter's 6,000 for the minute.
+  assert.deepEqual([empty, turnedAway], [120, 5_880]);
+  assert.equal(olderPages(), 120, 'the origin was asked 120 times, not 6,000');
+  assert.equal(s.chainUsed(), 6_000);
+  assert.equal(s.counted.length, 6_000);
+  assert.ok(s.counted.every((call) => call.limiter === 'chain' && call.cost === 50 && call.apart === 'older-pages'));
+  assert.deepEqual(s.lines, [], 'nobody is at fault, and no line is written beside which an address could be kept');
+  // That count is apart from the stranger's other chain reads, which are answered as before.
+  assert.equal((await s.page(`${API.esplora}/blocks/tip/height`, stranger)).status, 200);
+  assert.equal((await s.page(`${API.esplora}/address/${me.address}/txs`, stranger)).status, 200);
+  assert.equal(s.chainUsed(), 6_000 + 2);
+
+  // The wallet's own reader has counts of their own, untouched by the stranger. The wallet
+  // reads the newest 1,025 of the list and stops (40 answers: the first page and 39 older ones):
+  // one ordinary read, and 39 of the 120 older pages a minute.
+  const state: WalletState = { receive: [{ ...me, used: true }], change: [], coins: [], nextReceiveIndex: 1, nextChangeIndex: 0, confirmed: 0n, unconfirmed: 0n };
+  assert.equal((await walletHistory(state, s.api.esplora)).length, 1_025);
+  assert.equal(olderPages(), 120 + 39);
+  assert.equal(s.chainUsed(), 6_000 + 2 + 1 + 39 * 50);
+  // Three such readings fit into a minute. Left to itself the app reads the history again when
+  // the wallet's coins change, which a block every half minute allows twice.
+  for (let again = 2; again <= 3; again++) assert.equal((await walletHistory(state, s.api.esplora)).length, 1_025, `reading ${again}`);
+  assert.equal(s.chainUsed(), 6_000 + 2 + 3 * (1 + 39 * 50));
+  // A fourth is turned away part of the way through, and the wallet is told to wait. It is never
+  // handed the part that was read as if that were the whole list.
+  assert.equal(failureOf(await thrownBy(() => walletHistory(state, s.api.esplora))), 'limit');
+  // Its coins and its total are other reads, and those go on being answered: 1,100 coins here.
+  // (The practice network itself is expected to refuse a list of that many unspent coins: the
+  // next test. The stand-in lists any number.)
+  const scanned = await scanWallet(watch, s.api.esplora);
+  assert.deepEqual([scanned.coins.length, scanned.confirmed], [1_100, 1_100_000n]);
+  assert.deepEqual(s.lines, []);
+});
+
+test('an address that is refused its list of unspent coins: the scan fails as a whole and the log names a fault, while the past payments still read', async () => {
+  // The fault put here on purpose. By the Esplora server's source, the list of unspent coins
+  // of an address that holds more than 500 of them in blocks is refused whole: a 400, in plain
+  // text, with these words. That was read, not measured on the practice network, and the
+  // stand-in lists any number of coins. So something on the way to it does the refusing here.
+  const words = 'Too many unspent transaction outputs (>500). Contact support to raise limits.';
+  const s = stack({
+    transport: (send) => async (input, init) => {
+      const response = await send(input, init);
+      if (!input.endsWith('/utxo') || response.status !== 200) return response;
+      const body = await response.text();
+      const inBlocks = (JSON.parse(body) as { status: { confirmed: boolean } }[]).filter((coin) => coin.status.confirmed).length;
+      return inBlocks > 500
+        ? new Response(words, { status: 400, headers: { 'Content-Type': 'text/plain' } })
+        : new Response(body, { status: 200, headers: { 'Content-Type': 'application/json' } });
+    },
+  });
+  const me = receive(0).address;
+  const other = receive(1).address;
+  s.network.fund(other, 70_000n);
+  for (let n = 0; n < 500; n++) s.network.fund(me, 1_000n, { confirmed: false });
+  s.network.mine();
+
+  // 500 coins at one address, and one at another: the wallet finds all 501, and its total.
+  const state = await scanWallet(watch, s.api.esplora);
+  assert.deepEqual([state.coins.length, state.confirmed], [501, 570_000n]);
+  assert.deepEqual(s.lines, []);
+
+  // One payment more to the first address, and its list is refused. A long list of past payments
+  // only stops short. This list has no pages to stop short at: the scan fails as a whole, and
+  // the wallet has no coins and no total to show, not even the coin at its other address.
+  s.network.fund(me, 1_000n);
+  const e = await thrownBy(() => scanWallet(watch, s.api.esplora));
+  assert.ok(e instanceof EsploraError);
+  assert.equal(e.status, 502);
+  assert.equal(failureOf(e), 'unavailable');
+  assert.ok(!e.message.includes('unspent'), 'the server\'s words stay on the Worker\'s side');
+  await s.idle();
+  // To the Worker, a 400 for an address it has checked itself is an answer it cannot make sense
+  // of: a fault, logged for the owner, with nothing of the address in the line.
+  assert.deepEqual(s.lines, [line('esplora_read', 502, 400, 'origin_shape')]);
+  assert.doesNotMatch(JSON.stringify(s.lines), /bcrt1|[0-9a-f]{64}|unspent/);
+  // The lighter look the app takes between scans asks for the same list, and fails the same way.
+  assert.equal(failureOf(await thrownBy(() => refreshWallet(watch, s.api.esplora, state))), 'unavailable');
+  await s.idle();
+  assert.deepEqual(s.lines, [line('esplora_read', 502, 400, 'origin_shape'), line('esplora_read', 502, 400, 'origin_shape')]);
+
+  // The past payments are another list, and it still reads: all 501 of that address page by
+  // page (the first 50, 18 pages of 25 and a last page of one), and the one of the other address.
+  s.lines.length = 0;
+  const from = s.network.requests().length;
+  const history = await walletHistory(state, s.api.esplora);
+  assert.equal(history.length, 502);
+  assert.equal(s.network.requests().slice(from).filter((request) => request.path.startsWith(`/esplora/address/${me}/txs`)).length, 20);
+  assert.deepEqual(s.lines, []);
 });
 
 // -- a payment --------------------------------------------------------------------
@@ -921,8 +1232,8 @@ test('a refused broadcast whose words are long: the first 300 characters of them
   assert.ok(e instanceof EsploraError);
   assert.equal(failureOf(e), 'refused');
   // The Worker keeps the first 300 characters of the node's words (the contract's DETAIL_MAX) and
-  // wraps them in its refusal. The wallet's Esplora client keeps the first 1,000 characters of a
-  // failed answer, which is room for all of that. So the refusal crosses as whole JSON, and the
+  // wraps them in its refusal. The wallet's Esplora client keeps the first 2,000 characters of a
+  // failed answer, which is room for the longest refusal the Worker can write. So the refusal crosses as whole JSON, and the
   // details line gets every one of the 300 characters: nothing has to be pieced together.
   const passedOn = message.slice(0, DETAIL_MAX);
   assert.ok(e.message.endsWith(`: ${JSON.stringify({ error: 'refused', detail: passedOn })}`), 'the refusal crossed whole');
@@ -1452,6 +1763,8 @@ test('an origin that is down, redirects or forbids: every call reads as "unavail
       () => s.api.esplora.address(me),
       () => s.api.esplora.addressUtxos(me),
       () => s.api.esplora.addressTxs(me),
+      () => s.api.esplora.addressTxsChain(me),
+      () => s.api.esplora.addressTxsChain(me, txid),
       () => s.api.esplora.tx(txid),
     ];
     for (const read of reads) {
