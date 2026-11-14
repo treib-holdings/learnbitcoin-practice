@@ -73,3 +73,23 @@ main :not(pre) > code {
     display: none !important;
   }
 }
+
+/* The practice card (the Backup screen) is the one thing in the app that is
+   made for paper. It carries data-print="only". When a page holds it, a
+   printout is the card alone: whatever is neither the card, nor inside it,
+   nor around it is left out. So no screenful of links and buttons is
+   printed around the card, and the 12 words cannot reach paper from that
+   screen by any road, shown or not. What is around the card gives up its
+   own margins, padding and height, so the card starts at the top of the
+   sheet and the sheet is not followed by an empty one. */
+@media print {
+  body:has([data-print="only"]) :not(:has([data-print="only"]), [data-print="only"], [data-print="only"] *) {
+    display: none !important;
+  }
+  body:has([data-print="only"]),
+  body:has([data-print="only"]) :has([data-print="only"]) {
+    margin: 0 !important;
+    padding: 0 !important;
+    min-height: 0 !important;
+  }
+}
