@@ -4,11 +4,17 @@
   "description": "LearnBitcoin practice wallet: a real Bitcoin wallet on a no-value practice network.",
   "license": "MIT",
   "type": "module",
+  "packageManager": "pnpm@12.15.0",
   "engines": {
     "node": ">=22.18.0"
   },
   "scripts": {
     "test": "pnpm -r test",
-    "check": "pnpm -r check"
+    "check": "pnpm -r check",
+    "build": "pnpm --filter @learnbitcoin/practice-app build",
+    "smoke": "pnpm --filter @learnbitcoin/practice-e2e smoke",
+    "e2e": "pnpm --filter @learnbitcoin/practice-e2e e2e",
+    "e2e:live": "pnpm --filter @learnbitcoin/practice-e2e e2e:live",
+    "dev": "pnpm --filter @learnbitcoin/practice-e2e dev"
   }
 }

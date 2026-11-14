@@ -1,7 +1,21 @@
 packages:
   - contract
   - wallet
+  - app
+  - worker
+  - e2e
 
-# No package may run install scripts unless listed under allowBuilds.
-# minimumReleaseAge stays at pnpm's default (24 h) on purpose: a wallet repo
-# should not install a dependency version in its first day on the registry.
+# 24 hours, in minutes: a wallet repo should not install a dependency version
+# in its first day on the registry. This is also pnpm's default, but it is
+# written out on purpose. Left unwritten, pnpm installs a too-young version
+# anyway when nothing older fits what was asked for, and every version here is
+# pinned exactly. Written out, that install fails instead.
+minimumReleaseAge: 1440
+
+# No package may run install scripts unless listed here as true.
+# These two arrive with wrangler and each declares one. Both work without it:
+# the program itself comes as a separate package for the machine's platform,
+# and the launcher finds it there.
+allowBuilds:
+  esbuild: false
+  workerd: false

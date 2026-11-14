@@ -5,6 +5,6 @@ coverage/
 *.log
 .env
 .env.*
-.dev.vars
+.dev.vars*
 .wrangler/
 .rclone.conf
