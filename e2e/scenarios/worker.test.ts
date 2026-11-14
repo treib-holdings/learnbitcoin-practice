@@ -36,8 +36,9 @@ scenario('an unknown /api/ path is the Worker\'s JSON 404, with the Worker\'s ow
     assert.equal(answer.headers['referrer-policy'], undefined, path);
     assert.equal(answer.headers['permissions-policy'], undefined, path);
   }
+  // The app's own first requests (its settings, its page view) write lines too: look at these three only.
   assert.deepEqual(
-    s.stack.lines.map((line) => [line.route, line.status]),
+    s.stack.lines.filter((line) => line.route === 'unknown').map((line) => [line.route, line.status]),
     [['unknown', 404], ['unknown', 404], ['unknown', 404]],
   );
   // "/api" without a slash is not the Worker's: it is a path of the app, like any other.
@@ -62,22 +63,31 @@ scenario('/api/config through the page\'s own fetch: the settings of this run, n
   assert.equal(s.stack.config.passkeyHost, 'localhost');
   assert.notEqual(s.stack.config.turnstileSiteKey, '');
   assert.equal(s.stack.config.events, true);
-  assert.deepEqual(s.stack.lines.map((line) => [line.route, line.status]), [['config', 200]]);
+  // Two reads: the app's own when it started, and this one.
+  assert.deepEqual(
+    s.stack.lines.filter((line) => line.route === 'config').map((line) => [line.route, line.status]),
+    [['config', 200], ['config', 200]],
+  );
 });
 
 scenario('an event from the page reaches the recorder, and says nothing but its name and screen', async (s) => {
   const page = await s.open('/');
+  // The app counts the screen it opened on, by itself, once its settings say events are on.
+  await page.settle();
+  await s.stack.settled();
+  assert.deepEqual(s.stack.events.map((recorded) => recorded.event), [{ name: 'pageview', path: '/' }]);
+  // A second one, sent by hand, is taken the same way.
   const status = await page.page.evaluate(async () => {
     const response = await fetch('/p/event', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: 'pageview', path: '/' }),
+      body: JSON.stringify({ name: 'pageview', path: '/about' }),
     });
     return response.status;
   });
   assert.equal(status, 202);
   await s.stack.settled();
-  assert.deepEqual(s.stack.events.map((recorded) => recorded.event), [{ name: 'pageview', path: '/' }]);
+  assert.deepEqual(s.stack.events.map((recorded) => recorded.event), [{ name: 'pageview', path: '/' }, { name: 'pageview', path: '/about' }]);
   // An event with anything else in it is refused, and nothing is recorded.
   const refused = await page.page.evaluate(async () => {
     const response = await fetch('/p/event', {
@@ -89,7 +99,7 @@ scenario('an event from the page reaches the recorder, and says nothing but its 
   });
   assert.equal(refused, 400);
   await s.stack.settled();
-  assert.equal(s.stack.events.length, 1);
+  assert.equal(s.stack.events.length, 2);
 });
 
 scenario('a POST from a page of another site is refused; the same POST from the app\'s own page is answered', async (s) => {
