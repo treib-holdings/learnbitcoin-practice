@@ -625,6 +625,40 @@ test('each kind of address has its own dust limit, to the sat', async () => {
   }
 });
 
+test('a transaction of under 65 bytes, counted without its witnesses, is refused as "tx-size-small"', async () => {
+  const { origin, esplora, coin } = await withFaucetCoin();
+  // The recording holds no such refusal. The words are the node's, and the code is the one it gives every refusal by its own rules.
+  const tooSmall: Got = { status: 400, contentType: 'text/plain', body: 'sendrawtransaction RPC error: {"code":-26,"message":"tx-size-small"}' };
+  const segwit = (version: number, program: number[]) => bech32m.encode('bcrt', [version, ...bech32m.toWords(Uint8Array.from(program))]);
+  /** One coin in, one output and no change, and the bytes of that transaction without its witnesses. */
+  const paidInFull = (from: Spendable, to: string, fee = 500n) => {
+    const tx = rawTx(from, [{ address: to, amount: from.value - fee }]);
+    const stripped = Transaction.fromRaw(Buffer.from(tx.hex, 'hex'), { allowUnknownOutputs: true }).toBytes(true, false).length;
+    return { ...tx, stripped };
+  };
+
+  // One coin in and one output are 60 bytes and the output's script. An address whose program
+  // is 2 bytes stands for a script of 4: pay-to-anchor is one, and any later version can have one.
+  const anchor = segwit(1, [0x4e, 0x73]);
+  for (const to of [anchor, segwit(16, [1, 2])]) {
+    const small = paidInFull(coin, to);
+    assert.equal(small.stripped, 64, to);
+    assert.deepEqual(await send(origin, small.hex), tooSmall, to);
+  }
+  // The node asks this early: before it looks for the coin, and long before it weighs the fee.
+  assert.deepEqual(await send(origin, paidInFull({ ...coin, txid: 'ab'.repeat(32) }, anchor).hex), tooSmall, 'a coin that never was');
+  assert.deepEqual(await send(origin, paidInFull(coin, anchor, 0n).hex), tooSmall, 'no fee at all');
+  assert.deepEqual(await esplora.addressUtxos(anchor), [], 'nothing got in');
+
+  // One byte more in the script is one byte more in the transaction, and 65 are enough.
+  const enough = paidInFull(coin, segwit(1, [1, 2, 3]));
+  assert.equal(enough.stripped, 65);
+  assert.deepEqual(await send(origin, enough.hex), { status: 200, contentType: 'text/plain', body: enough.txid });
+  // Esplora reports the size with the witnesses and the weight. The bytes outside the witnesses weigh 4 each, the rest 1.
+  const seen = (await ask(origin, `GET /esplora/tx/${enough.txid}`)).body;
+  assert.equal((seen.weight - seen.size) / 3, 65);
+});
+
 test('a coin that never was, and a dust output on a payment with no fee', async () => {
   const { origin, coin } = await withFaucetCoin();
   const gone = recorded(refusals, 'coin already spent in a block');

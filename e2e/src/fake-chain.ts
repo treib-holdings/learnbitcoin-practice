@@ -20,7 +20,8 @@
 //     "feerate diagram"). A replacement that pays more in all, but is so much
 //     bigger that it pays less per byte, is refused there and gets in here.
 //   - Of the node's many other rules, only those in the recording are here,
-//     and three more that keep coins from being made out of nothing.
+//     three more that keep coins from being made out of nothing, and the
+//     least size a transaction may have.
 //   - A block has no size: it takes everything that waits.
 
 import { bech32m, hex } from '@scure/base';
@@ -33,6 +34,8 @@ import { REGTEST, addressScript, checkAddress } from '@learnbitcoin/practice-wal
 const BLOCK_SECONDS = 30;
 /** The node keeps at most this many waiting transactions that hang together. */
 const CLUSTER_LIMIT = 64;
+/** The node relays no transaction of fewer bytes than this, counted without its witnesses. */
+const SMALLEST_SIZE = 65;
 
 interface ChainBlock {
   height: number;
@@ -72,6 +75,8 @@ interface ChainTx {
   vout: ChainOutput[];
   /** In bytes. */
   size: number;
+  /** In bytes, without the witnesses. */
+  strippedSize: number;
   weight: number;
   /** In virtual bytes: a quarter of the weight, rounded up. Fees are counted against this. */
   vsize: number;
@@ -221,6 +226,7 @@ function parse(text: string): Omit<ChainTx, 'fee' | 'block' | 'seq' | 'heardAt'>
         ...describe(output.script),
       })),
       size: bytes.length,
+      strippedSize: stripped.length,
       weight,
       vsize: Math.ceil(weight / 4),
     };
@@ -353,6 +359,17 @@ export function makeChain(opts: { height: number; clock: () => number; seed: str
     }
     // Still waiting: the node keeps the one it has and answers with its ID again.
     if (known && !known.block) return { ok: true, txid: known.txid };
+
+    // A transaction of under 65 bytes, counted without its witnesses, is not
+    // relayed: at 64 it is as long as two hashes side by side, and could be
+    // passed off as a branch of a block's Merkle tree. The wallet's payments
+    // are longer, with one exception: one coin paid in full, with no change,
+    // to an address that stands for a script of only 4 bytes (pay-to-anchor
+    // is one) comes to exactly 64. The recording holds no such refusal. Its
+    // words were seen on the practice network's node. The limit, and its
+    // place before the node looks for the coins a transaction spends, are
+    // Bitcoin Core's (version 31), read from its source.
+    if (parsed.strippedSize < SMALLEST_SIZE) return refuse(-26, 'tx-size-small');
 
     // Every coin it spends must exist and must not have been spent in a block.
     // A coin that another waiting transaction spends is looked at further down.

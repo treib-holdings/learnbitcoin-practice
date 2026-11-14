@@ -17,10 +17,14 @@
 // put there too: a bot check that passes one known token, rate limiters that
 // never refuse (unless a test tells one to) and a recorder in place of the
 // events service. Nothing here opens a socket.
+//
+// Two tests put a fault of their own on the way from the Worker to the origin
+// (a wrong token for the bots, a body that arrives in pieces, something in
+// between that answers for Esplora). Each says so where it does.
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { bech32m } from '@scure/base';
+import { bech32, bech32m } from '@scure/base';
 import { Address, Transaction } from '@scure/btc-signer';
 import {
   ADDRESS_PATTERN,
@@ -157,6 +161,10 @@ interface StackOptions {
   network?: FakeOriginOptions;
   /** How long the Worker waits for the origin, in ms. Default: as deployed (8 s, and 25 s for the faucet). */
   timeoutMs?: number;
+  /** The token the Worker sends the bots. Default: the one the stand-in's bots ask for. */
+  botsToken?: string;
+  /** What carries the Worker's requests to the origin. Default: nothing stands in between. */
+  transport?: (send: FetchLike) => FetchLike;
   /** Other surroundings for the Worker than the local ones. */
   deps?: Partial<Pick<Deps, 'config' | 'botCheck' | 'forwardEvent'>>;
 }
@@ -176,8 +184,8 @@ function stack(options: StackOptions = {}) {
     config: configFromEnv(LOCAL_VARS),
     origin: makeOrigin({
       url: ORIGIN,
-      botsToken: network.token,
-      fetch: network.fetch,
+      botsToken: options.botsToken ?? network.token,
+      fetch: options.transport ? options.transport(network.fetch) : network.fetch,
       timeoutMs: options.timeoutMs,
       faucetTimeoutMs: options.timeoutMs,
     }),
@@ -208,7 +216,9 @@ function stack(options: StackOptions = {}) {
   const answer = makeHandler(deps);
   /** Requests the handler has not answered yet. */
   const open = new Set<Promise<Response>>();
+  let handled = 0;
   const handler: Handler = (request) => {
+    handled += 1;
     const answered = answer(request);
     open.add(answered);
     const done = () => open.delete(answered);
@@ -225,6 +235,8 @@ function stack(options: StackOptions = {}) {
     /** The app's client on that fetch. */
     api: makeApi(page),
     lines,
+    /** How many requests the handler has been given. Not every one leaves a log line: a chain read that goes well leaves none. */
+    handled: () => handled,
     forwarded,
     botChecks,
     over,
@@ -272,6 +284,12 @@ const receive = (index: number) => deriveAddress(watch, 0, index);
 const change = (index: number) => deriveAddress(watch, 1, index);
 /** An address of some other wallet (wallet/test/vectors.json, the passkey vector's first address). */
 const SOMEONE = 'bcrt1qp7th3dvtkx9vrktcrn5erq0dgjzgc4wjxzl8d6';
+/** A segwit address of a later version than 0, from its version and its program. */
+const segwit = (version: number, program: Uint8Array) => bech32m.encode(REGTEST.bech32, [version, ...bech32m.toWords(program)]);
+/** Pay-to-anchor: an output anyone can spend. Its address stands for a script of only 4 bytes, the shortest there is. */
+const ANCHOR = segwit(1, Uint8Array.of(0x4e, 0x73));
+/** The bytes of a transaction without its witnesses, from the two figures Esplora reports: a byte outside the witnesses weighs 4, one inside 1. */
+const strippedSize = (tx: { size: number; weight: number }) => (tx.weight - tx.size) / 3;
 
 /**
  * A transaction made by hand, with none of the wallet's checks: one of the
@@ -307,18 +325,11 @@ async function nodeSays(s: Stack, hex: string): Promise<string> {
   return (JSON.parse(text.slice(text.indexOf('{'))) as { message: string }).message;
 }
 
-/**
- * How much of the node's words the app can read today. The wallet's Esplora
- * client keeps the first 300 characters of a failed answer, and the Worker's
- * answer spends some of those on its wrapper: {"error":"<code>","detail":"
- */
-const detailRoom = (code: BroadcastRefusal) => 300 - '{"error":"","detail":"'.length - code.length;
-
 /** Sends a transaction the node refuses through the app's client, and checks what the app is told. */
 async function refusedAs(s: Stack, hex: string, code: BroadcastRefusal, words: RegExp): Promise<void> {
   const message = await nodeSays(s, hex);
   assert.match(message, words);
-  assert.ok(message.length <= detailRoom(code), 'short enough to cross whole (a long one has a test of its own)');
+  assert.ok(message.length <= DETAIL_MAX, 'short enough for the Worker to pass on uncut (a longer one has a test of its own)');
   const e = await thrownBy(() => s.api.esplora.broadcast(hex));
   assert.ok(e instanceof EsploraError, code);
   assert.equal(e.status, ERROR_STATUS[code]);
@@ -426,10 +437,11 @@ test('a full scan of a funded wallet, with the public key alone', async () => {
     ['received', 100_000n, true],
   ]);
 
-  // Every request went through the handler, and each has its line. No line holds an address or an ID.
-  assert.ok(s.lines.length > 60, 'a full scan asks about at least 20 unused addresses on each chain');
-  for (const logged of s.lines) assert.deepEqual(logged, line('esplora_read', 200, 200));
-  assert.doesNotMatch(JSON.stringify(s.lines), /bcrt1|[0-9a-f]{64}/);
+  // Every one of these requests went through the handler, and not one left a log line. The URL
+  // of a chain read holds an address or a transaction ID, and a log service can keep the URL
+  // beside the line. So a read that went well writes nothing at all.
+  assert.ok(s.handled() > 60, 'a full scan asks about at least 20 unused addresses on each chain');
+  assert.deepEqual(s.lines, []);
 });
 
 test('a transaction the chain index has not heard of yet is "not found", and found a moment later', async () => {
@@ -442,12 +454,15 @@ test('a transaction the chain index has not heard of yet is "not found", and fou
   assert.ok(e instanceof EsploraError);
   assert.equal(e.status, 404);
   assert.equal(failureOf(e), 'not_found');
-  assert.deepEqual(s.lines.at(-1), line('esplora_read', 404, 404));
   assert.equal((await s.api.esplora.address(me)).mempool_stats.tx_count, 0);
 
   s.clock.ms += 5_000;
   assert.equal((await s.api.esplora.tx(payment.txid)).txid, payment.txid);
   assert.equal((await s.api.esplora.address(me)).mempool_stats.tx_count, 1);
+
+  // "Not found" is an answer about the chain and nobody's fault. Like a read that went well, it
+  // leaves no log line: the faucet's is the only one there is.
+  assert.deepEqual(s.lines, [line('faucet', 200, 200)]);
 });
 
 test('the edges of the allowlist: what the wallet can ask or pay that the Worker does not carry', async () => {
@@ -481,14 +496,196 @@ test('the edges of the allowlist: what the wallet can ask or pay that the Worker
   assert.deepEqual(seen, viewPayment(payment, ownAddresses(state)));
   assert.ok(seen.outputs.some((output) => output.address === legacy && output.value === 20_000n && !output.mine));
 
-  // Text that fits the Worker's pattern but is no address reaches the chain, which answers 400.
-  // The app is told "unavailable". The wallet never asks about an address it did not derive.
+  // Text that has the looks of an address and is none: one character of a real one changed, so
+  // that its checksum no longer fits. The chain answers such text with a 400. The Worker checks
+  // an address in full before it asks, so the chain never hears of this one: it is "not found",
+  // like any path the Worker does not carry. (The wallet never asks about an address it did not derive.)
   const broken = `${receive(0).address.slice(0, -1)}${receive(0).address.endsWith('q') ? 'p' : 'q'}`;
   assert.match(broken, ADDRESS_PATTERN);
-  const e = await thrownBy(() => s.api.esplora.address(broken));
-  assert.ok(e instanceof EsploraError);
-  assert.equal(failureOf(e), 'unavailable');
-  assert.deepEqual(s.lines.at(-1), line('esplora_read', 502, 400));
+  assert.equal((await s.network.fetch(`${ORIGIN}/esplora/address/${broken}`)).status, 400, 'what the chain says, asked directly');
+  const reached = s.network.requests().length;
+  await notFound(() => s.api.esplora.address(broken));
+  await notFound(() => s.api.esplora.addressUtxos(broken));
+  await notFound(() => s.api.esplora.addressTxs(broken));
+  assert.equal(s.network.requests().length, reached, 'the Worker did not ask the chain');
+
+  // Of everything above, one request left a line in the log: the broadcast. No read did, whether
+  // it was answered or turned away. (Had the broken address reached the chain, its 400 would
+  // stand in the log as a fault of ours, and anyone could write such lines at will.)
+  assert.deepEqual(s.lines, [line('esplora_broadcast', 200, 200)]);
+});
+
+test('a chain read leaves a log line only when something is broken', async () => {
+  const s = stack();
+  const me = receive(0).address;
+  const funding = s.network.fund(me, 100_000n);
+  const broken = `${me.slice(0, -1)}${me.endsWith('q') ? 'p' : 'q'}`;
+  const ask = (path: string, init?: RequestInit) => s.page(`${API.esplora}${path}`, init);
+
+  // Every chain read the app makes, each answered well.
+  const reads = [
+    () => s.api.esplora.tipHeight(),
+    () => s.api.esplora.address(me),
+    () => s.api.esplora.addressUtxos(me),
+    () => s.api.esplora.addressTxs(me),
+    () => s.api.esplora.tx(funding),
+  ];
+  for (const read of reads) await read();
+
+  // Turned away, and nobody's fault. The URL of each of these can hold an address or an ID just the same.
+  const turnedAway: [what: string, status: number, code: ErrorCode, request: () => Promise<Response>][] = [
+    ['a transaction the chain does not know', 404, 'not_found', () => ask(`/tx/${'ab'.repeat(32)}`)],
+    ['a wrong method', 405, 'method', () => ask(`/address/${me}`, { method: 'POST' })],
+    ['a shape the Worker does not carry', 404, 'not_found', () => ask(`/tx/${funding}/hex`)],
+    ['another such shape', 404, 'not_found', () => ask(`/address/${me}/txs/chain/${funding}`)],
+    ['a query string', 404, 'not_found', () => ask(`/address/${me}?after=${funding}`)],
+    ['text that is no address', 404, 'not_found', () => ask(`/address/${broken}/utxo`)],
+  ];
+  for (const [what, status, code, request] of turnedAway) {
+    const answer = await request();
+    assert.equal(answer.status, status, what);
+    assert.deepEqual(await answer.json(), { error: code }, what);
+  }
+  // A reader who asks too fast is turned away as well.
+  s.over.add('chain');
+  for (const read of reads) assert.equal(failureOf(await thrownBy(read)), 'limit');
+  s.over.delete('chain');
+
+  assert.equal(s.handled(), reads.length + turnedAway.length + reads.length);
+  assert.deepEqual(s.lines, [], 'not one of these requests left a line');
+
+  // Broken: the origin is down. Now each read leaves its line, and the line says what kind of
+  // request failed and whose fault it is, and still nothing of what was asked for.
+  s.network.setOrigin('down');
+  for (const read of reads) assert.equal(failureOf(await thrownBy(read)), 'unavailable');
+  assert.deepEqual(s.lines, reads.map(() => line('esplora_read', 502, 502, 'origin_down')));
+  assert.doesNotMatch(JSON.stringify(s.lines), /bcrt1|[0-9a-f]{64}/);
+  // What the Worker turns away by itself never gets as far as the fault, and stays silent.
+  assert.equal((await ask(`/tx/${funding}/hex`)).status, 404);
+  assert.equal(s.lines.length, reads.length);
+
+  // Mended, the reads are silent again.
+  s.network.setOrigin('ok');
+  s.lines.length = 0;
+  for (const read of reads) await read();
+  assert.deepEqual(s.lines, []);
+
+  // Broken in another way: something on the way to Esplora has lost it, and answers every
+  // question with a "not found" page of its own. That is not the chain saying it does not know a
+  // transaction, so the app is not told "not found". It is told "unavailable", and the log says
+  // origin_shape. Every "unavailable" has such a code: with none, a failure like this one would
+  // leave no line, and nobody would hear of it.
+  const lost = stack({
+    transport: () => async () => new Response('<html><h1>404 Not Found</h1></html>', { status: 404, headers: { 'Content-Type': 'text/html' } }),
+  });
+  const lostReads = [() => lost.api.esplora.tx(funding), () => lost.api.esplora.address(me), () => lost.api.esplora.tipHeight()];
+  for (const read of lostReads) {
+    const e = await thrownBy(read);
+    assert.ok(e instanceof EsploraError);
+    assert.equal(e.status, 502);
+    assert.equal(failureOf(e), 'unavailable');
+  }
+  assert.deepEqual(lost.lines, lostReads.map(() => line('esplora_read', 502, 404, 'origin_shape')));
+
+  // Every other route writes its line for every request, whatever the answer: none of their URLs
+  // holds anything about a wallet. A broadcast is one of them, though it travels under /api/esplora/:
+  // its URL is the same for everyone, and the transaction is in its body.
+  assert.deepEqual(await loadConfig(s.page), LOCAL_CONFIG);
+  assert.equal(broadcastFailure(await thrownBy(() => s.api.esplora.broadcast('00'))).reason, 'refused');
+  assert.equal((await ask('/tx')).status, 405);
+  assert.equal(failureOf(await thrownBy(() => s.api.askFaucet(me, 'some-other-token'))), 'bot_check');
+  assert.match(await s.api.potAddress(), ADDRESS_PATTERN);
+  assert.equal((await s.page(API.event, { ...JSON_POST, body: JSON.stringify({ name: 'pageview', path: '/' }) })).status, 202);
+  await s.settled();
+  assert.equal((await s.page('/api/nothing')).status, 404);
+  assert.deepEqual(s.lines, [
+    line('config', 200),
+    line('esplora_broadcast', 400, 400),
+    line('esplora_broadcast', 405),
+    line('faucet', 403, 200),
+    line('pot_address', 200, 200),
+    line('event', 202, 202),
+    line('unknown', 404),
+  ]);
+});
+
+test('an address read reaches the chain for every address there is, and for no other text', async (t) => {
+  const s = stack();
+  // Numbers that look random and are the same in every run.
+  let seed = 20261114;
+  const below = (n: number) => {
+    seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+    return Math.floor((seed / 2 ** 32) * n);
+  };
+  const bytes = (length: number) => Uint8Array.from({ length }, () => below(256));
+  /** The 32 characters an address is written in after "bcrt1". */
+  const CHARACTERS = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l';
+
+  // Every kind of bcrt1 address there is: version 0 with a program of 20 or 32 bytes, and
+  // versions 1 to 16 with one of 2 to 40. Version 0 has the first kind of checksum (bech32),
+  // every later version the second (bech32m).
+  const good = [20, 32].map((length) => bech32.encode(REGTEST.bech32, [0, ...bech32.toWords(bytes(length))]));
+  for (let version = 1; version <= 16; version++) {
+    for (let length = 2; length <= 40; length++) good.push(segwit(version, bytes(length)));
+  }
+
+  // And text that only looks like one.
+  const bad: string[] = [];
+  for (const address of good) {
+    // One character changed, anywhere after "bcrt1".
+    const at = 5 + below(address.length - 5);
+    const other = CHARACTERS[(CHARACTERS.indexOf(address[at]!) + 1 + below(31)) % 32]!;
+    bad.push(`${address.slice(0, at)}${other}${address.slice(at + 1)}`);
+  }
+  for (let length = 2; length <= 40; length++) {
+    // Version 0 with a program that is neither a key hash nor a script hash.
+    if (length !== 20 && length !== 32) bad.push(bech32.encode(REGTEST.bech32, [0, ...bech32.toWords(bytes(length))]));
+    // The right version and program under the wrong kind of checksum.
+    bad.push(bech32m.encode(REGTEST.bech32, [0, ...bech32m.toWords(bytes(length))]));
+    bad.push(bech32.encode(REGTEST.bech32, [1 + below(16), ...bech32.toWords(bytes(length))]));
+    // A version that does not exist: the character has room for numbers up to 31, and versions end at 16.
+    bad.push(segwit(17 + below(15), bytes(length)));
+  }
+  // Characters with no checksum at all.
+  for (let n = 0; n < 300; n++) bad.push(`bcrt1${Array.from({ length: 11 + below(61) }, () => CHARACTERS[below(32)]).join('')}`);
+
+  // And text that may be either: any characters, with a good checksum put after them. It is an
+  // address when the characters come to whole bytes, 2 to 40 of them, and leave no bit set at the end.
+  const either = Array.from({ length: 600 }, () =>
+    bech32m.encode(REGTEST.bech32, [1 + below(16), ...Array.from({ length: 4 + below(61) }, () => below(32))]),
+  );
+
+  const counts = { good: [0, 0], bad: [0, 0], either: [0, 0] };
+  for (const [kind, texts] of Object.entries({ good, bad, either }) as [keyof typeof counts, string[]][]) {
+    for (const text of texts) {
+      assert.match(text, ADDRESS_PATTERN, 'it has the looks of an address, so the pattern alone lets it by');
+      // What the chain itself says of this text, asked directly: 200 for an address, 400 for anything else.
+      const chain = await s.network.fetch(`${ORIGIN}/esplora/address/${text}`);
+      const before = s.network.requests().length;
+      const answer = await s.page(`${API.esplora}/address/${text}`);
+      if (chain.status === 200) {
+        // An address: the Worker asks the chain, and passes its answer on as it came.
+        assert.equal(answer.status, 200, text);
+        assert.equal(await answer.text(), await chain.text(), text);
+        assert.equal(s.network.requests().length, before + 1, text);
+        counts[kind][0]! += 1;
+      } else {
+        // Not an address: the Worker says so itself, and the chain is not asked.
+        assert.equal(chain.status, 400, text);
+        assert.equal(answer.status, 404, text);
+        assert.deepEqual(await answer.json(), { error: 'not_found' }, text);
+        assert.equal(s.network.requests().length, before, text);
+        counts[kind][1]! += 1;
+      }
+    }
+  }
+  // The two sides agree on every text, and they are written apart: the Worker checks an address by
+  // hand (worker/src/handler.ts), the chain here with the wallet's reader. Were the Worker to let
+  // by what the chain refuses, the chain's 400 would be logged as a fault. No line was written.
+  assert.deepEqual(s.lines, []);
+  assert.deepEqual([counts.good, counts.bad], [[good.length, 0], [0, bad.length]], 'every address was passed on, and nothing made to be wrong was');
+  assert.ok(counts.either[0]! > 50 && counts.either[1]! > 50, 'the texts that may be either were some of each');
+  t.diagnostic(`passed on: ${good.length} addresses and ${counts.either[0]} texts that turned out to be one; turned away: ${bad.length + counts.either[1]!}`);
 });
 
 // -- a payment --------------------------------------------------------------------
@@ -584,7 +781,6 @@ test('the smallest payment the wallet will plan to each kind of address is one t
   let state = await scanWallet(watch, s.api.esplora);
   const filled = (length: number) => new Uint8Array(length).fill(7);
   const address = Address(REGTEST);
-  const segwit = (version: number, program: Uint8Array) => bech32m.encode(REGTEST.bech32, [version, ...bech32m.toWords(program)]);
   // The wallet's rule (wallet/src/address.ts) and the node's (here the stand-in's, e2e/src/fake-chain.ts)
   // are written apart. The limits themselves: 294 and 330 were measured on the live node, the others
   // follow from Bitcoin Core's formula.
@@ -595,7 +791,7 @@ test('the smallest payment the wallet will plan to each kind of address is one t
     ['P2PKH', address.encode({ type: 'pkh', hash: filled(20) }), 546n],
     ['P2SH', address.encode({ type: 'sh', hash: filled(20) }), 540n],
     ['a later witness version', segwit(2, filled(20)), 294n],
-    ['pay-to-anchor', segwit(1, Uint8Array.of(0x4e, 0x73)), 240n],
+    ['pay-to-anchor', ANCHOR, 240n],
   ];
   for (const [kind, to, limit] of kinds) {
     assert.equal(checkAddress(to).kind, 'practice', kind);
@@ -612,6 +808,66 @@ test('the smallest payment the wallet will plan to each kind of address is one t
   }
   const refreshed = await refreshWallet(watch, s.api.esplora, state);
   assert.deepEqual(refreshed.state.coins, state.coins);
+});
+
+test('what the wallet will not plan with the coins in hand: a fee rate under 1, and a payment too small in bytes for the node', async () => {
+  const s = stack();
+  s.network.fund(receive(0).address, 100_000n);
+  let state = await scanWallet(watch, s.api.esplora);
+  const [coin] = state.coins;
+  assert.ok(coin);
+
+  // A fee rate under 1 sat/vB. A form can hand over a 0, so the plan answers with a reason and
+  // does not throw. It names no figure for the most that can be sent: there is no rate to work one out from.
+  const free: PaymentRequest = { to: SOMEONE, amount: 20_000n, feeRate: 0n };
+  assert.deepEqual(planPayment(watch, state, free), { ok: false, reason: 'bad-fee', maxSendable: 0n, dust: null });
+  assert.throws(() => signPayment(account.key, state, free), /at least 1 sat\/vB/);
+  // The limit is the wallet's own, which is why its sentence never says the network refuses the
+  // rate. The node relays from a tenth of it: a payment made by hand at half a sat per vbyte gets in.
+  const cheap = handMade(coin, [{ address: change(0).address, amount: coin.value - 55n }]);
+  assert.equal(await s.api.esplora.broadcast(cheap.hex), cheap.txid);
+  const relayed = await s.api.esplora.tx(cheap.txid);
+  assert.deepEqual([relayed.fee, Math.ceil(relayed.weight / 4)], [55, 110]);
+  s.network.mine();
+  state = await scanWallet(watch, s.api.esplora);
+  const [only] = state.coins;
+  assert.ok(only);
+  assert.deepEqual([state.coins.length, only.value], [1, coin.value - 55n]);
+
+  // A transaction too small to relay. One coin paid in full to a pay-to-anchor address, with no
+  // change, comes to 64 bytes without its witnesses, and the node relays nothing under 65. The
+  // address is a good one and the coin is enough, so this has a reason of its own.
+  assert.equal(checkAddress(ANCHOR).kind, 'practice');
+  const tooSmall = { ok: false, reason: 'too-small', maxSendable: 0n, dust: null };
+  const inFull: PaymentRequest = { to: ANCHOR, amount: 'all', feeRate: 2n };
+  assert.deepEqual(planPayment(watch, state, inFull), tooSmall);
+  assert.throws(() => signPayment(account.key, state, inFull), /too small to relay/);
+  // An amount that leaves less than change is worth makes the same transaction.
+  assert.deepEqual(planPayment(watch, state, { ...inFull, amount: only.value - 400n }), tooSmall);
+  // The wallet is right to stop there. Made by hand, that payment is one the node refuses, and
+  // all the app could then show is "refused", with the node's words in a details line.
+  await refusedAs(s, handMade(only, [{ address: ANCHOR, amount: only.value - 200n }]).hex, 'refused', /^tx-size-small$/);
+
+  // The way out the app's sentence gives: a smaller amount, so that change comes back. With two
+  // outputs the same coin pays the same address, in a transaction of 95 bytes.
+  const smaller: PaymentRequest = { ...inFull, amount: 50_000n };
+  const plan = planPayment(watch, state, smaller);
+  assert.ok(plan.ok);
+  assert.equal(plan.change, only.value - 50_000n - plan.fee);
+  const payment = signPayment(account.key, state, smaller);
+  assert.equal(await s.api.esplora.broadcast(payment.hex), payment.txid);
+  assert.equal(strippedSize(await s.api.esplora.tx(payment.txid)), 95);
+  state = applyPayment(state, payment);
+
+  // And one byte is all that was missing. An address that stands for a script of 5 bytes takes a
+  // whole coin with no change: 65 bytes, planned by the wallet and taken by the node.
+  const whole: PaymentRequest = { to: segwit(1, Uint8Array.of(1, 2, 3)), amount: 'all', feeRate: 2n };
+  const sweep = planPayment(watch, state, whole);
+  assert.ok(sweep.ok);
+  assert.deepEqual([sweep.inputs.length, sweep.change, sweep.amount], [1, null, sweep.maxSendable]);
+  const last = signPayment(account.key, state, whole);
+  assert.equal(await s.api.esplora.broadcast(last.hex), last.txid);
+  assert.equal(strippedSize(await s.api.esplora.tx(last.txid)), 65);
 });
 
 test('a refused broadcast: every code the node can cause reaches the app, with the node\'s own words beside it', async () => {
@@ -648,7 +904,7 @@ test('a refused broadcast: every code the node can cause reaches the app, with t
   assert.equal(s.reached('POST', '/esplora/tx'), 13);
 });
 
-test('a refused broadcast whose words are long: the code crosses whole, and the words from their start', async (t) => {
+test('a refused broadcast whose words are long: the first 300 characters of them reach the app whole', async (t) => {
   const s = stack();
   s.network.fund(receive(0).address, 100_000n);
   const [coin] = (await scanWallet(watch, s.api.esplora)).coins;
@@ -659,20 +915,80 @@ test('a refused broadcast whose words are long: the code crosses whole, and the 
   const wrongKey = handMade(coin, [{ address: SOMEONE, amount: coin.value - 500n }], 1);
   const message = await nodeSays(s, wrongKey.hex);
   assert.match(message, /^mempool-script-verify-flag-failed \(Script failed an OP_EQUALVERIFY operation\), input 0 of /);
-  assert.ok(message.length > 300, 'longer than the contract lets a detail be');
+  assert.ok(message.length > DETAIL_MAX, 'longer than the contract lets a detail be');
 
   const e = await thrownBy(() => s.api.esplora.broadcast(wrongKey.hex));
   assert.ok(e instanceof EsploraError);
   assert.equal(failureOf(e), 'refused');
+  // The Worker keeps the first 300 characters of the node's words (the contract's DETAIL_MAX) and
+  // wraps them in its refusal. The wallet's Esplora client keeps the first 1,000 characters of a
+  // failed answer, which is room for all of that. So the refusal crosses as whole JSON, and the
+  // details line gets every one of the 300 characters: nothing has to be pieced together.
+  const passedOn = message.slice(0, DETAIL_MAX);
+  assert.ok(e.message.endsWith(`: ${JSON.stringify({ error: 'refused', detail: passedOn })}`), 'the refusal crossed whole');
   const { reason, detail } = broadcastFailure(e);
-  assert.equal(reason, 'refused');
-  // The Worker keeps the first 300 characters of the node's words (the contract's DETAIL_MAX). The
-  // wallet's Esplora client then keeps the first 300 characters of the whole answer, wrapper
-  // included, which cuts the JSON short, and the app reads what is left of it. So the details line
-  // gets the start of the node's words: today 271 characters of them, and never anything else.
-  assert.ok(detail !== null && detail.length >= detailRoom('refused'), 'all that fits arrives');
-  assert.ok(message.slice(0, DETAIL_MAX).startsWith(detail), 'and it is the start of what the node said');
-  t.diagnostic(`a node message of ${message.length} characters reaches the app as ${detail.length}`);
+  assert.deepEqual([reason, detail], ['refused', passedOn]);
+  assert.equal(detail?.length, 300);
+  t.diagnostic(`a node message of ${message.length} characters reaches the app as ${detail?.length}`);
+});
+
+test('a payment that spends too many coins at once is "too_large" before the node hears of it, and one coin fewer fits', async (t) => {
+  const s = stack();
+  // A wallet of 676 small coins: one payment made by hand with 676 outputs, spread over four of
+  // the wallet's addresses.
+  const COINS = 676;
+  s.network.fund(receive(0).address, 700_000n);
+  const [funding] = (await scanWallet(watch, s.api.esplora)).coins;
+  assert.ok(funding);
+  const split = handMade(funding, Array.from({ length: COINS }, (_, n) => ({ address: receive(1 + (n % 4)).address, amount: 1_000n })));
+  assert.equal(await s.api.esplora.broadcast(split.hex), split.txid);
+  s.network.mine();
+  const state = await scanWallet(watch, s.api.esplora);
+  assert.deepEqual([state.coins.length, state.confirmed], [COINS, 676_000n]);
+  const sent = () => s.reached('POST', '/esplora/tx');
+  assert.equal(sent(), 1);
+
+  // "Send all" spends every one of them. The wallet plans it and signs it: nothing is wrong with the payment.
+  const everything: PaymentRequest = { to: SOMEONE, amount: 'all', feeRate: 1n };
+  const plan = planPayment(watch, state, everything);
+  assert.ok(plan.ok);
+  assert.equal(plan.inputs.length, COINS);
+  const payment = signPayment(account.key, state, everything);
+  assert.equal(payment.fee, plan.fee);
+  // But each coin spent adds 148 bytes, now and then one fewer (which coin it is, a signature and
+  // a public key), and 676 of them come to more than the 100,000 bytes, 200,000 characters of
+  // hex, that the Worker takes as one broadcast.
+  assert.ok(payment.hex.length > 200_000, `${payment.hex.length} characters of hex`);
+  const e = await thrownBy(() => s.api.esplora.broadcast(payment.hex));
+  assert.ok(e instanceof EsploraError);
+  assert.equal(e.status, ERROR_STATUS.too_large);
+  assert.equal(failureOf(e), 'too_large');
+  // The one failure on the way to the node that a reader can do something about, so it is not
+  // read as "unavailable": the Send screen has a sentence of its own for it.
+  assert.deepEqual(broadcastFailure(e), { reason: 'too_large', detail: null });
+  assert.deepEqual(s.lines.at(-1), line('esplora_broadcast', 413));
+  assert.equal(sent(), 1, 'the node never heard of it');
+
+  // The way out that sentence gives: send less first, then the rest. One coin fewer is little
+  // enough. 675 coins fit, and the node takes them.
+  const [last, ...most] = state.coins;
+  assert.ok(last);
+  const first = signPayment(account.key, state, { ...everything, coins: most });
+  assert.equal(first.inputs.length, COINS - 1);
+  assert.ok(first.hex.length <= 200_000, `${first.hex.length} characters of hex`);
+  assert.equal(await s.api.esplora.broadcast(first.hex), first.txid);
+  const left = applyPayment(state, first);
+  assert.deepEqual(left.coins, [last]);
+  const rest = signPayment(account.key, left, everything);
+  assert.equal(await s.api.esplora.broadcast(rest.hex), rest.txid);
+  assert.equal(sent(), 3);
+
+  // In a block, the recipient holds all the wallet had, less the two fees, and the wallet holds nothing.
+  s.network.mine();
+  const received = await s.api.esplora.addressUtxos(SOMEONE);
+  assert.equal(received.reduce((sum, utxo) => sum + BigInt(utxo.value), 0n), 676_000n - first.fee - rest.fee);
+  assert.deepEqual((await scanWallet(watch, s.api.esplora)).coins, []);
+  t.diagnostic(`${COINS} coins: ${payment.hex.length} characters of hex; ${COINS - 1} coins: ${first.hex.length}`);
 });
 
 test('65 payments in a row, each spending the change of the one before: the 65th has to wait for a block', async () => {
@@ -763,6 +1079,13 @@ test('the faucet refuses: each reason reaches the app as its own word', async ()
   // Stopped by the bot check: any token but the known one.
   await refused(me, 'some-other-token', 'bot_check');
   assert.deepEqual([s.botChecks.length, botsAsked()], [1, 0]);
+  // The largest request the faucet can be sent in earnest, the longest address there is with the
+  // longest token the bot check issues, is well inside the Worker's cap and is looked at like any
+  // other. So "too large" is never what a reader is told here: that word belongs to Send alone.
+  const longest = segwit(16, new Uint8Array(40).fill(7));
+  assert.equal(longest.length, 'bcrt1'.length + 71);
+  await refused(longest, 'x'.repeat(2048), 'bot_check');
+  assert.deepEqual([s.botChecks.length, botsAsked()], [2, 0]);
 
   // Refused by the bots, whose own code is passed on.
   const broken = `${me.slice(0, -1)}${me.endsWith('q') ? 'p' : 'q'}`;
@@ -792,6 +1115,59 @@ test('the faucet refuses: each reason reaches the app as its own word', async ()
   assert.equal((await s.api.askFaucet(me, DUMMY_TOKEN)).amountSats, FAUCET_SATS);
 });
 
+test('the bots answer, but not with a refusal of the faucet\'s: the app is told "unavailable", and the log says where to look', async () => {
+  const me = receive(0).address;
+  /** What the bots answered on the way, read off the wire: the status, and the code in their body. */
+  const heard: { status: number; code: unknown }[] = [];
+  const listening =
+    (send: FetchLike): FetchLike =>
+    async (input, init) => {
+      const response = await send(input, init);
+      if (new URL(input).pathname.startsWith('/bots/')) {
+        heard.push({ status: response.status, code: ((await response.clone().json()) as { code?: unknown }).code });
+      }
+      return response;
+    };
+  const unavailable = async (call: () => Promise<unknown>) => {
+    const e = await thrownBy(call);
+    assert.ok(e instanceof ApiError);
+    assert.equal(e.status, 502);
+    assert.equal(failureOf(e), 'unavailable');
+    assert.equal(e.detail, null);
+  };
+
+  // The Worker's token for the bots is not the one they ask for. They answer 401 with a code of
+  // their own, "unauthorized". The reader can do nothing about that, and the owner must: origin_auth.
+  const locked = stack({ botsToken: 'not-the-bots-token', transport: listening });
+  await unavailable(() => locked.api.askFaucet(me, DUMMY_TOKEN));
+  await unavailable(() => locked.api.potAddress());
+  assert.deepEqual(heard.splice(0), [
+    { status: 401, code: 'unauthorized' },
+    { status: 401, code: 'unauthorized' },
+  ]);
+  assert.deepEqual(locked.lines, [line('faucet', 502, 401, 'origin_auth'), line('pot_address', 502, 401, 'origin_auth')]);
+
+  // Something on the way to the bots passes the faucet's request on in pieces, so that it arrives
+  // without its length. The bots read no body then, and answer 400 "bad_request". The contract
+  // has a code of that name, for a request of the app's that the Worker could not read. This is
+  // not one: the app asked well, and the fault lies between the Worker and the bots. So the
+  // bots' word is not passed on. The app is told "unavailable", and the log says origin_shape:
+  // the origin is up and lets us in, but said something this Worker has no reading for.
+  const inPieces = stack({
+    transport: (send) =>
+      listening((input, init) =>
+        send(input, typeof init?.body === 'string' ? ({ ...init, body: new Blob([init.body]).stream(), duplex: 'half' } as RequestInit) : init),
+      ),
+  });
+  await unavailable(() => inPieces.api.askFaucet(me, DUMMY_TOKEN));
+  assert.deepEqual(heard.splice(0), [{ status: 400, code: 'bad_request' }]);
+  assert.deepEqual(inPieces.lines, [line('faucet', 502, 400, 'origin_shape')]);
+  // Nobody was paid, and the pot's address, which is asked for without a body, still comes.
+  assert.equal((await inPieces.api.esplora.address(me)).mempool_stats.tx_count, 0);
+  assert.match(await inPieces.api.potAddress(), ADDRESS_PATTERN);
+  assert.deepEqual(heard, [{ status: 200, code: undefined }]);
+});
+
 test('pass it on: the pot address stays until it is paid, and the coin comes back as a newcomer\'s faucet coin', async () => {
   const s = stack();
   s.network.fund(receive(0).address, 100_000n);
@@ -818,43 +1194,100 @@ test('pass it on: the pot address stays until it is paid, and the coin comes bac
   assert.ok(paid.vin.some((input) => input.txid === gift.txid), 'the newcomer\'s coin is made from the gift');
 });
 
-test('the bot check: a token from the widget the app sets up passes the Worker\'s own check, for its address only', async () => {
-  const me = receive(0).address;
-  const HOST = 'practice.test';
-  // Turnstile's verify service, played by hand. For a solved token it says where it was solved
-  // and which action and customer data its widget was drawn with. The widgets here are drawn
-  // with the options the app's own module gives.
-  const widgets = new Map<string, Record<string, unknown>>();
-  const solve = (address: string): string => {
-    const token = `solved-${widgets.size}`;
-    widgets.set(token, faucetWidgetOptions(LOCAL_CONFIG.turnstileSiteKey, address, 'en', false));
-    return token;
-  };
+/** The host the app is served on, as the bot check's settings name it. */
+const WIDGET_HOST = 'practice.test';
+
+/**
+ * Turnstile, played by hand: the widget on a page, and the verify service the
+ * Worker asks about a token. A widget that is solved gives a token. Asked
+ * about that token, the service says on which host the widget ran, and which
+ * action and customer data the page drew it with. Of any other token it says
+ * that it is not one.
+ */
+function turnstile() {
+  const solved = new Map<string, { hostname: string; action: unknown; cdata: unknown }>();
+  /** Every question the verify service was asked. */
   const asked: unknown[] = [];
   const verify: FetchLike = async (url, init) => {
     const question = JSON.parse(String(init?.body)) as { response: string };
     asked.push({ url, ...question });
-    const widget = widgets.get(question.response);
-    const answer = widget
-      ? { success: true, hostname: HOST, action: widget.action, cdata: widget.cData, 'error-codes': [] }
-      : { success: false, 'error-codes': ['invalid-input-response'] };
+    const widget = solved.get(question.response);
+    const answer = widget ? { success: true, ...widget, 'error-codes': [] } : { success: false, 'error-codes': ['invalid-input-response'] };
     return new Response(JSON.stringify(answer), { headers: { 'Content-Type': 'application/json' } });
   };
+  return {
+    asked,
+    /** The Worker's real bot check, asking this verify service. */
+    botCheck: makeBotCheck({ siteKey: LOCAL_CONFIG.turnstileSiteKey, secret: 'a-secret', hostname: WIDGET_HOST, fetch: verify }),
+    /** Solves a widget that a page on `hostname` drew with these options, and gives its token. */
+    solve(options: Record<string, unknown>, hostname = WIDGET_HOST): string {
+      const token = `solved-${solved.size}`;
+      solved.set(token, { hostname, action: options.action, cdata: options.cData });
+      return token;
+    },
+  };
+}
+
+/** The widget as the app's own module sets it up for an address. */
+const widgetFor = (address: string) => faucetWidgetOptions(LOCAL_CONFIG.turnstileSiteKey, address, 'en', false);
+
+test('the bot check: a token from the widget the app sets up passes the Worker\'s own check, for its address only', async () => {
+  const me = receive(0).address;
+  const cloudflare = turnstile();
   // The Worker's real bot check in place of the stand-in one.
-  const botCheck = makeBotCheck({ siteKey: LOCAL_CONFIG.turnstileSiteKey, secret: 'a-secret', hostname: HOST, fetch: verify });
-  const s = stack({ deps: { botCheck } });
+  const s = stack({ deps: { botCheck: cloudflare.botCheck } });
 
   // The app and the Worker agree on the action's name and on what the customer data holds: paid.
-  assert.equal((await s.api.askFaucet(me, solve(me))).amountSats, FAUCET_SATS);
+  assert.equal((await s.api.askFaucet(me, cloudflare.solve(widgetFor(me)))).amountSats, FAUCET_SATS);
   // The verify service was told the secret and the token, and nothing about the reader.
-  assert.deepEqual(asked, [
+  assert.deepEqual(cloudflare.asked, [
     { url: 'https://challenges.cloudflare.com/turnstile/v0/siteverify', secret: 'a-secret', response: 'solved-0' },
   ]);
 
   // A token solved for one address does not pay another, and a made-up token pays nobody.
-  assert.equal(failureOf(await thrownBy(() => s.api.askFaucet(receive(1).address, solve(me)))), 'bot_check');
+  assert.equal(failureOf(await thrownBy(() => s.api.askFaucet(receive(1).address, cloudflare.solve(widgetFor(me))))), 'bot_check');
   assert.equal(failureOf(await thrownBy(() => s.api.askFaucet(receive(1).address, 'made-up'))), 'bot_check');
   assert.equal(s.reached('POST', '/bots/faucet'), 1);
+});
+
+test('the bot check: a token solved for another form or another address is the reader\'s to put right, and one solved on another host is ours', async () => {
+  const me = receive(0).address;
+  const cloudflare = turnstile();
+  const s = stack({ deps: { botCheck: cloudflare.botCheck } });
+  const refused = async (token: string, code: ErrorCode) => {
+    const e = await thrownBy(() => s.api.askFaucet(me, token));
+    assert.ok(e instanceof ApiError, code);
+    assert.equal(e.status, ERROR_STATUS[code]);
+    assert.equal(failureOf(e), code);
+  };
+
+  // Turnstile vouches for each of these tokens: it was solved, on this host. What it was solved
+  // for is another matter. The action and the address are whatever the page that drew the widget
+  // said they were, and a reader's browser can be made to say anything. So nothing is wrong on
+  // our side: the app is told that the bot check did not pass, as for a token that is made up,
+  // and the reader can run it again. The log line carries no fault. (A fault that any visitor
+  // could cause at will would bury the real ones.)
+  const notForThis: [what: string, token: string][] = [
+    ['drawn for another form', cloudflare.solve({ ...widgetFor(me), action: 'signup' })],
+    ['drawn with no action at all', cloudflare.solve({ ...widgetFor(me), action: undefined })],
+    ['solved for another address', cloudflare.solve(widgetFor(receive(1).address))],
+    ['never solved', 'made-up'],
+  ];
+  for (const [what, token] of notForThis) {
+    await refused(token, 'bot_check');
+    assert.deepEqual(s.lines.at(-1), line('faucet', 403, 200), what);
+  }
+
+  // A token solved on another host is ours to look into. Turnstile runs a widget only on the
+  // hosts its settings list, so the widget lets in a host this Worker does not expect: the two
+  // disagree about where the app lives. Nobody is paid until the owner has looked, and the log says so.
+  await refused(cloudflare.solve(widgetFor(me), 'elsewhere.test'), 'unavailable');
+  assert.deepEqual(s.lines.at(-1), line('faucet', 502, 200, 'bot_check_config'));
+  assert.equal(s.reached('POST', '/bots/faucet'), 0, 'the bots were asked for nothing so far');
+
+  // The check run again on the app's own page, for this address: paid.
+  assert.equal((await s.api.askFaucet(me, cloudflare.solve(widgetFor(me)))).amountSats, FAUCET_SATS);
+  assert.deepEqual(s.lines.at(-1), line('faucet', 200, 200));
 });
 
 // -- events -----------------------------------------------------------------------

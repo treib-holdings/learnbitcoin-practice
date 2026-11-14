@@ -22,7 +22,7 @@ import {
 } from '../../wallet/src/index.ts';
 
 const requireFromWallet = createRequire(new URL('../../wallet/package.json', import.meta.url));
-const { Transaction, p2tr } = (await import(requireFromWallet.resolve('@scure/btc-signer'))) as typeof import('@scure/btc-signer');
+const { Transaction, p2tr } = (await import(requireFromWallet.resolve('@scure/btc-signer'))) as typeof import('../../wallet/node_modules/@scure/btc-signer/index.js');
 
 const { ESPLORA_URL, BOTS_URL, BOTS_API_TOKEN } = process.env;
 if (!ESPLORA_URL || !BOTS_URL || !BOTS_API_TOKEN) throw new Error('Set ESPLORA_URL, BOTS_URL and BOTS_API_TOKEN');
