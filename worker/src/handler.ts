@@ -14,6 +14,10 @@
 //   - Every body is read under a cap and checked before anything acts on it.
 //   - Each reader gets a budget per minute for each kind of request.
 //
+// And it keeps next to nothing about a request: one log line, which names a
+// route and never a path, and for a request for chain data no line at all
+// unless something is broken (the end of this file says why).
+//
 // Nothing in this file exists only on Cloudflare. makeHandler() is given
 // everything from outside as a Deps (deps.ts), so the same code answers in
 // the deployed Worker and under node --test.
@@ -70,6 +74,74 @@ function refused(result: Extract<OriginAnswer<unknown>, { ok: false }>): Reply {
 }
 
 /**
+ * The 32 characters an address is written in after "bcrt1". Each stands for
+ * a number from 0 to 31: its place in this line.
+ */
+const ADDRESS_CHARACTERS = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l';
+
+/** The prefix "bcrt" as the checksum takes it in: the high bits of its four letters, a zero, then their low five bits. */
+const PREFIX_VALUES = [3, 3, 3, 3, 0, 2, 3, 18, 20];
+
+/** The five constants the checksum is worked out with (BIP 173). */
+const GENERATOR = [0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3];
+
+/** What the checksum of a version 0 address comes to (BIP 173), and that of every later version (BIP 350). */
+const CHECKSUM_VERSION_0 = 1;
+const CHECKSUM_LATER = 0x2bc830a3;
+
+/**
+ * Is this text an address of the practice network, as the Worker takes one:
+ * "bcrt1..." in lower case?
+ *
+ * The contract's pattern says what such an address looks like. An address is
+ * more than its looks, though (BIP 173 and BIP 350). The first character
+ * after "bcrt1" is a version, from 0 to 16. The last six are a checksum over
+ * everything before them, so that a mistyped address is caught and not paid.
+ * What lies between is the witness program, five bits to a character: it
+ * must come to whole bytes, 20 or 32 of them for version 0 and from 2 to 40
+ * for any later version.
+ *
+ * Esplora checks all of this, and answers text that fails with a 400. Anyone
+ * can ask the Worker about any text, so the Worker checks it first, by the
+ * rules of those two BIPs. Text that is no address is the asker's own
+ * mistake: it gets the 404 of any path the Worker does not know, and the
+ * practice network is never asked about it. (Were it asked, its 400 would
+ * stand in the owner's log as a fault of ours, and anyone could fill that
+ * log at will.)
+ */
+export function isPracticeAddress(text: string): boolean {
+  if (!ADDRESS_PATTERN.test(text)) return false;
+  // Everything after "bcrt1", as numbers: the version, the program, the checksum.
+  const values = Array.from(text.slice('bcrt1'.length), (character) => ADDRESS_CHARACTERS.indexOf(character));
+
+  // The checksum, worked out over the prefix and every character (the
+  // "polymod" of BIP 173). It comes to one fixed number for a version 0
+  // address and to another for every later version. Anything else means
+  // that a character is wrong.
+  let checksum = 1;
+  for (const value of [...PREFIX_VALUES, ...values]) {
+    const top = checksum >>> 25;
+    checksum = ((checksum & 0x1ffffff) << 5) ^ value;
+    for (let bit = 0; bit < 5; bit += 1) {
+      if ((top >>> bit) & 1) checksum ^= GENERATOR[bit]!;
+    }
+  }
+  const version = values[0]!;
+  if (version > 16 || checksum !== (version === 0 ? CHECKSUM_VERSION_0 : CHECKSUM_LATER)) return false;
+
+  // The program: five bits to a character, to be read as bytes of eight.
+  // Up to four bits may be left over at the end, and each must be zero.
+  const program = values.slice(1, -6);
+  const spare = (program.length * 5) % 8;
+  if (spare > 4 || (program.at(-1)! & ((1 << spare) - 1)) !== 0) return false;
+  const bytes = (program.length * 5 - spare) / 8;
+  // Version 0 is a key hash (20 bytes) or a script hash (32). A later
+  // version may have from 2 to 40 bytes, and the pattern's 11 to 71
+  // characters already hold a program to that.
+  return version !== 0 || bytes === 20 || bytes === 32;
+}
+
+/**
  * The Esplora paths the app uses, and no others. `parts` is what follows
  * /api/esplora/, split at the slashes. The result is the path to ask the
  * origin for, put together from the parts that passed, or null.
@@ -78,14 +150,17 @@ function refused(result: Extract<OriginAnswer<unknown>, { ok: false }>): Reply {
  * lower case, nothing percent-encoded, nothing before or after. So "..",
  * "%2e%2e", an encoded slash, an empty part or an extra one all end here,
  * and nothing a reader types can steer a request to another part of the
- * origin (the bots sit beside Esplora there).
+ * origin (the bots sit beside Esplora there). An address must also be one,
+ * checksum and all (isPracticeAddress above), so the origin is asked about
+ * addresses only. A transaction ID has no such check: any 64 hex characters
+ * could be one, and Esplora answers "not found" for those that are not.
  */
 export function esploraReadPath(parts: readonly string[]): string | null {
   const [first, second, third] = parts;
   if (first === 'blocks') {
     return parts.length === 3 && second === 'tip' && third === 'height' ? '/blocks/tip/height' : null;
   }
-  if (first === 'address' && second !== undefined && ADDRESS_PATTERN.test(second)) {
+  if (first === 'address' && second !== undefined && isPracticeAddress(second)) {
     if (parts.length === 2) return `/address/${second}`;
     if (parts.length === 3 && (third === 'utxo' || third === 'txs')) return `/address/${second}/${third}`;
     return null;
@@ -277,9 +352,12 @@ export function makeHandler(deps: Deps): Handler {
   return async (request) => {
     const started = deps.now();
     let route: RouteName = 'unknown';
+    // True for every path under /api/esplora/, whether the Worker knows it or not.
+    let underEsplora = false;
     let result: Reply;
     try {
       const url = new URL(request.url);
+      underEsplora = url.pathname.startsWith(`${API.esplora}/`);
       // No route takes a query string, so a path that has one is not a path we know.
       const match = url.search === '' ? matchPath(url.pathname) : null;
       if (match === null) {
@@ -293,7 +371,27 @@ export function makeHandler(deps: Deps): Handler {
       // request can ride into the log on it.
       result = { response: refusal('unavailable'), upstream: null, fault: 'handler' };
     }
-    if (!result.logged) {
+    // One line per request, with one exception: a request for chain data
+    // that ends without a fault writes none. The line itself would name no
+    // address. But a log service can keep, beside each line, the URL of the
+    // request it was written in, and the URL of such a request holds a
+    // wallet address or a transaction ID. A line that is never written
+    // cannot be kept beside anything.
+    //
+    // "A request for chain data" is every request under /api/esplora/ but a
+    // broadcast, whatever its method. So a chain read that went well leaves
+    // no trace here, and neither does one that was refused for a reason
+    // that is nobody's fault (a transaction the chain does not know yet, a
+    // reader asking too fast, a wrong method). Nor does any other path
+    // there, which gets a 404: a shape the Worker does not carry, text that
+    // is no address, a stray slash, a query string. Its URL can hold an
+    // address or an ID just the same. A broadcast keeps its line: its URL
+    // is the same for everyone, and the transaction travels in its body.
+    //
+    // A request that ends in a fault still writes its line, whatever it
+    // asked for: something is broken, and the owner has to know.
+    const silent = underEsplora && route !== 'esplora_broadcast' && result.fault === null;
+    if (!result.logged && !silent) {
       // The whole log line: a route name, never a path, and no address, ID, token or IP.
       deps.log({
         route,

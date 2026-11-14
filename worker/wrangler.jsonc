@@ -73,21 +73,46 @@
     "required": ["TURNSTILE_SECRET_KEY", "ACCESS_CLIENT_ID", "ACCESS_CLIENT_SECRET", "BOTS_API_TOKEN"]
   },
 
-  // What Cloudflare keeps about a request. The Worker writes one line per
-  // request itself: a route name, two status codes, a duration and a fault
-  // code. Cloudflare's own record of each request (the invocation log: the
-  // request, the answer and their details) is off, because here a URL carries
-  // a wallet address or a transaction ID. Traces are off by name for the same
-  // reason: a trace records the full URL of the request and of every fetch
-  // made for it, and "off unless asked for" is only today's default.
+  // What Cloudflare keeps about a request.
   //
-  // What this does not settle: Workers Logs may store the Worker's own line
-  // together with the URL of the request it was written in. A stored line has
-  // fields for one ($workers.event.request.url and $metadata.trigger), and it
-  // is not known here whether invocation_logs empties them. So after the
-  // first deploy, open one stored line of a chain read and look. If the URL
-  // is there, addresses are being kept for as long as the lines are, and
-  // that has to change or be said on the app's About screen.
+  // Workers Logs is on (enabled, and logs.enabled), so what the Worker
+  // writes itself is kept: a line made of a route name, two status codes, a
+  // duration and a fault code. The line names no path, address, transaction
+  // ID or reader.
+  //
+  // Invocation logs are off (logs.invocation_logs; left out, they are on).
+  // An invocation log is Cloudflare's own record of each request: the
+  // request, the answer and their details. Here the URL of a chain read
+  // carries a wallet address or a transaction ID, so those records would
+  // list which addresses were looked at, and when. Traces are off by name
+  // for the same reason: a trace records the full URL of the request and of
+  // every fetch made for it, and "off unless asked for" is only today's
+  // default.
+  //
+  // That may not be all. Workers Logs can store the Worker's own line
+  // together with the request it was written in: a stored line has fields
+  // for that ($metadata.url, $metadata.trigger, $workers.event.request),
+  // and it is not known here whether invocation_logs empties them. So the
+  // Worker does not rely on it. A request for chain data that ends without
+  // a fault writes no line at all (src/handler.ts): a line that is never
+  // written is stored beside nothing. That is every request under
+  // /api/esplora/ but a broadcast: the chain reads, and any other path
+  // there, which gets a 404. Those are all the requests the app sends the
+  // Worker whose URL holds an address or a transaction ID, and one that
+  // ends without a fault has nothing to tell the owner. One that ends in a
+  // fault still writes its line: something is broken then, and the owner
+  // has to see it.
+  //
+  // After the first deploy, look: ask the deployed Worker for /api/config,
+  // open the line that request wrote as Workers Logs stored it, and read
+  // every field beside the Worker's own five. Does it carry the request's
+  // URL? Does it carry the reader's IP address, as a field or as a header
+  // of the request? If neither, nothing more is needed. If the URL is
+  // there, then a line written for a chain read that ended in a fault
+  // keeps an address or a transaction ID for as long as lines are kept,
+  // and so does the line for an unknown path outside /api/esplora/ into
+  // which a visitor typed one. If the IP address is there, every line says
+  // who asked. Either has to change, or be said on the app's About screen.
   "observability": {
     "enabled": true,
     "logs": { "enabled": true, "invocation_logs": false },

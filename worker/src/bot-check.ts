@@ -17,6 +17,14 @@
 // and no action, so it can never pass here: if it ever reached production it
 // would refuse everyone, not let everyone in.)
 //
+// A token that does not pass is refused in one of two ways. When the reader
+// can put it right by running the check again (a token that is spent,
+// expired or made up, or one solved for another form or another address),
+// the answer is a plain "the bot check did not pass". When only the owner
+// can (our secret is refused, the token was solved on another host, the
+// service cannot be asked or says something else), the faucet stays shut
+// and the log line carries a fault code.
+//
 // The question to Turnstile holds our secret and the token, and nothing else:
 // the reader's IP address is not passed along. (Turnstile already has the
 // wallet address the token was made for. The app gave it to the widget, and
@@ -99,12 +107,18 @@ export function makeBotCheck(options: BotCheckOptions): BotCheck {
 
     if (data.success === true) {
       if (status !== 200) return result('down', status, 'bot_check_down');
-      // Solved, but for another host or another form: this Worker and the
-      // widget disagree about what they protect. Nobody gets coins until
-      // the owner has looked.
-      if (data.hostname !== hostname || data.action !== ACTION) return result('down', status, 'bot_check_config');
-      // Solved here, for the faucet, but for a different address.
-      return data.cdata === address ? result('pass', status, null) : result('fail', status, null);
+      // Solved, but on another host. Turnstile runs a widget only on the
+      // host names its settings list, so the widget lets in a host this
+      // Worker does not expect: the two disagree about where the app lives.
+      // Nobody gets coins until the owner has looked.
+      if (data.hostname !== hostname) return result('down', status, 'bot_check_config');
+      // Solved here, but for another form or for another address. Both are
+      // whatever the page that drew the widget said they were, and a reader's
+      // browser can be made to say anything. So nothing is wrong on our
+      // side: the reader can run the check again, and no fault is logged. (A
+      // fault that any visitor can cause at will would bury the real ones.)
+      if (data.action !== ACTION || data.cdata !== address) return result('fail', status, null);
+      return result('pass', status, null);
     }
 
     const codes: unknown[] = Array.isArray(data['error-codes']) ? data['error-codes'] : [];

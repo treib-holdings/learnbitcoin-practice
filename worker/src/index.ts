@@ -40,8 +40,10 @@ interface Context {
 const send: FetchLike = (input, init) => fetch(input, init);
 
 /**
- * One line per request, as an object so that Workers Logs can filter on its
- * fields. A line with a fault code goes out as an error: those are the ones
+ * Writes a log line, as an object so that Workers Logs can filter on its
+ * fields. The handler asks for one line per request, and for none when a
+ * request for chain data ends without a fault (the end of handler.ts says
+ * why). A line with a fault code goes out as an error: those are the ones
  * the owner has to act on.
  */
 function log(line: LogLine): void {

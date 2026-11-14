@@ -223,6 +223,131 @@ test('a chain read goes to the configured origin with the Access token and the p
   });
   assert.equal(limiters.CHAIN_LIMIT.keys.length, 1);
   assert.ok(!JSON.stringify(asked).includes(READER_IP), 'the reader address goes nowhere');
+  assert.deepEqual(logged, [], 'a chain read that went well writes nothing to the log');
+});
+
+test('a chain read writes to the log only when it ends in a fault', async () => {
+  // Workers Logs can keep a request's URL beside each line written in it,
+  // and the URL of a chain read holds an address or a transaction ID.
+  const address = `${API.esplora}/address/${ADDRESS}`;
+  const tx = `${API.esplora}/tx/${TXID}`;
+
+  // It went well.
+  outside = () => reply(200, { address: ADDRESS, chain_stats: {}, mempool_stats: {} });
+  assert.equal((await send(get(address), bindings().env)).status, 200);
+  // The chain does not know the transaction (yet): Esplora's own plain-text 404.
+  outside = () => reply(404, 'Transaction not found', 'text/plain');
+  const unknown = await send(get(tx), bindings().env);
+  assert.equal(unknown.status, 404);
+  assert.deepEqual(await unknown.json(), { error: 'not_found' });
+  // The reader is asking too fast: the origin is not even asked.
+  outside = () => {
+    throw new Error('nothing outside should be asked');
+  };
+  const limited = bindings();
+  (limited.env as unknown as { CHAIN_LIMIT: unknown }).CHAIN_LIMIT = fakeLimiter(false);
+  assert.equal((await send(get(address), limited.env)).status, 429);
+  // A wrong method.
+  assert.equal((await send(post(address, null), bindings().env)).status, 405);
+  assert.deepEqual(logged, [], 'none of these wrote a line, plain or error');
+
+  // Answers that are not the chain speaking: the reader is told "unavailable",
+  // and each writes one error line that says whose fault it is.
+  const faults: Array<[path: string, answer: Response, upstream: number, fault: string]> = [
+    // Esplora's 404 for a path it does not have, and a 404 page from something in between.
+    [address, reply(404, 'endpoint does not exist "/x"', 'text/plain'), 404, 'origin_shape'],
+    [tx, reply(404, '<html>404 page not found</html>', 'text/html'), 404, 'origin_shape'],
+    // Esplora's 400 for text that is no address, said of an address the
+    // Worker has checked: the two disagree about what an address is.
+    [address, reply(400, 'Invalid Bitcoin address', 'text/plain'), 400, 'origin_shape'],
+    // A 200 that is not chain data.
+    [address, reply(200, '<html>sign in</html>', 'text/html'), 200, 'origin_shape'],
+    [address, reply(502, '<html>Bad gateway</html>', 'text/html'), 502, 'origin_down'],
+    [address, reply(302, null), 302, 'origin_auth'],
+    [address, reply(403, '<html>Forbidden</html>', 'text/html'), 403, 'origin_auth'],
+  ];
+  for (const [path, answer, upstream, fault] of faults) {
+    logged = [];
+    outside = () => answer;
+    const response = await send(get(path), bindings().env);
+    assert.equal(response.status, 502, fault);
+    assert.deepEqual(await response.json(), { error: 'unavailable' }, fault);
+    assert.deepEqual(
+      logged.map(({ level, line }) => ({ level, line: { ...(line as LogLine), ms: 0 } })),
+      [{ level: 'error', line: { route: 'esplora_read', status: 502, upstream, ms: 0, fault } }],
+      `${upstream} ${fault}`,
+    );
+    assert.ok(!JSON.stringify(logged).includes(ADDRESS) && !JSON.stringify(logged).includes(TXID), 'and the line names no address or ID');
+  }
+});
+
+test('text that only looks like an address never reaches the origin, so it cannot be used to fill the error log', async () => {
+  // Esplora answers such text with a 400, and a 400 on a chain read is a
+  // fault for the owner to look at. A GET needs no page of ours and passes
+  // no bot check, so anyone could send thousands of these a minute.
+  outside = () => reply(400, 'Invalid Bitcoin address', 'text/plain');
+  const { env, limiters } = bindings();
+  const texts = [
+    'bcrt1qqqqqqqqqqqq',
+    // A real address with its last character changed.
+    `${ADDRESS.slice(0, -1)}${ADDRESS.endsWith('q') ? 'p' : 'q'}`,
+    `bcrt1${'q'.repeat(71)}`,
+    `bcrt1p${'q'.repeat(58)}`,
+  ];
+  let sent = 0;
+  for (let round = 0; round < 50; round += 1) {
+    for (const text of texts) {
+      for (const tail of ['', '/utxo', '/txs']) {
+        const response = await send(get(`${API.esplora}/address/${text}${tail}`), env);
+        assert.equal(response.status, 404, text);
+        assert.deepEqual(await response.json(), { error: 'not_found' }, text);
+        sent += 1;
+      }
+    }
+  }
+  assert.equal(sent, 600);
+  assert.equal(asked.length, 0, 'the origin was never asked');
+  assert.equal(limiters.CHAIN_LIMIT.keys.length, 0, 'and no budget was spent on text that is no address');
+  assert.deepEqual(logged, [], 'none of the 600 wrote a line, plain or error');
+
+  // The address itself is still asked about.
+  outside = () => reply(200, { address: ADDRESS, chain_stats: {}, mempool_stats: {} });
+  assert.equal((await send(get(`${API.esplora}/address/${ADDRESS}`), env)).status, 200);
+  assert.equal(asked.length, 1);
+  assert.equal(asked[0]?.url, `${ORIGIN}/esplora/address/${ADDRESS}`);
+});
+
+test('a path under the Esplora prefix that the Worker does not carry writes nothing to the log either', async () => {
+  // Its URL can hold an address or a transaction ID like that of a chain read.
+  const { env } = bindings();
+  const paths = [
+    `${API.esplora}/tx/${TXID}/hex`,
+    `${API.esplora}/address/${ADDRESS}/txs/chain/${TXID}`,
+    `${API.esplora}/address/${ADDRESS}/`,
+    `${API.esplora}/address/${ADDRESS}?x=1`,
+    `${API.esplora}/address/${ADDRESS.toUpperCase()}`,
+    `${API.esplora}/tx?txid=${TXID}`,
+  ];
+  for (const path of paths) {
+    const response = await send(get(path), env);
+    assert.equal(response.status, 404, path);
+    assert.deepEqual(await response.json(), { error: 'not_found' }, path);
+    assert.equal((await send(post(path, null), env)).status, 404, path);
+  }
+  assert.equal(asked.length, 0);
+  assert.deepEqual(logged, [], 'none of these wrote a line');
+
+  // Outside the prefix an unknown path writes its line as ever, and the line holds nothing of the path.
+  await send(get(`/api/nothing/${ADDRESS}`), env);
+  // The broadcast keeps its line too: its URL is the same for everyone.
+  await send(get(`${API.esplora}/tx`), env);
+  assert.deepEqual(
+    logged.map(({ level, line }) => ({ level, line: { ...(line as LogLine), ms: 0 } })),
+    [
+      { level: 'log', line: { route: 'unknown', status: 404, upstream: null, ms: 0, fault: null } },
+      { level: 'log', line: { route: 'esplora_broadcast', status: 405, upstream: null, ms: 0, fault: null } },
+    ],
+  );
 });
 
 test('each route counts against its own limiter binding', async () => {
@@ -273,6 +398,73 @@ test('a token made on another host is refused: the host to match is the TURNSTIL
   assert.equal(asked.length, 1, 'the bots are not asked');
   assert.equal(logged[0]?.level, 'error');
   assert.equal((logged[0]?.line as LogLine).fault, 'bot_check_config');
+});
+
+test('a token solved for another form or another address is a failed bot check: 403, and nothing is logged as an error', async () => {
+  // The verify service accepts each of these tokens. They were solved on
+  // this host, so the widget and the Worker agree about where the app
+  // lives; the reader can run the check again.
+  const accepted = { success: true, hostname: 'practice.learnbitcoin.com', 'error-codes': [] };
+  const answers = [
+    { ...accepted, action: 'newsletter', cdata: ADDRESS },
+    { ...accepted, cdata: ADDRESS },
+    { ...accepted, action: 'faucet', cdata: POT_ADDRESS },
+    { ...accepted, action: 'faucet' },
+    { ...accepted, action: 'newsletter', cdata: POT_ADDRESS },
+  ];
+  for (const answer of answers) {
+    outside = (call) => {
+      assert.equal(call.url, 'https://challenges.cloudflare.com/turnstile/v0/siteverify', 'the bots are not asked');
+      return reply(200, answer);
+    };
+    const { env } = bindings({ TURNSTILE_SITE_KEY: 'site-key' });
+    const response = await send(post(API.faucet, { address: ADDRESS, token: 'a-token' }), env);
+    assert.equal(response.status, 403, JSON.stringify(answer));
+    assert.deepEqual(await response.json(), { error: 'bot_check' });
+  }
+  assert.equal(asked.length, answers.length);
+  assert.deepEqual(
+    logged.map(({ level, line }) => ({ level, line: { ...(line as LogLine), ms: 0 } })),
+    answers.map(() => ({ level: 'log', line: { route: 'faucet', status: 403, upstream: 200, ms: 0, fault: null } })),
+  );
+});
+
+test("of the bots' refusals only the faucet's own reach the app; any other is unavailable, and logged as a fault", async () => {
+  const verified = { success: true, hostname: 'practice.learnbitcoin.com', action: 'faucet', cdata: ADDRESS, 'error-codes': [] };
+  const ask = async (bots: Response): Promise<Response> => {
+    logged = [];
+    outside = (call) => (call.url.startsWith('https://challenges.cloudflare.com/') ? reply(200, verified) : bots);
+    return send(post(API.faucet, { address: ADDRESS, token: 'a-token' }), bindings({ TURNSTILE_SITE_KEY: 'site-key' }).env);
+  };
+  const lines = () => logged.map(({ level, line }) => ({ level, line: { ...(line as LogLine), ms: 0 } }));
+
+  // The faucet's own: the reader is told why, under the status the bots sent.
+  const paid = await ask(reply(429, { error: 'This address already got practice coins today', code: 'already_paid' }));
+  assert.equal(paid.status, 429);
+  assert.deepEqual(await paid.json(), { error: 'already_paid' });
+  assert.deepEqual(lines(), [{ level: 'log', line: { route: 'faucet', status: 429, upstream: 429, ms: 0, fault: null } }]);
+
+  const refilling = await ask(reply(503, { error: 'The faucet is refilling; try again in a minute', code: 'refilling' }));
+  assert.equal(refilling.status, 503);
+  assert.deepEqual(await refilling.json(), { error: 'refilling' });
+  assert.deepEqual(lines(), [{ level: 'log', line: { route: 'faucet', status: 503, upstream: 503, ms: 0, fault: null } }]);
+
+  // Not the faucet's own. The bots answer a body they cannot read with
+  // "bad_request", and the Worker wrote that body: the reader did nothing wrong.
+  const others: Array<[bots: Response, upstream: number, fault: string]> = [
+    [reply(400, { error: 'Send JSON like {"address": "bcrt1..."}', code: 'bad_request' }), 400, 'origin_shape'],
+    [reply(404, { error: 'not found', code: 'not_found' }), 404, 'origin_shape'],
+    [reply(429, 'Too many requests', 'text/plain'), 429, 'origin_shape'],
+    [reply(502, { error: 'The practice network could not do that just now', code: 'unavailable' }), 502, 'origin_down'],
+    [reply(500, { error: 'Something went wrong', code: 'error' }), 500, 'origin_down'],
+    [reply(401, { error: 'unauthorized', code: 'unauthorized' }), 401, 'origin_auth'],
+  ];
+  for (const [bots, upstream, fault] of others) {
+    const response = await ask(bots);
+    assert.equal(response.status, 502, `${upstream}`);
+    assert.deepEqual(await response.json(), { error: 'unavailable' }, `${upstream}`);
+    assert.deepEqual(lines(), [{ level: 'error', line: { route: 'faucet', status: 502, upstream, ms: 0, fault } }], `${upstream}`);
+  }
 });
 
 test('a secret that is not set keeps its door shut, and says so in the log', async () => {

@@ -21,8 +21,16 @@
 // Any other answer is turned into one of the contract's codes here: an error
 // page from a proxy, or a login page from Access, must never reach the app
 // dressed up as chain data.
+//
+// A few answers that are not a 200 mean something to the reader: Esplora's
+// plain-text 404 for a transaction it does not know, the node's plain-text
+// 400 for a transaction it refuses, and the faucet's six refusals. Each is
+// taken for what it is only when everything about it fits: the status, the
+// kind of body, the question it answers. Everything else is "unavailable",
+// and every "unavailable" carries a fault code, so the owner's log never
+// holds a failure with no hint of where to look.
 
-import { ADDRESS_PATTERN, DETAIL_MAX, TXID_PATTERN, isErrorCode } from '@learnbitcoin/practice-contract';
+import { ADDRESS_PATTERN, DETAIL_MAX, ERROR_STATUS, TXID_PATTERN } from '@learnbitcoin/practice-contract';
 import type { BroadcastRefusal, ErrorCode, FaucetPayment } from '@learnbitcoin/practice-contract';
 import { drop, isRecord, readBytes, readText } from './body.ts';
 import type { Fault, FetchLike, Origin, OriginAnswer, OriginBody } from './deps.ts';
@@ -67,10 +75,56 @@ export const CHAIN_ANSWER_MAX = 4 * 1024 * 1024;
 /** What a path rebuilt by the handler looks like: lower-case letters and digits between single slashes. */
 const REBUILT_PATH = /^(?:\/[a-z0-9]+)+$/;
 
+/**
+ * The faucet's own refusals: the six things it tells a reader (see
+ * bots/practice_bots/bots.py). The app has a sentence for each, so these
+ * pass through. The bots have other codes too (bad_request, unauthorized,
+ * not_found, unavailable, error). Those say that this Worker asked wrongly
+ * or that the bots are broken, which is never the reader's doing, so they
+ * do not pass through, even where the contract happens to have a code of
+ * the same name.
+ */
+export const BOTS_REFUSALS = [
+  'bad_address',
+  'own_address',
+  'already_paid',
+  'busy',
+  'refilling',
+  'failed',
+] as const satisfies readonly ErrorCode[];
+
 type Failure = Extract<OriginAnswer<never>, { ok: false }>;
 
+/**
+ * An answer that is not a success. The first two lines put a rule in the
+ * compiler's hands: an "unavailable" cannot be made here without a fault
+ * code. (The handler writes no log line for a chain read that ends without
+ * a fault, so an "unavailable" with none would fail in silence.)
+ */
+function failure(code: 'unavailable', upstream: number | null, fault: Fault): Failure;
+function failure(code: Exclude<ErrorCode, 'unavailable'>, upstream: number | null, fault: Fault | null, detail?: string | null): Failure;
 function failure(code: ErrorCode, upstream: number | null, fault: Fault | null, detail: string | null = null): Failure {
   return { ok: false, code, detail, upstream, fault };
+}
+
+/**
+ * Whose fault it is when the origin answers with a status that no route has
+ * a reading for. (The other ways to be "unavailable" have their codes too:
+ * a 200 with the wrong body is origin_shape, a request that got no answer
+ * is origin_down or origin_timeout, see thrown() below, and a call to the
+ * bots with no token to send is origin_auth.)
+ *
+ *   origin_auth   a redirect, 401 or 403: the origin does not let us in.
+ *                 Access answers a missing or expired service token with a
+ *                 redirect to a login page, or with 401 or 403; the bots
+ *                 answer a wrong bearer token with 401.
+ *   origin_down   a 5xx: something on the origin's side is stopped or broken.
+ *   origin_shape  anything else: the origin is up and lets us in, but what
+ *                 it said is not an answer this Worker knows how to read.
+ */
+function faultOf(status: number): Fault {
+  if ((status >= 300 && status < 400) || status === 401 || status === 403) return 'origin_auth';
+  return status >= 500 ? 'origin_down' : 'origin_shape';
 }
 
 /** A fetch or a body read that threw: the time limit, or the origin could not be reached. */
@@ -125,11 +179,11 @@ export function makeOrigin(options: OriginOptions): Origin {
       return thrown(error);
     }
 
-    // Access answers a missing or expired service token with a redirect to a
-    // login page, or with 401 or 403; the bots answer a wrong bearer token
-    // with 401. Either way the fault is ours and the owner has to fix it.
+    // We were not let in. Whatever the route, and whatever the body says,
+    // the fault is ours and the owner has to fix it. This is settled here,
+    // before any route looks at the answer.
     const { status } = response;
-    if ((status >= 300 && status < 400) || status === 401 || status === 403) {
+    if (faultOf(status) === 'origin_auth') {
       await drop(response);
       return failure('unavailable', status, 'origin_auth');
     }
@@ -139,10 +193,10 @@ export function makeOrigin(options: OriginOptions): Origin {
   /** Any answer no route has a use for. */
   async function unexpected(response: Response): Promise<Failure> {
     await drop(response);
-    return failure('unavailable', response.status, response.status >= 500 ? 'origin_down' : null);
+    return failure('unavailable', response.status, faultOf(response.status));
   }
 
-  /** Reads an answer from the bots: the value on a 200, otherwise the bots' own refusal code. */
+  /** Reads an answer from the bots: the value on a 200, otherwise one of the faucet's own refusals or "unavailable". */
   async function fromBots<T>(response: Response, parse: (body: unknown) => T | null): Promise<OriginAnswer<T>> {
     const { status } = response;
     let body: unknown = null;
@@ -150,20 +204,31 @@ export function makeOrigin(options: OriginOptions): Origin {
       const { text, over } = await readText(response.body, ANSWER_MAX);
       if (!over) body = JSON.parse(text);
     } catch (error) {
-      // A body that is not JSON is simply not understood. A read that failed is a fault.
+      // A body that is not JSON counts as no body: what follows then goes by
+      // the status alone. A read that broke off is the origin failing.
       if (!(error instanceof SyntaxError)) return thrown(error, status);
     }
     if (status === 200) {
       const value = parse(body);
       return value === null ? failure('unavailable', status, 'origin_shape') : { ok: true, value, upstream: status };
     }
-    // The bots say why in a "code" field. The ones the contract lists are
-    // passed on, so the app can explain them; anything else is "unavailable".
-    const code: ErrorCode = isRecord(body) && isErrorCode(body.code) ? body.code : 'unavailable';
-    // "refilling" arrives with status 503 by design: the faucet is waiting for
-    // its own refill, and nobody has to fix anything.
-    const fault: Fault | null = status >= 500 && code !== 'refilling' ? 'origin_down' : null;
-    return failure(code, status, fault);
+    // The bots say why in a "code" field. One of the faucet's own six is
+    // passed on, so the app can explain it, when it comes with the status
+    // the bots give that refusal. The contract gives each of the six the
+    // same status, so the reader gets the code and the status as the bots
+    // sent them. Under any other status it is not the refusal we know.
+    const said: unknown = isRecord(body) ? body.code : undefined;
+    const code = BOTS_REFUSALS.find((known) => known === said);
+    if (code !== undefined && status === ERROR_STATUS[code]) {
+      // "failed" (500) is the faucet saying it is broken: the owner has to
+      // look. "refilling" arrives with status 503 by design: the faucet is
+      // waiting for its own refill, and nobody has to fix anything.
+      return failure(code, status, status >= 500 && code !== 'refilling' ? 'origin_down' : null);
+    }
+    // Anything else is not a refusal of the faucet's: one of the bots' other
+    // codes, a code nobody knows, a body that is not JSON, an error page
+    // from something in between. The reader could do nothing about it.
+    return failure('unavailable', status, faultOf(status));
   }
 
   return {
@@ -202,7 +267,8 @@ export function makeOrigin(options: OriginOptions): Origin {
         return { ok: true, value, upstream: 200 };
       }
       // Esplora answers 404 to one thing the app asks: a transaction it does
-      // not know (yet), and it says so in plain text. A 404 to any other
+      // not know (yet), and it says so in plain text. That is an answer
+      // about the chain, and nobody is at fault for it. A 404 to any other
       // question, or one of another kind (a page from a proxy that has lost
       // its way to Esplora), is not the chain speaking. The reader could do
       // nothing about it, so it is never passed on as "not found".
@@ -210,6 +276,11 @@ export function makeOrigin(options: OriginOptions): Origin {
         await drop(response);
         return failure('not_found', 404, null);
       }
+      // Every other status is "unavailable", with a fault code for the owner.
+      // That goes for Esplora's 400 to text that is no address, too. The
+      // handler passes on nothing but addresses it has checked, checksum
+      // and all, so such a 400 means that Esplora and the Worker disagree
+      // about what an address is, and that is the owner's to look at.
       return unexpected(response);
     },
 
@@ -220,7 +291,8 @@ export function makeOrigin(options: OriginOptions): Origin {
       // Esplora answers a broadcast in plain text: the transaction ID with a
       // 200, the node's reason with a 400. A 400 of any other kind (an error
       // page from a proxy on the way, say) is not the node speaking, and must
-      // not be shown to the reader as the node's refusal.
+      // not be shown to the reader as the node's refusal. That one, like
+      // every other status, is "unavailable", with a fault code for the owner.
       const refusedByNode = response.status === 400 && bodyType(response) === 'text';
       if (response.status !== 200 && !refusedByNode) return unexpected(response);
       let text: string;
@@ -231,6 +303,8 @@ export function makeOrigin(options: OriginOptions): Origin {
         return thrown(error, response.status);
       }
       if (refusedByNode) {
+        // The node looked at the transaction and said no. That is an answer
+        // for the reader, with the node's own words, and nobody's fault.
         const refusal = mapBroadcastRefusal(text);
         return failure(refusal.code, 400, null, refusal.detail === '' ? null : refusal.detail);
       }

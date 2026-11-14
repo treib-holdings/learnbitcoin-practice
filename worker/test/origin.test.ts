@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { BROADCAST_REFUSALS, DETAIL_MAX, isErrorCode } from '@learnbitcoin/practice-contract';
-import type { FetchLike } from '../src/deps.ts';
+import { BROADCAST_REFUSALS, DETAIL_MAX, ERROR_STATUS } from '@learnbitcoin/practice-contract';
+import type { ErrorCode } from '@learnbitcoin/practice-contract';
+import type { Fault, FetchLike, Origin, OriginAnswer } from '../src/deps.ts';
 import {
+  BOTS_REFUSALS,
   CHAIN_ANSWER_MAX,
   FAUCET_TIMEOUT_MS,
   ORIGIN_TIMEOUT_MS,
@@ -35,6 +37,41 @@ const CALLS: Array<[name: string, run: (o: ReturnType<typeof makeOrigin>) => Pro
   ['faucet', (o) => o.faucet(ADDRESS)],
   ['potAddress', (o) => o.potAddress()],
 ];
+
+/** The two calls to the bots. */
+const BOTS: Array<(o: ReturnType<typeof makeOrigin>) => Promise<{ ok: boolean }>> = [
+  (o) => o.faucet(ADDRESS),
+  (o) => o.potAddress(),
+];
+
+/** The fault that goes with a status no route has a reading for: the three-way rule of origin.ts. */
+function faultFor(status: number): Fault {
+  if ((status >= 300 && status <= 399) || status === 401 || status === 403) return 'origin_auth';
+  if (status >= 500) return 'origin_down';
+  return 'origin_shape';
+}
+
+/** A response with a status that allows no body (204, 205, 304), or with one. */
+function replyWith(status: number, body: string | object, type?: string): Response {
+  return status === 204 || status === 205 || status === 304 ? new Response(null, { status }) : reply(status, body, type);
+}
+
+test('the three-way rule these tests expect, spelled out once', () => {
+  // faultFor() above says what many rows below expect. Here it is held to
+  // the decision itself, status by status, so that it cannot be wrong in
+  // the same way as the code it checks.
+  const rule: Array<[fault: Fault, statuses: number[]]> = [
+    // We were not let in: a redirect (Access sends one to its login page), 401 or 403.
+    ['origin_auth', [300, 301, 302, 303, 304, 307, 308, 399, 401, 403]],
+    // The origin is stopped or broken.
+    ['origin_down', [500, 501, 502, 503, 504, 520, 530, 599]],
+    // Up, and it let us in, but this is no answer the Worker has a reading for.
+    ['origin_shape', [201, 202, 204, 206, 299, 400, 402, 404, 405, 409, 410, 413, 418, 429, 451, 499]],
+  ];
+  for (const [fault, statuses] of rule) {
+    for (const status of statuses) assert.equal(faultFor(status), fault, String(status));
+  }
+});
 
 // -- what goes out ------------------------------------------------------------
 
@@ -245,8 +282,8 @@ test("Esplora's 404 for a transaction it does not know is not_found, and nobody 
   }
 });
 
-test('any other 404 on a chain read is not the chain speaking: unavailable, never not_found', async () => {
-  const lost = { ok: false, code: 'unavailable', detail: null, upstream: 404, fault: null };
+test('any other 404 on a chain read is not the chain speaking: unavailable with origin_shape, never not_found', async () => {
+  const lost = { ok: false, code: 'unavailable', detail: null, upstream: 404, fault: 'origin_shape' };
   // Esplora has an answer for every tip height and every address, used or
   // not. A 404 to one of these means the way to Esplora is lost.
   for (const path of ['/blocks/tip/height', `/address/${ADDRESS}`, `/address/${ADDRESS}/utxo`, `/address/${ADDRESS}/txs`]) {
@@ -377,14 +414,20 @@ test('the faucet is given longer than the other calls', async () => {
   assert.ok(faucet.ok, 'a payment that takes longer than a chain read still comes back');
 });
 
-test('any other status on a chain read or a broadcast is unavailable', async () => {
-  for (const status of [201, 400, 405, 410, 429]) {
-    const read = await origin(fakeFetch(() => reply(status, 'Invalid Bitcoin address'))).esplora('/address/x');
-    assert.deepEqual(read, { ok: false, code: 'unavailable', detail: null, upstream: status, fault: null }, `read ${status}`);
+test('any other status on a chain read or a broadcast is unavailable, with origin_shape', async () => {
+  // The origin is up and lets us in, but this is no answer the Worker has a
+  // reading for. Esplora's 400 for text that is no address is one of these:
+  // the handler asks about nothing but addresses, checksum and all, so that
+  // answer would mean the two disagree about what an address is.
+  for (const status of [201, 202, 204, 206, 400, 402, 405, 409, 410, 418, 429, 451]) {
+    const read = await origin(fakeFetch(() => replyWith(status, 'Invalid Bitcoin address'))).esplora('/address/x');
+    assert.deepEqual(read, { ok: false, code: 'unavailable', detail: null, upstream: status, fault: 'origin_shape' }, `read ${status}`);
+    const tx = await origin(fakeFetch(() => replyWith(status, 'Invalid hex hash'))).esplora(`/tx/${TXID}`);
+    assert.deepEqual(tx, { ok: false, code: 'unavailable', detail: null, upstream: status, fault: 'origin_shape' }, `tx ${status}`);
   }
-  for (const status of [201, 404, 405, 413, 429]) {
-    const sent = await origin(fakeFetch(() => reply(status, 'no'))).broadcast(HEX);
-    assert.deepEqual(sent, { ok: false, code: 'unavailable', detail: null, upstream: status, fault: null }, `broadcast ${status}`);
+  for (const status of [201, 202, 204, 206, 402, 404, 405, 409, 413, 418, 429]) {
+    const sent = await origin(fakeFetch(() => replyWith(status, 'no'))).broadcast(HEX);
+    assert.deepEqual(sent, { ok: false, code: 'unavailable', detail: null, upstream: status, fault: 'origin_shape' }, `broadcast ${status}`);
   }
 });
 
@@ -393,7 +436,7 @@ test('a 400 on a broadcast is the node speaking only when it is plain text', asy
   for (const type of ['text/html', 'application/json', 'text/html; charset=utf-8']) {
     const page = '<html><head><title>400 Bad Request</title></head><body>dust</body></html>';
     const answer = await origin(fakeFetch(() => reply(400, page, type))).broadcast(HEX);
-    assert.deepEqual(answer, { ok: false, code: 'unavailable', detail: null, upstream: 400, fault: null }, type);
+    assert.deepEqual(answer, { ok: false, code: 'unavailable', detail: null, upstream: 400, fault: 'origin_shape' }, type);
   }
   // The node's own 400, with nothing in it, is still a refusal: just one without words.
   const empty = await origin(fakeFetch(() => reply(400, '', 'text/plain'))).broadcast(HEX);
@@ -539,33 +582,132 @@ test('the pot address comes back as a string', async () => {
   assert.deepEqual(answer, { ok: true, value: POT_ADDRESS, upstream: 200 });
 });
 
-test("a refusal from the bots passes its code on when the contract lists it, and is unavailable otherwise", async () => {
-  const cases: Array<[status: number, code: string, expect: string, fault: string | null]> = [
-    [400, 'bad_address', 'bad_address', null],
-    [400, 'own_address', 'own_address', null],
-    [429, 'already_paid', 'already_paid', null],
-    [429, 'busy', 'busy', null],
-    [503, 'refilling', 'refilling', null],
-    [500, 'failed', 'failed', 'origin_down'],
-    [502, 'unavailable', 'unavailable', 'origin_down'],
-    [400, 'bad_request', 'bad_request', null],
-    [404, 'not_found', 'not_found', null],
-    // Not in the contract:
-    [500, 'error', 'unavailable', 'origin_down'],
-    [418, 'teapot', 'unavailable', null],
-    [429, '', 'unavailable', null],
+test("the faucet's own six refusals pass through, each with its status", async () => {
+  // Each with the status the bots give it (bots/practice_bots/bots.py).
+  const own: Array<[status: number, code: ErrorCode, fault: Fault | null]> = [
+    [400, 'bad_address', null],
+    [400, 'own_address', null],
+    [429, 'already_paid', null],
+    [429, 'busy', null],
+    // Out of coins until its refill confirms: by design, and nobody has to fix anything.
+    [503, 'refilling', null],
+    // The faucet could not finish a payment: the reader is told so, and the owner has to look.
+    [500, 'failed', 'origin_down'],
   ];
-  for (const [status, code, expect, fault] of cases) {
-    assert.equal(isErrorCode(code), expect === code, code);
-    for (const run of [(o: ReturnType<typeof makeOrigin>) => o.faucet(ADDRESS), (o: ReturnType<typeof makeOrigin>) => o.potAddress()]) {
+  assert.deepEqual(own.map(([, code]) => code), [...BOTS_REFUSALS], 'these six and no others');
+  for (const [status, code, fault] of own) {
+    // The Worker answers with the contract's status for a code. For these
+    // six it is the status the bots sent, so the status passes through too.
+    assert.equal(ERROR_STATUS[code], status, code);
+    for (const run of BOTS) {
       const answer = await run(origin(fakeFetch(() => reply(status, { error: 'A sentence for people', code }))));
-      assert.deepEqual(answer, { ok: false, code: expect, detail: null, upstream: status, fault }, `${status} ${code}`);
+      assert.deepEqual(answer, { ok: false, code, detail: null, upstream: status, fault }, `${status} ${code}`);
     }
   }
-  // A refusal with no readable code at all.
-  for (const body of ['', 'Too many requests', '{"code":7}', '[]', '{"code":"busy"'] as const) {
-    const answer = await origin(fakeFetch(() => reply(429, body))).faucet(ADDRESS);
-    assert.deepEqual(answer, { ok: false, code: 'unavailable', detail: null, upstream: 429, fault: null }, body);
+});
+
+test('any other answer from the bots that is not a success is unavailable, and the fault goes by its status', async () => {
+  const padding = 'x'.repeat(10_000);
+  const others: Array<[status: number, body: string | object, type?: string]> = [
+    // The bots' other codes (bots/practice_bots/server.py). The contract has
+    // codes with three of these names (bad_request, not_found, unavailable):
+    // those are the Worker's own answers to the app. Coming from the bots
+    // they mean something else, that this Worker asked wrongly or that the
+    // bots are broken, and that is never the reader's doing.
+    [400, { error: 'Send JSON like {"address": "bcrt1..."}', code: 'bad_request' }],
+    [400, { error: 'Send a small JSON body with an address', code: 'bad_request' }],
+    [404, { error: 'not found', code: 'not_found' }],
+    [502, { error: 'The practice network could not do that just now', code: 'unavailable' }],
+    [500, { error: 'Something went wrong', code: 'error' }],
+    // An unauthorized-shaped body under a status that is not 401 or 403.
+    [400, { error: 'unauthorized', code: 'unauthorized' }],
+    [404, { error: 'unauthorized', code: 'unauthorized' }],
+    [500, { error: 'unauthorized', code: 'unauthorized' }],
+    // The contract's other codes are not the bots' to send.
+    [429, { error: 'x', code: 'limit' }],
+    [503, { error: 'x', code: 'closed' }],
+    [400, { error: 'x', code: 'bot_check' }],
+    [400, { error: 'x', code: 'refused' }],
+    [400, { error: 'x', code: 'dust' }],
+    [405, { error: 'x', code: 'method' }],
+    [413, { error: 'x', code: 'too_large' }],
+    [400, { error: 'x', code: 'forbidden' }],
+    // A code nobody knows, or none at all.
+    [418, { error: 'x', code: 'teapot' }],
+    [500, { error: 'x', code: 'teapot' }],
+    [429, { error: 'x', code: '' }],
+    [429, { error: 'x', code: 'BUSY' }],
+    [429, { error: 'x', code: 'busy ' }],
+    [429, { error: 'x', code: 7 }],
+    [429, { error: 'x', code: null }],
+    [429, { error: 'x', code: ['busy'] }],
+    [429, { error: 'busy' }],
+    [429, {}],
+    // One of the six under a status the bots do not give it is not the refusal we know.
+    [500, { error: 'x', code: 'busy' }],
+    [503, { error: 'x', code: 'busy' }],
+    [400, { error: 'x', code: 'busy' }],
+    [503, { error: 'x', code: 'failed' }],
+    [502, { error: 'x', code: 'failed' }],
+    [400, { error: 'x', code: 'failed' }],
+    [500, { error: 'x', code: 'refilling' }],
+    [502, { error: 'x', code: 'refilling' }],
+    [429, { error: 'x', code: 'refilling' }],
+    [404, { error: 'x', code: 'bad_address' }],
+    [429, { error: 'x', code: 'own_address' }],
+    [400, { error: 'x', code: 'already_paid' }],
+    [201, { error: 'x', code: 'busy' }],
+    // A body that is not JSON, or JSON that is not an object with a code.
+    [429, ''],
+    [429, 'Too many requests'],
+    [429, 'busy'],
+    [429, '"busy"'],
+    [429, '{"code":7}'],
+    [429, '[]'],
+    [429, '[{"code":"busy"}]'],
+    [429, 'null'],
+    [429, '{"code":"busy"'],
+    [503, 'refilling'],
+    [503, '<html><head><title>503 Service Temporarily Unavailable</title></head></html>', 'text/html'],
+    [500, '<html><head><title>500 Internal Server Error</title></head></html>', 'text/html'],
+    [404, '<html><head><title>404 Not Found</title></head></html>', 'text/html'],
+    // A refusal too long to be one of the bots'.
+    [429, { error: padding, code: 'busy' }],
+    [503, { error: padding, code: 'refilling' }],
+    // What would be a success, under a status that is not 200.
+    [201, { txid: TXID, amount_sats: 100000, pot_coin: null }],
+    [202, { address: POT_ADDRESS }],
+    [206, { txid: TXID, amount_sats: 100000, pot_coin: null }],
+  ];
+  for (const [status, body, type] of others) {
+    for (const run of BOTS) {
+      const answer = await run(origin(fakeFetch(() => reply(status, body, type))));
+      const what = `${status} ${JSON.stringify(body).slice(0, 80)}`;
+      assert.deepEqual(answer, { ok: false, code: 'unavailable', detail: null, upstream: status, fault: faultFor(status) }, what);
+    }
+  }
+});
+
+test('an answer from the bots that breaks off is unavailable, with a fault, whatever its status', async () => {
+  for (const status of [200, 400, 429, 500, 503]) {
+    for (const run of BOTS) {
+      const fetch = fakeFetch(() => {
+        const body = new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode('{"code":"bu'));
+          },
+          pull(controller) {
+            controller.error(new TypeError('terminated'));
+          },
+        });
+        return new Response(body, { status, headers: { 'Content-Type': 'application/json' } });
+      });
+      assert.deepEqual(
+        await run(origin(fetch)),
+        { ok: false, code: 'unavailable', detail: null, upstream: status, fault: 'origin_down' },
+        String(status),
+      );
+    }
   }
 });
 
@@ -595,7 +737,7 @@ const { samples } = readJson('../../e2e/fixtures/origin-samples.json') as { samp
 
 test('every answer recorded from the real origin is read as the spec says', async () => {
   assert.ok(samples.length >= 25);
-  const counts = { read: 0, broadcast: 0, faucet: 0, pot: 0, unknownTx: 0, noSuchPath: 0 };
+  const counts = { read: 0, broadcast: 0, faucet: 0, pot: 0, unknownTx: 0, noSuchPath: 0, notAnAddress: 0, ownRefusal: 0, otherRefusal: 0 };
   for (const sample of samples) {
     const [method, path] = sample.request.split(' ') as [string, string];
     const fetch = fakeFetch(() => reply(sample.status, sample.body as string | object, sample.contentType));
@@ -614,19 +756,26 @@ test('every answer recorded from the real origin is read as the spec says', asyn
         const passed = await new Response(answer.value.body).text();
         assert.equal(passed, typeof sample.body === 'string' ? sample.body : JSON.stringify(sample.body), label);
       } else if (sample.status === 404) {
-        // "Not found" is Esplora's answer about a transaction. Its 404 for a
-        // path it does not have means a request went astray on our side.
+        // "Not found" is Esplora's answer about a transaction, and nobody's
+        // fault. Its 404 for a path it does not have means a request went
+        // astray on our side: unavailable, and the owner is told.
         const aboutTx = path.startsWith('/esplora/tx/');
         counts[aboutTx ? 'unknownTx' : 'noSuchPath'] += 1;
         assert.equal(sample.contentType, 'text/plain', label);
         assert.deepEqual(
           answer,
-          { ok: false, code: aboutTx ? 'not_found' : 'unavailable', detail: null, upstream: 404, fault: null },
+          aboutTx
+            ? { ok: false, code: 'not_found', detail: null, upstream: 404, fault: null }
+            : { ok: false, code: 'unavailable', detail: null, upstream: 404, fault: 'origin_shape' },
           label,
         );
       } else {
+        // Esplora's 400 for text that is not an address of this network. The
+        // handler never passes such text on (handler.test.ts holds its check
+        // to these same samples), so it is not an answer for a reader.
+        counts.notAnAddress += 1;
         assert.equal(sample.status, 400, label);
-        assert.deepEqual(answer, { ok: false, code: 'unavailable', detail: null, upstream: 400, fault: null }, label);
+        assert.deepEqual(answer, { ok: false, code: 'unavailable', detail: null, upstream: 400, fault: 'origin_shape' }, label);
       }
     } else if (sample.request === 'POST /esplora/tx') {
       counts.broadcast += 1;
@@ -642,9 +791,18 @@ test('every answer recorded from the real origin is read as the spec says', asyn
           { ok: true, value: { txid: body.txid, amountSats: body.amount_sats, potTxid: body.pot_coin?.txid ?? null }, upstream: 200 },
           label,
         );
-      } else {
-        assert.ok(isErrorCode(body.code), label);
+      } else if ((BOTS_REFUSALS as readonly string[]).includes(body.code ?? '')) {
+        // One of the faucet's own: passed on, under the status it came with.
+        counts.ownRefusal += 1;
+        assert.equal(sample.status, ERROR_STATUS[body.code as ErrorCode], label);
         assert.deepEqual(answer, { ok: false, code: body.code, detail: null, upstream: sample.status, fault: null }, label);
+      } else {
+        // The bots' answer to a body they could not read. The Worker writes
+        // that body itself (the sample was made by hand), so this is never
+        // the reader's doing: unavailable, and the owner is told.
+        counts.otherRefusal += 1;
+        assert.equal(body.code, 'bad_request', label);
+        assert.deepEqual(answer, { ok: false, code: 'unavailable', detail: null, upstream: 400, fault: 'origin_shape' }, label);
       }
     } else if (sample.request === 'GET /bots/pot/address') {
       counts.pot += 1;
@@ -661,4 +819,74 @@ test('every answer recorded from the real origin is read as the spec says', asyn
   }
   assert.ok(counts.read >= 10 && counts.broadcast >= 3 && counts.faucet >= 5 && counts.pot >= 3, JSON.stringify(counts));
   assert.ok(counts.unknownTx >= 1 && counts.noSuchPath >= 1, 'both kinds of 404 the origin gives were read');
+  assert.ok(counts.notAnAddress >= 2, "Esplora's 400 was read");
+  assert.ok(counts.ownRefusal >= 3 && counts.otherRefusal >= 1, 'refusals of the faucet, and one that is not its own, were read');
+});
+
+// -- every "unavailable" says whose fault it is ----------------------------------------
+
+test('whatever status the origin answers with, an "unavailable" always carries a fault, and only the known refusals pass', async () => {
+  // Every status a response can have, under each kind of body the origin or
+  // something in front of it might send. Only what a route knows by all of
+  // its marks comes out as anything but "unavailable".
+  const bodies: Array<[body: string | object, type: string]> = [
+    ['Transaction not found', 'text/plain'],
+    ['sendrawtransaction RPC error: {"code":-26,"message":"dust"}', 'text/plain'],
+    ['<html><body>an error page</body></html>', 'text/html'],
+    [{ error: 'unauthorized', code: 'unauthorized' }, 'application/json'],
+    [{ error: 'The faucet is busy; try again in a minute', code: 'busy' }, 'application/json'],
+    [{ error: 'The faucet is refilling; try again in a minute', code: 'refilling' }, 'application/json'],
+    [{ error: 'The faucet could not finish that payment', code: 'failed' }, 'application/json'],
+    [{ error: 'not found', code: 'not_found' }, 'application/json'],
+    ['', 'application/octet-stream'],
+  ];
+  const calls: Array<[name: string, run: (o: Origin) => Promise<OriginAnswer<unknown>>]> = [
+    ['read a transaction', (o) => o.esplora(`/tx/${TXID}`)],
+    ['read an address', (o) => o.esplora(`/address/${ADDRESS}/txs`)],
+    ['read the tip', (o) => o.esplora('/blocks/tip/height')],
+    ['broadcast', (o) => o.broadcast(HEX)],
+    ['faucet', (o) => o.faucet(ADDRESS)],
+    ['potAddress', (o) => o.potAddress()],
+  ];
+  const passed = new Set<string>();
+  let unavailable = 0;
+  for (let status = 200; status <= 599; status += 1) {
+    for (const [body, type] of bodies) {
+      for (const [name, run] of calls) {
+        const answer = await run(origin(fakeFetch(() => replyWith(status, body, type))));
+        const what = `${name}: ${status} ${type} ${JSON.stringify(body).slice(0, 40)}`;
+        if (answer.ok) {
+          // Only a 200 is ever a success.
+          assert.equal(status, 200, what);
+          continue;
+        }
+        assert.equal(answer.upstream, status, what);
+        if (answer.code === 'unavailable') {
+          unavailable += 1;
+          assert.notEqual(answer.fault, null, what);
+          // A 200 that is unavailable has the wrong body. Any other status goes by the three-way rule.
+          assert.equal(answer.fault, status === 200 ? 'origin_shape' : faultFor(status), what);
+          continue;
+        }
+        // Not unavailable: one of the refusals a route knows, under exactly its own status.
+        passed.add(`${name}: ${status} ${answer.code} ${answer.fault}`);
+        assert.equal(status, ERROR_STATUS[answer.code], what);
+      }
+    }
+  }
+  assert.deepEqual([...passed].sort(), [
+    // The node's refusal, in plain text, on a broadcast.
+    'broadcast: 400 dust null',
+    'broadcast: 400 refused null',
+    // The faucet's own, on either bots route. Only "failed" is a fault.
+    'faucet: 429 busy null',
+    'faucet: 500 failed origin_down',
+    'faucet: 503 refilling null',
+    'potAddress: 429 busy null',
+    'potAddress: 500 failed origin_down',
+    'potAddress: 503 refilling null',
+    // Esplora's plain-text 404, on a transaction read only.
+    'read a transaction: 404 not_found null',
+  ]);
+  assert.ok(unavailable > 20_000, `${unavailable} answers were unavailable, each with a fault`);
 });

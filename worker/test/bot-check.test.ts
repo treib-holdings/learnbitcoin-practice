@@ -8,6 +8,8 @@ noNetwork();
 
 const HOST = 'practice.learnbitcoin.com';
 const TOKEN = 'token-from-the-widget';
+/** A practice address that is not the one coins are asked for. */
+const OTHER = 'bcrt1qxagpc0v6mxg2dq230xmphn8nuzaasw8uk6v5l9';
 
 /** What the verify service says about a token that is good in every way. */
 const GOOD = {
@@ -50,24 +52,46 @@ test('a token passes only when success, hostname, action and cdata all agree', a
 });
 
 test('solved for another address: the reader can run the check again', async () => {
-  const other = 'bcrt1qxagpc0v6mxg2dq230xmphn8nuzaasw8uk6v5l9';
-  for (const cdata of [other, '', undefined, null, ADDRESS.toUpperCase(), `${ADDRESS} `]) {
+  for (const cdata of [OTHER, '', undefined, null, ADDRESS.toUpperCase(), `${ADDRESS} `]) {
     const answer = await check(fakeFetch(() => reply(200, { ...GOOD, cdata })))(TOKEN, ADDRESS);
     assert.deepEqual(answer, { verdict: 'fail', upstream: 200, fault: null }, String(cdata));
   }
 });
 
-test('solved on another host or for another form: shut, and the owner is told', async () => {
+test('solved for another form: the reader can run the check again, and nobody is at fault', async () => {
+  // The action is whatever the page that drew the widget said. A visitor can
+  // make such a token at will, so it must not read as a fault of ours.
+  const wrong = [
+    { action: 'newsletter' },
+    { action: '' },
+    { action: undefined },
+    { action: null },
+    { action: 'Faucet' },
+    { action: 'faucet ' },
+    { action: ['faucet'] },
+    // Another form and another address at once.
+    { action: 'newsletter', cdata: OTHER },
+    { action: undefined, cdata: undefined },
+  ];
+  for (const change of wrong) {
+    const answer = await check(fakeFetch(() => reply(200, { ...GOOD, ...change })))(TOKEN, ADDRESS);
+    assert.deepEqual(answer, { verdict: 'fail', upstream: 200, fault: null }, JSON.stringify(change));
+  }
+});
+
+test('solved on another host: shut, and the owner is told', async () => {
   const wrong = [
     { hostname: 'example.com' },
     { hostname: 'www.learnbitcoin.com' },
     { hostname: `evil.${HOST}` },
     { hostname: HOST.toUpperCase() },
+    { hostname: `${HOST}.` },
     { hostname: undefined },
-    { action: 'newsletter' },
-    { action: '' },
-    { action: undefined },
-    { action: 'Faucet' },
+    { hostname: null },
+    // Another host comes first: it stays the owner's to fix whatever else is wrong with the token.
+    { hostname: 'www.learnbitcoin.com', action: 'newsletter' },
+    { hostname: 'www.learnbitcoin.com', cdata: OTHER },
+    { hostname: undefined, action: undefined, cdata: undefined },
   ];
   for (const change of wrong) {
     const answer = await check(fakeFetch(() => reply(200, { ...GOOD, ...change })))(TOKEN, ADDRESS);
@@ -88,7 +112,7 @@ test("Cloudflare's published test secret can never pass: it names example.com an
   assert.deepEqual(answer, { verdict: 'down', upstream: 200, fault: 'bot_check_config' });
   // Even on a Worker whose configured host were example.com: no action, no pass.
   const sameHost = await check(fakeFetch(() => reply(200, testAnswer)), { hostname: 'example.com' })('XXXX.DUMMY.TOKEN.XXXX', ADDRESS);
-  assert.equal(sameHost.verdict, 'down');
+  assert.deepEqual(sameHost, { verdict: 'fail', upstream: 200, fault: null });
 });
 
 test('a token the service rejects is a fail, whatever status the rejection comes with', async () => {
@@ -259,6 +283,8 @@ test('nothing about a key or a token gets special treatment', async () => {
       assert.equal(rejected.verdict, 'fail');
       const wrongHost = await check(fakeFetch(() => reply(200, { ...GOOD, hostname: 'example.com' })), change)(token, ADDRESS);
       assert.equal(wrongHost.verdict, 'down');
+      const wrongForm = await check(fakeFetch(() => reply(200, { ...GOOD, action: 'newsletter' })), change)(token, ADDRESS);
+      assert.equal(wrongForm.verdict, 'fail');
       const good = await check(fakeFetch(() => reply(200, GOOD)), change)(token, ADDRESS);
       assert.equal(good.verdict, 'pass');
     }

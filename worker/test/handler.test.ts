@@ -1,9 +1,16 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { API, ERROR_STATUS } from '@learnbitcoin/practice-contract';
+import { ADDRESS_PATTERN, API, ERROR_STATUS } from '@learnbitcoin/practice-contract';
 import type { ErrorCode } from '@learnbitcoin/practice-contract';
-import type { Fault } from '../src/deps.ts';
-import { EVENT_BODY_MAX, FAUCET_BODY_MAX, TX_HEX_MAX, esploraReadPath, makeHandler } from '../src/handler.ts';
+import type { Fault, LogLine } from '../src/deps.ts';
+import {
+  EVENT_BODY_MAX,
+  FAUCET_BODY_MAX,
+  TX_HEX_MAX,
+  esploraReadPath,
+  isPracticeAddress,
+  makeHandler,
+} from '../src/handler.ts';
 import { FIXED_HEADERS } from '../src/headers.ts';
 import { readerKey } from '../src/reader-key.ts';
 import {
@@ -19,6 +26,7 @@ import {
   harness,
   noNetwork,
   post,
+  readJson,
 } from './fakes.ts';
 import type { Harness, HarnessOptions } from './fakes.ts';
 
@@ -28,6 +36,55 @@ const HEX = '0200000001abcdef';
 const TOKEN = 'token-from-the-widget';
 const FAUCET_BODY = { address: ADDRESS, token: TOKEN };
 const EVENT = { name: 'Passkey', path: '/new', value: 'ok' };
+
+/** A taproot address: the first address of BIP 86's test vectors, spelled the practice network's way. */
+const TAPROOT = 'bcrt1p5cyxnuxmeuwuvkwfem96lqzszd02n6xdcjrs20cac6yqjjwudpxqvg32hk';
+/** ADDRESS with its last character changed: all the looks of an address, and a checksum that does not fit. */
+const NEARLY = `${ADDRESS.slice(0, -1)}${ADDRESS.endsWith('q') ? 'p' : 'q'}`;
+
+// The addresses below were made with the library the wallet reads addresses
+// with (@scure/base), from the version and the bytes each line names.
+// "00..13" is the bytes 00, 01, 02 and so on up to 13 (hex).
+const ADDRESSES: Array<[what: string, address: string]> = [
+  ['a key hash (P2WPKH): version 0, the 20 bytes 00..13', 'bcrt1qqqqsyqcyq5rqwzqfpg9scrgwpugpzysnard0ew'],
+  ['a script hash (P2WSH): version 0, the 32 bytes 00..1f', 'bcrt1qqqqsyqcyq5rqwzqfpg9scrgwpugpzysnzs23v9ccrydpk8qarc0scjhmyt'],
+  ['taproot: version 1, the 32 bytes 00..1f', 'bcrt1pqqqsyqcyq5rqwzqfpg9scrgwpugpzysnzs23v9ccrydpk8qarc0sj9hjuh'],
+  ["taproot: BIP 86's first address", TAPROOT],
+  ['pay to anchor: version 1, the 2 bytes 4e 73, with four bits to spare', 'bcrt1pfeesnyr2tx'],
+  ['version 2, the 3 bytes 00 01 02, with one bit to spare', 'bcrt1zqqqsyyyf2ep'],
+  ['version 1, 4 bytes of zeros, with three bits to spare', 'bcrt1pqqqqqqqzc95z6'],
+  ['version 1, 5 bytes of zeros, with no bit to spare', 'bcrt1pqqqqqqqq93hrg4'],
+  ['version 1, 6 bytes of zeros, with two bits to spare', 'bcrt1pqqqqqqqqqqcwfmad'],
+  ['as short as an address gets: version 16, the 2 bytes 00 01', 'bcrt1sqqqsq0cn3a'],
+  ['as long as an address gets: version 16, the 40 bytes 00..27', 'bcrt1sqqqsyqcyq5rqwzqfpg9scrgwpugpzysnzs23v9ccrydpk8qarc0jqgfzyvjz2f38rhf4f4'],
+];
+
+/**
+ * Text that fits the contract's pattern and is no address. The first four
+ * have no checksum to speak of. The others were made the same way as the
+ * addresses above, each with a checksum worked out over its own characters,
+ * so the only thing wrong with one is what its line names.
+ */
+const LOOKALIKES: Array<[what: string, text: string]> = [
+  ['only the looks of an address', 'bcrt1qqqqqqqqqqqq'],
+  ['the longest text the pattern takes', `bcrt1${'q'.repeat(71)}`],
+  ['the looks of a taproot address', `bcrt1p${'q'.repeat(58)}`],
+  ['an address with its last character changed', NEARLY],
+  ['a taproot address under the checksum of version 0', 'bcrt1pqqqsyqcyq5rqwzqfpg9scrgwpugpzysnzs23v9ccrydpk8qarc0s8e87e4'],
+  ['a version 0 address under the checksum of the later versions', 'bcrt1qqqqsyqcyq5rqwzqfpg9scrgwpugpzysnglaruv'],
+  ['version 17, which does not exist', 'bcrt13qqqsyqcyq5rqwzqfpg9scrgwpugpzysnzs23v9ccrydpk8qarc0sw3dsfm'],
+  ['version 31, which does not exist', 'bcrt1lqqqsyqcyq5rqwzqfpg9scrgwpugpzysnwaw922'],
+  ['version 0 with 21 bytes', 'bcrt1qqqqsyqcyq5rqwzqfpg9scrgwpugpzysnzshh9yaa'],
+  ['version 0 with 16 bytes', 'bcrt1qqqqsyqcyq5rqwzqfpg9scrgwpupkf6zw'],
+  ['version 0 with 2 bytes', 'bcrt1qqqqs8rnyk0'],
+  ['version 0 with 40 bytes', 'bcrt1qqqqsyqcyq5rqwzqfpg9scrgwpugpzysnzs23v9ccrydpk8qarc0jqgfzyvjz2f38s993a3'],
+  ['pay to anchor with one of its four spare bits set', 'bcrt1pfee3wjhlk5'],
+  ['version 1, 4 bytes of zeros with one of the three spare bits set', 'bcrt1pqqqqqqydj8jdq'],
+  // A program is written five bits to a character, so five bits or more left over are a character too many.
+  ['version 1, 5 bytes of zeros and five bits over', 'bcrt1pqqqqqqqqqd6hexs'],
+  ['version 1, 3 bytes of zeros and six bits over', 'bcrt1pqqqqqqtuwkvn'],
+  ['version 1, 6 bytes of zeros and seven bits over', 'bcrt1pqqqqqqqqqqqtd4t8k'],
+];
 
 /** One good POST for each of the four POST routes. */
 const POSTS: Array<[path: string, body: string | object | null]> = [
@@ -91,12 +148,11 @@ test('the five chain reads reach the origin, each with a path rebuilt from its c
     assert.deepEqual(h.trace, ['limit:chain', 'origin:esplora'], path);
     assert.deepEqual(h.originArgs, [upstream], path);
     assert.equal(await response.text(), '{"ok":true}', 'the body is passed on');
-    assert.deepEqual(h.lines, [{ route: 'esplora_read', status: 200, upstream: 200, ms: 5, fault: null }]);
+    assert.deepEqual(h.lines, [], 'a chain read that went well writes no log line');
   }
   // A taproot address is as good as a segwit one.
-  const taproot = `bcrt1p${'q'.repeat(58)}`;
-  const { h } = await run(get(`${API.esplora}/address/${taproot}/txs`));
-  assert.deepEqual(h.originArgs, [`/address/${taproot}/txs`]);
+  const { h } = await run(get(`${API.esplora}/address/${TAPROOT}/txs`));
+  assert.deepEqual(h.originArgs, [`/address/${TAPROOT}/txs`]);
 });
 
 test('a chain read is sent with the content type the Worker picks, never the origin headers', async () => {
@@ -169,6 +225,8 @@ const TRICKS: string[] = [
   `${API.esplora}/tx/${TXID}0`,
   `${API.esplora}/tx/${'g'.repeat(64)}`,
   `${API.esplora}/tx/${TXID.slice(0, 62)}%61`,
+  // Text with all the looks of an address that is not one, in each of the three shapes.
+  ...LOOKALIKES.flatMap(([, text]) => ['', '/utxo', '/txs'].map((tail) => `${API.esplora}/address/${text}${tail}`)),
   // Dot segments, plain and percent-encoded, and encoded slashes: the ways
   // to climb out of /esplora/ and into /bots/ on the origin.
   `${API.esplora}/../bots/pot/address`,
@@ -229,6 +287,10 @@ test('the path check itself, part by part', () => {
     ['address', ADDRESS, 'txs', 'chain'],
     ['address', `${ADDRESS}\n`],
     ['address', ` ${ADDRESS}`],
+    ['address', NEARLY],
+    ['address', NEARLY, 'utxo'],
+    ['address', NEARLY, 'txs'],
+    ['address', 'bcrt1qqqqqqqqqqqq'],
     ['address', '..'],
     ['address', '..', '..', 'bots'],
     ['tx'],
@@ -245,6 +307,124 @@ test('the path check itself, part by part', () => {
   for (const [path] of READS) {
     const rebuilt = esploraReadPath(path.slice(API.esplora.length + 1).split('/'));
     assert.match(rebuilt ?? '', /^(\/[a-z0-9]+)+$/);
+  }
+});
+
+// -- what an address is -------------------------------------------------------------
+
+test('an address is more than its looks: version, program and checksum must all be right', () => {
+  for (const [what, address] of ADDRESSES) {
+    assert.match(address, ADDRESS_PATTERN, what);
+    assert.equal(isPracticeAddress(address), true, what);
+  }
+  for (const [what, text] of LOOKALIKES) {
+    // Each fits the pattern: the pattern alone would let it through to the origin.
+    assert.match(text, ADDRESS_PATTERN, what);
+    assert.equal(isPracticeAddress(text), false, what);
+  }
+  // The pattern is still the first check: this network's spelling, in lower case, and nothing around it.
+  const misspelled = [
+    '',
+    'bcrt1',
+    ADDRESS.toUpperCase(),
+    ` ${ADDRESS}`,
+    `${ADDRESS}\n`,
+    `${ADDRESS}x`,
+    // The first of ADDRESSES as testnet and as Bitcoin's real network spell it.
+    'tb1qqqqsyqcyq5rqwzqfpg9scrgwpugpzysnl25zw8',
+    'bc1qqqqsyqcyq5rqwzqfpg9scrgwpugpzysn4v0345',
+  ];
+  for (const text of misspelled) assert.equal(isPracticeAddress(text), false, JSON.stringify(text));
+  // A program of 2 to 40 bytes takes 11 to 71 characters after "bcrt1", which
+  // is what the pattern allows. So a version 1 program of 1 byte and one of 41
+  // bytes, each under a checksum that is right, are stopped by their length.
+  const wrongLength = ['bcrt1pqqlgpf04', 'bcrt1pqqqsyqcyq5rqwzqfpg9scrgwpugpzysnzs23v9ccrydpk8qarc0jqgfzyvjz2f389qrmww65'];
+  for (const text of wrongLength) {
+    assert.doesNotMatch(text, ADDRESS_PATTERN);
+    assert.equal(isPracticeAddress(text), false, text);
+  }
+});
+
+test('one wrong character anywhere in an address is caught', () => {
+  // What the checksum is for. Every character after "bcrt1" of every
+  // address above is swapped for each of the 31 others in turn.
+  const characters = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l';
+  let tried = 0;
+  for (const [what, address] of [...ADDRESSES, ['a recorded address', ADDRESS] as const]) {
+    for (let at = 'bcrt1'.length; at < address.length; at += 1) {
+      for (const other of characters) {
+        if (other === address[at]) continue;
+        const changed = `${address.slice(0, at)}${other}${address.slice(at + 1)}`;
+        assert.equal(isPracticeAddress(changed), false, `${what}: ${changed}`);
+        tried += 1;
+      }
+    }
+  }
+  assert.ok(tried > 10_000, `${tried} changed addresses were tried`);
+});
+
+test('every address the wallet package derives passes, and so does every one the real origin took or printed', () => {
+  /** Every text in a JSON value that begins as an address of this network does. */
+  const spelled = (value: unknown, found: string[] = []): string[] => {
+    if (typeof value === 'string' && value.startsWith('bcrt1')) found.push(value);
+    else if (Array.isArray(value)) for (const inner of value) spelled(inner, found);
+    else if (typeof value === 'object' && value !== null) for (const inner of Object.values(value)) spelled(inner, found);
+    return found;
+  };
+
+  // The wallet package's own test vectors: the addresses it derives there. A
+  // scan asks the Worker about addresses like these and nothing else, so one
+  // that the check refused would be a wallet that cannot be read.
+  const derived = spelled(readJson('../../wallet/test/vectors.json'));
+  assert.ok(derived.length >= 10, `${derived.length} addresses in the wallet's vectors`);
+  for (const address of derived) assert.equal(isPracticeAddress(address), true, address);
+
+  // What Esplora itself made of text, as recorded: a 200 for what it took to
+  // be an address, a 400 for what it did not. The check agrees each time.
+  const { samples } = readJson('../../e2e/fixtures/origin-samples.json') as {
+    samples: Array<{ request: string; status: number; body: unknown }>;
+  };
+  const verdicts = { taken: 0, refused: 0, printed: 0 };
+  for (const sample of samples) {
+    const asked = /^GET \/esplora\/address\/([^/]+)/.exec(sample.request)?.[1];
+    if (asked !== undefined) {
+      assert.ok(sample.status === 200 || sample.status === 400, sample.request);
+      assert.equal(isPracticeAddress(asked), sample.status === 200, sample.request);
+      verdicts[sample.status === 200 ? 'taken' : 'refused'] += 1;
+    }
+    // And every address Esplora printed in an answer is one.
+    for (const address of spelled(sample.body)) {
+      assert.equal(isPracticeAddress(address), true, address);
+      verdicts.printed += 1;
+    }
+  }
+  assert.ok(verdicts.taken >= 5 && verdicts.refused >= 2 && verdicts.printed >= 10, JSON.stringify(verdicts));
+});
+
+test('text with the looks of an address that is not one gets the 404 of an unknown path, and nothing is asked or logged', async () => {
+  // What Esplora answers to such text, were it asked: a 400. The handler
+  // would have to call that "unavailable", with a fault for the owner. So a
+  // visitor could write faults into the log at will, and the real ones
+  // would drown.
+  const esplora = (): never => {
+    throw new Error('the origin was asked about text that is no address');
+  };
+  for (const [what, text] of LOOKALIKES) {
+    for (const tail of ['', '/utxo', '/txs']) {
+      const { response, h } = await run(get(`${API.esplora}/address/${text}${tail}`), { esplora });
+      assert.equal(response.status, 404, what);
+      assert.deepEqual(await errorOf(response), { error: 'not_found' }, what);
+      assert.deepEqual(h.trace, [], `${what}: neither the limiter nor the origin`);
+      assert.deepEqual(h.lines, [], `${what}: no line, least of all one with a fault`);
+    }
+  }
+  // And each real address is asked about, in all three shapes.
+  for (const [what, address] of ADDRESSES) {
+    for (const tail of ['', '/utxo', '/txs']) {
+      const { response, h } = await run(get(`${API.esplora}/address/${address}${tail}`));
+      assert.equal(response.status, 200, what);
+      assert.deepEqual(h.originArgs, [`/address/${address}${tail}`], what);
+    }
   }
 });
 
@@ -303,7 +483,9 @@ test('a wrong method on a known path is 405, with the method that is right', asy
       assert.equal(response.headers.get('Allow'), right, `${method} ${path}`);
       if (method !== 'HEAD') assert.deepEqual(await errorOf(response), { error: 'method' });
       assert.deepEqual(h.trace, [], `${method} ${path}`);
-      assert.deepEqual(h.lines, [{ route, status: 405, upstream: null, ms: 5, fault: null }]);
+      // The path of a chain read holds an address or an ID whatever the method, so that route stays silent.
+      const lines = route === 'esplora_read' ? [] : [{ route, status: 405, upstream: null, ms: 5, fault: null }];
+      assert.deepEqual(h.lines, lines, `${method} ${path}`);
     }
   }
 });
@@ -567,9 +749,13 @@ test('a token of exactly 2048 characters is still asked about, and extra keys in
 
 test('each bot-check verdict has its own answer, and its fault goes to the log', async () => {
   const cases: Array<[HarnessOptions['botCheck'] & object, ErrorCode]> = [
+    // A token that is spent, expired or made up, or solved for another form or another address: no fault.
     [{ verdict: 'fail', upstream: 200, fault: null }, 'bot_check'],
+    [{ verdict: 'fail', upstream: 400, fault: null }, 'bot_check'],
+    [{ verdict: 'fail', upstream: null, fault: null }, 'bot_check'],
     [{ verdict: 'closed', upstream: null, fault: null }, 'closed'],
     [{ verdict: 'closed', upstream: null, fault: 'bot_check_config' }, 'closed'],
+    // A token solved on another host, or a secret the service refuses.
     [{ verdict: 'down', upstream: 200, fault: 'bot_check_config' }, 'unavailable'],
     [{ verdict: 'down', upstream: 500, fault: 'bot_check_down' }, 'unavailable'],
     [{ verdict: 'down', upstream: null, fault: 'bot_check_down' }, 'unavailable'],
@@ -594,6 +780,9 @@ test("the faucet's own refusals and the origin's faults come back as the contrac
     ['unavailable', 302, 'origin_auth'],
     ['unavailable', null, 'origin_timeout'],
     ['unavailable', 200, 'origin_shape'],
+    // An answer of the bots that is not one of the faucet's own refusals.
+    ['unavailable', 400, 'origin_shape'],
+    ['unavailable', 502, 'origin_down'],
   ];
   for (const [code, upstream, fault] of cases) {
     const h = await refusedWith(post(API.faucet, FAUCET_BODY), code, ['limit:faucet', 'botCheck', 'origin:faucet'], {
@@ -628,12 +817,16 @@ test('a chain read the origin cannot answer comes back as a code, never as the o
     ['unavailable', 302, 'origin_auth'],
     ['unavailable', null, 'origin_timeout'],
     ['unavailable', 200, 'origin_shape'],
+    ['unavailable', 404, 'origin_shape'],
+    ['unavailable', 400, 'origin_shape'],
   ];
   for (const [code, upstream, fault] of cases) {
     const h = await refusedWith(get(`${API.esplora}/tx/${TXID}`), code, ['limit:chain', 'origin:esplora'], {
       esplora: () => ({ ok: false, code, detail: null, upstream, fault }),
     });
-    assert.deepEqual(h.lines, [{ route: 'esplora_read', status: ERROR_STATUS[code], upstream, ms: 5, fault }]);
+    // A fault is the owner's to fix, so it has its line. "Not found" is nobody's fault, and writes nothing.
+    const lines = fault === null ? [] : [{ route: 'esplora_read', status: ERROR_STATUS[code], upstream, ms: 5, fault }];
+    assert.deepEqual(h.lines, lines, `${code} ${fault}`);
   }
   await refusedWith(get(`${API.esplora}/tx/${TXID}`), 'limit', ['limit:chain'], { over: ['chain'] });
   await refusedWith(post(`${API.esplora}/tx`, HEX), 'limit', ['limit:broadcast'], { over: ['broadcast'] });
@@ -793,19 +986,239 @@ test('a refusal from the limiter also carries the fixed headers', async () => {
   for (const [name, value] of Object.entries(FIXED_HEADERS)) assert.equal(response.headers.get(name), value);
 });
 
-test('one log line per request: five fields, and nothing a reader sent', async () => {
+test('a chain read that ends without a fault writes no log line', async () => {
+  // Workers Logs can keep the URL of a request beside each line written in
+  // it, and the URL of a chain read holds an address or a transaction ID.
+  for (const [path] of READS) {
+    // It went well.
+    const good = await run(get(path));
+    assert.equal(good.response.status, 200, path);
+    assert.deepEqual(good.h.trace, ['limit:chain', 'origin:esplora'], path);
+    assert.deepEqual(good.h.lines, [], path);
+
+    // The chain does not know it (yet): not found.
+    const unknown = await run(get(path), {
+      esplora: () => ({ ok: false, code: 'not_found', detail: null, upstream: 404, fault: null }),
+    });
+    assert.equal(unknown.response.status, 404, path);
+    assert.deepEqual(await errorOf(unknown.response), { error: 'not_found' }, path);
+    assert.deepEqual(unknown.h.lines, [], path);
+
+    // The reader is asking too fast.
+    const limited = await run(get(path), { over: ['chain'] });
+    assert.equal(limited.response.status, 429, path);
+    assert.deepEqual(await errorOf(limited.response), { error: 'limit' }, path);
+    assert.deepEqual(limited.h.lines, [], path);
+
+    // A wrong method: the path holds the address or the ID all the same.
+    const wrongMethod = await run(post(path, HEX));
+    assert.equal(wrongMethod.response.status, 405, path);
+    assert.deepEqual(wrongMethod.h.lines, [], path);
+  }
+  // Nothing was put off for later either.
+  const { h } = await run(get(READS[1]![0]));
+  assert.equal(h.pending.length, 0);
+});
+
+test('a chain read that ends in a fault writes one line, with its fault', async () => {
+  const faults: Array<[upstream: number | null, fault: Fault]> = [
+    [502, 'origin_down'],
+    [null, 'origin_down'],
+    [302, 'origin_auth'],
+    [403, 'origin_auth'],
+    [null, 'origin_timeout'],
+    [200, 'origin_timeout'],
+    [200, 'origin_shape'],
+    [404, 'origin_shape'],
+    [400, 'origin_shape'],
+  ];
+  for (const [path] of READS) {
+    for (const [upstream, fault] of faults) {
+      const { response, h } = await run(get(path), {
+        esplora: () => ({ ok: false, code: 'unavailable', detail: null, upstream, fault }),
+      });
+      assert.equal(response.status, 502, path);
+      assert.deepEqual(await errorOf(response), { error: 'unavailable' }, path);
+      assert.deepEqual(h.lines, [{ route: 'esplora_read', status: 502, upstream, ms: 5, fault }], `${path} ${fault}`);
+    }
+    // The handler's own fault, too: a part that throws.
+    const threw = await run(get(path), {
+      esplora: () => {
+        throw new Error('a part that breaks');
+      },
+    });
+    assert.deepEqual(threw.h.lines, [{ route: 'esplora_read', status: 502, upstream: null, ms: 5, fault: 'handler' }], path);
+  }
+});
+
+test('any other path under the Esplora prefix writes no line either: its URL can hold an address or an ID just the same', async () => {
+  const silent = [
+    // What the wallet's own Esplora client can ask for and the Worker does not carry.
+    `${API.esplora}/tx/${TXID}/hex`,
+    `${API.esplora}/fee-estimates`,
+    // The next page of an address's transactions, and other shapes Esplora has.
+    `${API.esplora}/address/${ADDRESS}/txs/chain/${TXID}`,
+    `${API.esplora}/address/${ADDRESS}/txs/chain`,
+    `${API.esplora}/address/${ADDRESS}/txs/mempool`,
+    `${API.esplora}/tx/${TXID}/status`,
+    `${API.esplora}/scripthash/${TXID}/utxo`,
+    // A stray slash, a query string, capitals.
+    `${API.esplora}/address/${ADDRESS}/`,
+    `${API.esplora}/tx/${TXID}/`,
+    `${API.esplora}//address/${ADDRESS}`,
+    `${API.esplora}/address/${ADDRESS}?x=1`,
+    `${API.esplora}/address/${ADDRESS}/txs?after_txid=${TXID}`,
+    `${API.esplora}/tx/${TXID}?x`,
+    `${API.esplora}/address/${ADDRESS.toUpperCase()}`,
+    `${API.esplora}/tx/${TXID.toUpperCase()}`,
+    // Text that is no address.
+    `${API.esplora}/address/${NEARLY}`,
+    `${API.esplora}/address/${NEARLY}/utxo`,
+    `${API.esplora}/address/bcrt1qqqqqqqqqqqq/txs`,
+    // The broadcast path with a query string is not the broadcast: a query string can hold anything.
+    `${API.esplora}/tx?txid=${TXID}`,
+    `${API.esplora}/`,
+  ];
+  for (const path of silent) {
+    for (const method of ['GET', 'POST', 'HEAD', 'PUT', 'DELETE', 'OPTIONS']) {
+      const body = method === 'GET' || method === 'HEAD' ? undefined : HEX;
+      const { response, h } = await run(new Request(`${APP}${path}`, { method, headers: { Origin: APP }, body }));
+      assert.equal(response.status, 404, `${method} ${path}`);
+      if (method !== 'HEAD') assert.deepEqual(await errorOf(response), { error: 'not_found' }, `${method} ${path}`);
+      assert.deepEqual(h.trace, [], `${method} ${path}`);
+      assert.deepEqual(h.lines, [], `${method} ${path}`);
+      assert.equal(h.pending.length, 0, `${method} ${path}`);
+    }
+  }
+
+  // A bare "?" is no query string. That request is the chain read itself, and silent as one.
+  const bare = await run(get(`${API.esplora}/tx/${TXID}?`));
+  assert.equal(bare.response.status, 200);
+  assert.deepEqual(bare.h.originArgs, [`/tx/${TXID}`]);
+  assert.deepEqual(bare.h.lines, []);
+
+  // The one request under the prefix that keeps its line is the broadcast.
+  // Its URL is the same for everyone: the transaction travels in the body.
+  for (const [method, status, upstream] of [['POST', 200, 200], ['GET', 405, null], ['PUT', 405, null]] as const) {
+    const body = method === 'GET' ? undefined : HEX;
+    const { response, h } = await run(new Request(`${APP}${API.esplora}/tx`, { method, headers: { Origin: APP }, body }));
+    assert.equal(response.status, status, method);
+    assert.deepEqual(h.lines, [{ route: 'esplora_broadcast', status, upstream, ms: 5, fault: null }], method);
+  }
+});
+
+test('every other request writes exactly one line, whether it went well or was refused', async () => {
+  const line = (route: LogLine['route'], status: number, upstream: number | null = null, fault: Fault | null = null): LogLine => ({
+    route,
+    status,
+    upstream,
+    ms: 5,
+    fault,
+  });
+  const broadcast = `${API.esplora}/tx`;
+  const foreign = { Origin: 'https://evil.example' };
+  const cases: Array<[what: string, request: Request, options: HarnessOptions, expected: LogLine]> = [
+    ['config', get(API.config), {}, line('config', 200)],
+    ['config, wrong method', post(API.config, null), {}, line('config', 405)],
+
+    ['a broadcast', post(broadcast, HEX), {}, line('esplora_broadcast', 200, 200)],
+    [
+      'a broadcast the node refused',
+      post(broadcast, HEX),
+      { broadcast: () => ({ ok: false, code: 'dust', detail: 'dust', upstream: 400, fault: null }) },
+      line('esplora_broadcast', 400, 400),
+    ],
+    [
+      'a broadcast the origin could not take',
+      post(broadcast, HEX),
+      { broadcast: () => ({ ok: false, code: 'unavailable', detail: null, upstream: 404, fault: 'origin_shape' }) },
+      line('esplora_broadcast', 502, 404, 'origin_shape'),
+    ],
+    ['a broadcast that is not hex', post(broadcast, 'zz'), {}, line('esplora_broadcast', 400)],
+    ['a broadcast over the limit', post(broadcast, HEX), { over: ['broadcast'] }, line('esplora_broadcast', 429)],
+    ['a broadcast from another site', post(broadcast, HEX, foreign), {}, line('esplora_broadcast', 403)],
+    ['a broadcast, wrong method', new Request(`${APP}${broadcast}`, { method: 'PUT', body: HEX }), {}, line('esplora_broadcast', 405)],
+
+    ['the faucet', post(API.faucet, FAUCET_BODY), {}, line('faucet', 200, 200)],
+    [
+      'the faucet, bot check not passed',
+      post(API.faucet, FAUCET_BODY),
+      { botCheck: { verdict: 'fail', upstream: 200, fault: null } },
+      line('faucet', 403, 200),
+    ],
+    [
+      'the faucet, refused by the bots',
+      post(API.faucet, FAUCET_BODY),
+      { faucet: () => ({ ok: false, code: 'already_paid', detail: null, upstream: 429, fault: null }) },
+      line('faucet', 429, 429),
+    ],
+    [
+      'the faucet, an answer of the bots that is not their own refusal',
+      post(API.faucet, FAUCET_BODY),
+      { faucet: () => ({ ok: false, code: 'unavailable', detail: null, upstream: 400, fault: 'origin_shape' }) },
+      line('faucet', 502, 400, 'origin_shape'),
+    ],
+    ['the faucet, a bad address', post(API.faucet, { address: 'x', token: TOKEN }), {}, line('faucet', 400)],
+    ['the faucet over the limit', post(API.faucet, FAUCET_BODY), { over: ['faucet'] }, line('faucet', 429)],
+    ['the faucet from another site', post(API.faucet, FAUCET_BODY, foreign), {}, line('faucet', 403)],
+    ['the faucet, wrong method', get(API.faucet), {}, line('faucet', 405)],
+
+    ['the pot address', post(API.potAddress, null), {}, line('pot_address', 200, 200)],
+    [
+      'the pot address, origin down',
+      post(API.potAddress, null),
+      { potAddress: () => ({ ok: false, code: 'unavailable', detail: null, upstream: 502, fault: 'origin_down' }) },
+      line('pot_address', 502, 502, 'origin_down'),
+    ],
+    ['the pot address over the limit', post(API.potAddress, null), { over: ['pot'] }, line('pot_address', 429)],
+    ['the pot address from another site', post(API.potAddress, null, foreign), {}, line('pot_address', 403)],
+    ['the pot address, wrong method', get(API.potAddress), {}, line('pot_address', 405)],
+
+    ['an event', post(API.event, EVENT), {}, line('event', 202, 202)],
+    ['an event, with events off', post(API.event, EVENT), { config: { events: false } }, line('event', 202)],
+    [
+      'an event the events service did not take',
+      post(API.event, EVENT),
+      { forward: async () => ({ ok: false, upstream: 500, fault: 'events_down' }) },
+      line('event', 202, 500, 'events_down'),
+    ],
+    ['an event that is not one', post(API.event, { name: 'Made up', path: '/' }), {}, line('event', 400)],
+    ['an event over the limit', post(API.event, EVENT), { over: ['events'] }, line('event', 429)],
+    ['an event from another site', post(API.event, EVENT, foreign), {}, line('event', 403)],
+    ['an event, wrong method', get(API.event), {}, line('event', 405)],
+
+    // A path the Worker does not know, outside the Esplora prefix. Whatever a
+    // visitor typed there, the line holds none of it.
+    ['an unknown path', get('/api/nothing'), {}, line('unknown', 404)],
+    ['an unknown path that holds an address', get(`/api/nothing/${ADDRESS}`), {}, line('unknown', 404)],
+    ['the Esplora prefix itself, with nothing under it', get(API.esplora), {}, line('unknown', 404)],
+    ['a path that only begins like the Esplora prefix', get(`${API.esplora}x/address/${ADDRESS}`), {}, line('unknown', 404)],
+    ['a path with the Esplora prefix further in', get(`/p${API.esplora}/address/${ADDRESS}`), {}, line('unknown', 404)],
+    ['a query string that names the Esplora prefix', get(`/api/nothing?next=${API.esplora}/tx/${TXID}`), {}, line('unknown', 404)],
+  ];
+  for (const [what, request, options, expected] of cases) {
+    const { response, h } = await run(request, options);
+    assert.equal(response.status, expected.status, what);
+    assert.deepEqual(h.lines, [expected], what);
+  }
+});
+
+test('a log line is five fields, and nothing a reader sent', async () => {
   const secretish = [ADDRESS, TXID, TOKEN, READER_IP, HEX, POT_ADDRESS, 'Mozilla', 'evil.example', '/api/', 'esplora/'];
   const requests: Request[] = [
     get(API.config),
-    ...READS.map(([path]) => get(path)),
+    ...READS.map(([path]) => get(path, { 'User-Agent': 'Mozilla/5.0' })),
     ...POSTS.map(([path, body]) => post(path, body, { 'User-Agent': 'Mozilla/5.0' })),
     ...POSTS.map(([path, body]) => post(path, body, { Origin: 'https://evil.example' })),
-    get(`/api/esplora/address/${ADDRESS}/nothing`),
+    // An unknown path that holds what a visitor typed, in its path and in a query string.
+    get(`/api/nothing/${ADDRESS}/${TXID}?token=${TOKEN}`),
     get(API.faucet),
     post(API.faucet, { address: ADDRESS, token: 'x'.repeat(3000) }),
   ];
   for (const request of requests) {
     const { h } = await run(request, {
+      // A chain read writes its line only when it ends in a fault, so here each one does.
+      esplora: () => ({ ok: false, code: 'unavailable', detail: null, upstream: 502, fault: 'origin_down' }),
       faucet: () => ({ ok: false, code: 'failed', detail: null, upstream: 500, fault: 'origin_down' }),
     });
     assert.equal(h.lines.length, 1, `${request.method} ${request.url}`);
