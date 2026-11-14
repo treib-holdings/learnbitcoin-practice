@@ -49,7 +49,7 @@ test('pays the recipient, returns change, and the fee matches the rate', () => {
   assert.equal(p.inputs.length, 2);
   const pay = p.outputs.filter((o) => !o.isChange);
   const change = p.outputs.filter((o) => o.isChange);
-  assert.deepEqual(pay, [{ address: recipient, amount: 60_000n, isChange: false }]);
+  assert.deepEqual(pay, [{ address: recipient, amount: 60_000n, isChange: false, vout: 1 }]);
   assert.equal(change.length, 1);
   assert.equal(change[0]!.address, V.abandon.change[0]);
   assert.equal(p.changeIndex, 0);

@@ -9,7 +9,10 @@
 //   2. Without a passkey: 16 random bytes from the browser.
 //
 // Either way the result is an ordinary BIP39 seed and a BIP84 account, so
-// the same words restore the same wallet in Sparrow or Bitcoin Core.
+// the same words restore the same wallet in Sparrow (started in Regtest
+// mode). Bitcoin Core is different: it has no way to restore from 12 words.
+// It imports output descriptors instead, and descriptor.ts writes this
+// wallet's public ones, which let Core watch the wallet but not spend from it.
 
 import { HDKey } from '@scure/bip32';
 import { entropyToMnemonic, generateMnemonic, mnemonicToSeedSync, validateMnemonic } from '@scure/bip39';
@@ -18,8 +21,11 @@ import { p2wpkh } from '@scure/btc-signer';
 import type { BTC_NETWORK } from '@scure/btc-signer/utils.js';
 import { hkdf } from '@noble/hashes/hkdf.js';
 import { sha256 } from '@noble/hashes/sha2.js';
-import { utf8ToBytes } from '@noble/hashes/utils.js';
+import { hexToBytes, utf8ToBytes } from '@noble/hashes/utils.js';
 import { ACCOUNT_PATH, REGTEST, TEST_VERSIONS } from './network.ts';
+
+// The app holds account keys without depending on @scure/bip32 itself.
+export type { HDKey } from '@scure/bip32';
 
 /**
  * The input every practice-wallet passkey is asked to evaluate (version 1).
@@ -57,6 +63,25 @@ export function normalizeMnemonic(mnemonic: string): string {
 export function isValidMnemonic(mnemonic: string): boolean {
   const words = normalizeMnemonic(mnemonic);
   return words.split(' ').length === 12 && validateMnemonic(words, wordlist);
+}
+
+/**
+ * The 2048 English BIP39 words, in order. Every word of a phrase comes from
+ * this list. A frozen copy: nothing that reads it can change the list the
+ * wallet makes its phrases from.
+ */
+export const ENGLISH_WORDS: readonly string[] = Object.freeze([...wordlist]);
+
+const WORD_SET: ReadonlySet<string> = new Set(wordlist);
+
+/**
+ * Positions, counted from 0, of the words that are not in the BIP39 list.
+ * A screen uses it to point at a typo before the checksum is even looked at.
+ */
+export function unknownWords(mnemonic: string): number[] {
+  const words = normalizeMnemonic(mnemonic);
+  if (words === '') return [];
+  return words.split(' ').flatMap((word, position) => (WORD_SET.has(word) ? [] : [position]));
 }
 
 /** A BIP84 account: the private account key plus what can be shown or exported safely. */
@@ -123,4 +148,42 @@ export function privateKeyAt(account: HDKey, chain: Chain, index: number): Uint8
   const child = account.deriveChild(chain).deriveChild(index);
   if (!child.privateKey) throw new Error('This account is watch-only and cannot sign');
   return child.privateKey;
+}
+
+/** One worked example of the whole derivation: a passkey output and the wallet it must give. */
+export interface SelfTestVector {
+  /** 32 bytes, as hex. */
+  prfOutput: string;
+  masterFingerprint: string;
+  firstAddress: string;
+}
+
+/**
+ * The frozen example (it is also in test/vectors.json, checked against
+ * Bitcoin Core). Frozen like PRF_INPUT_V1: these values never change.
+ */
+export const SELF_TEST_VECTOR: Readonly<SelfTestVector> = Object.freeze({
+  prfOutput: '01'.repeat(32),
+  masterFingerprint: 'd2eb452b',
+  firstAddress: 'bcrt1qp7th3dvtkx9vrktcrn5erq0dgjzgc4wjxzl8d6',
+});
+
+/**
+ * Does this browser derive keys correctly? Runs the frozen example through
+ * every step (HKDF, the word list, the BIP39 seed, BIP32, the address) and
+ * compares the wallet fingerprint and the first address. A wallet made by a
+ * browser that gets any step wrong could never be opened anywhere else, so
+ * the app runs this before it makes or opens one. Returns false on any
+ * mismatch or error; it never throws. The argument exists for the tests.
+ */
+export function selfTest(vector: SelfTestVector = SELF_TEST_VECTOR): boolean {
+  try {
+    const account = accountFromMnemonic(mnemonicFromEntropy(entropyFromPrf(hexToBytes(vector.prfOutput))));
+    return (
+      account.masterFingerprint === vector.masterFingerprint &&
+      deriveAddress(account.key, 0, 0).address === vector.firstAddress
+    );
+  } catch {
+    return false;
+  }
 }
