@@ -83,6 +83,12 @@ services:
       # prints its whole config at start, so a password here would land in logs.)
       - --http-addr=0.0.0.0:3000            # Esplora REST, for the wallet (via the Worker)
       - --electrum-rpc-addr=0.0.0.0:50001   # Electrum, for Sparrow (via the TLS proxy) and the explorer
+      # An address with more unspent coins than this is refused its list of
+      # coins (the default is 500). A wallet cannot be read while one of its
+      # addresses is refused, and anybody can pay anybody 501 tiny coins, so
+      # the line sits where reaching it costs dozens of faucet payments. At
+      # 15,000 coins the list is about 3 MB, under the 4 MiB the Worker reads.
+      - --utxos-limit=15000
       - --timestamp
 
   mempool-db:
