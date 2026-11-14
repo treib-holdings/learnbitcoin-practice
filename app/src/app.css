@@ -62,3 +62,14 @@
 main :not(pre) > code {
   overflow-wrap: anywhere;
 }
+
+/* On paper the 12 words are written by hand, never printed: a printout is
+   one more copy to keep safe, and it passes through a printer's memory on
+   the way. Whatever shows or takes the words carries data-print="never"
+   (the words list, the fields for typing them) and is left out of a
+   printout. What does print is the blank practice card. */
+@media print {
+  [data-print="never"] {
+    display: none !important;
+  }
+}

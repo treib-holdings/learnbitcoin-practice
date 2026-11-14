@@ -1,0 +1,6 @@
+/* The gallery's stylesheet: the app's own, plus the classes that only the
+   gallery's pages use. The app's stylesheet never scans this folder, so
+   nothing here reaches the production build. */
+@import "../src/app.css";
+@source "./";
+@source not "./dist";

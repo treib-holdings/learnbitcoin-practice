@@ -9,7 +9,9 @@
     "dev": "vite",
     "build": "vite build && node scripts/check-dist.mjs",
     "check": "svelte-check --tsconfig ./tsconfig.json --fail-on-warnings && tsc --noEmit -p tsconfig.node.json",
-    "test": "node --test test/"
+    "test": "node --test test/",
+    "gallery": "node ../e2e/src/gallery.ts",
+    "gallery:dev": "vite --config dev/vite.config.ts"
   },
   "dependencies": {
     "@fontsource-variable/geist": "5.3.0",

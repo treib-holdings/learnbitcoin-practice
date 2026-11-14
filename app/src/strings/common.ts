@@ -28,6 +28,12 @@ export const en = {
   markerNote: 'Practice network. These coins have no value.',
   /** Every page title starts with the word, so a tab and a bookmark carry the marker too. */
   markerTitle: 'Practice: {screen} | LearnBitcoin',
+  /**
+   * The title of the Home screen. In English it is the title index.html
+   * carries, word for word: Home is the one page a search engine may list,
+   * and its title must not change when the script starts.
+   */
+  homeTitle: 'Practice wallet | LearnBitcoin',
 
   // -- units: sats, sat/vB and vB are written the same in every language --
   sat: 'sat',
@@ -55,7 +61,16 @@ export const en = {
   linkAbout: 'About',
   linkSparrow: 'Practice network in Sparrow',
   linkSite: 'Back to LearnBitcoin.com',
+  /**
+   * The source is in English only. The Spanish text says so, as the main
+   * site does for a link from a Spanish page to an English one.
+   */
   linkSource: 'Source code',
+  /** What a screen reader calls the header's links and the footer's. */
+  navMain: 'Main',
+  navFooter: 'Footer',
+  /** Read out after a link that leaves this site. Screen readers only. */
+  opensNewTab: '(opens in a new tab)',
 
   // -- the footer --
   footerAbout: 'A working Bitcoin wallet on a practice network. Its coins have no value.',
@@ -81,6 +96,12 @@ export const en = {
    * The name the passkey is saved under in the reader's password manager,
    * where it stays for good. {tag} is four characters that tell two practice
    * passkeys apart.
+   *
+   * It is written once, when the passkey is made, in the language of that
+   * page, and this browser keeps only the tag. So only the page that has
+   * just made the passkey can show the whole name. Everywhere else the app
+   * shows the tag and says it is in the name: a passkey made on the English
+   * page is not listed under the Spanish name.
    */
   passkeyName: 'Practice wallet {tag} (no real money)',
   /** The one state line a passkey wallet carries on every wallet screen, while locked... */
@@ -92,13 +113,32 @@ export const en = {
   // -- small words many screens share --
   copy: 'Copy',
   copied: 'Copied',
+  /** Said by the status region when the browser refuses to copy. */
+  copyFailed: 'This browser did not let the page copy. Select the text and copy it by hand.',
   details: 'Details',
+  /** The words that open and close a folded section. */
+  show: 'Show',
+  hide: 'Hide',
   tryAgain: 'Try again',
   reload: 'Reload',
   back: 'Back',
   loading: 'Loading...',
   /** The one word for a payment that is not in a block yet. Never "pending". */
   unconfirmed: 'Unconfirmed',
+
+  // -- time left, for a countdown: the screen's own sentence carries it, as in "Asking again in 12 seconds." --
+  timeSecond: '{count} second',
+  timeSeconds: '{count} seconds',
+  timeMinute: '{count} minute',
+  timeMinutes: '{count} minutes',
+
+  // -- the screens that are not wallet sections: the key is "screen_" and the route's name --
+  screen_home: 'Home',
+  screen_new: 'Create a practice wallet',
+  screen_restore: 'Restore a practice wallet',
+  screen_tx: 'Transaction',
+  /** On a screen that is still a placeholder. It goes when the last screen is built. */
+  notBuiltYet: 'This screen is not built yet.',
 
   // -- a path that is no screen --
   notFoundTitle: 'Page not found',
@@ -117,6 +157,7 @@ export const es: Record<keyof typeof en, string> = {
   markerBadge: 'Práctica',
   markerNote: 'Red de práctica. Estas monedas no tienen valor.',
   markerTitle: 'Práctica: {screen} | LearnBitcoin',
+  homeTitle: 'Práctica: Inicio | LearnBitcoin',
 
   sat: 'sat',
   sats: 'sats',
@@ -138,7 +179,10 @@ export const es: Record<keyof typeof en, string> = {
   linkAbout: 'Acerca de',
   linkSparrow: 'La red de práctica en Sparrow',
   linkSite: 'Volver a LearnBitcoin.com',
-  linkSource: 'Código fuente',
+  linkSource: 'Código fuente (en inglés)',
+  navMain: 'Principal',
+  navFooter: 'Pie de página',
+  opensNewTab: '(se abre en otra pestaña)',
 
   footerAbout: 'Una billetera de Bitcoin que funciona de verdad, en una red de práctica. Sus monedas no tienen valor.',
   footerPromise: 'No hay ninguna cuenta que abrir, y no ponemos cookies.',
@@ -155,12 +199,26 @@ export const es: Record<keyof typeof en, string> = {
 
   copy: 'Copiar',
   copied: 'Copiado',
+  copyFailed: 'Este navegador no dejó que la página copiara. Selecciona el texto y cópialo a mano.',
   details: 'Detalles',
+  show: 'Mostrar',
+  hide: 'Ocultar',
   tryAgain: 'Volver a intentar',
   reload: 'Recargar',
   back: 'Volver',
   loading: 'Cargando...',
   unconfirmed: 'Sin confirmar',
+
+  timeSecond: '{count} segundo',
+  timeSeconds: '{count} segundos',
+  timeMinute: '{count} minuto',
+  timeMinutes: '{count} minutos',
+
+  screen_home: 'Inicio',
+  screen_new: 'Crea una billetera de práctica',
+  screen_restore: 'Restaura una billetera de práctica',
+  screen_tx: 'Transacción',
+  notBuiltYet: 'Esta pantalla todavía no está hecha.',
 
   notFoundTitle: 'Página no encontrada',
   notFoundBody:
