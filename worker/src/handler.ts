@@ -43,7 +43,7 @@ const HEX = /^[0-9a-fA-F]+$/;
 /** A path the Worker knows, and what answers it. */
 type Match =
   | { route: 'config' | 'esplora_broadcast' | 'faucet' | 'pot_address' | 'event' }
-  | { route: 'esplora_read'; upstream: string };
+  | { route: 'esplora_read'; upstream: string; cost: number };
 
 /** The one method each route takes. */
 const METHOD: Record<Match['route'], 'GET' | 'POST'> = {
@@ -146,6 +146,22 @@ export function isPracticeAddress(text: string): boolean {
  * /api/esplora/, split at the slashes. The result is the path to ask the
  * origin for, put together from the parts that passed, or null.
  *
+ * There are seven shapes:
+ *
+ *   blocks/tip/height                     the height of the chain
+ *   address/<address>                     how much an address has received and spent
+ *   address/<address>/utxo                its unspent coins
+ *   address/<address>/txs                 its transactions: the first 50
+ *   address/<address>/txs/chain           its confirmed transactions: the newest 25
+ *   address/<address>/txs/chain/<txid>    the 25 that come after that one
+ *   tx/<txid>                             one transaction
+ *
+ * The two "chain" shapes are how a list longer than 50 is read to its end
+ * (the wallet package's addressTxsAll). They are chain reads like the
+ * others: the same limiter counts them, and they are as silent in the log
+ * (the end of this file). The last of them is counted apart and for more
+ * than one read, though: OLDER_PAGE_COST below says why.
+ *
  * An address or a transaction ID must match the contract's pattern exactly:
  * lower case, nothing percent-encoded, nothing before or after. So "..",
  * "%2e%2e", an encoded slash, an empty part or an extra one all end here,
@@ -153,22 +169,70 @@ export function isPracticeAddress(text: string): boolean {
  * origin (the bots sit beside Esplora there). An address must also be one,
  * checksum and all (isPracticeAddress above), so the origin is asked about
  * addresses only. A transaction ID has no such check: any 64 hex characters
- * could be one, and Esplora answers "not found" for those that are not.
+ * could be one, and Esplora answers "not found" for one it does not know,
+ * or an empty list when asked what comes after it.
  */
 export function esploraReadPath(parts: readonly string[]): string | null {
-  const [first, second, third] = parts;
+  const [first, second, third, fourth, fifth] = parts;
   if (first === 'blocks') {
     return parts.length === 3 && second === 'tip' && third === 'height' ? '/blocks/tip/height' : null;
   }
   if (first === 'address' && second !== undefined && isPracticeAddress(second)) {
     if (parts.length === 2) return `/address/${second}`;
     if (parts.length === 3 && (third === 'utxo' || third === 'txs')) return `/address/${second}/${third}`;
+    if (third === 'txs' && fourth === 'chain') {
+      if (parts.length === 4) return `/address/${second}/txs/chain`;
+      if (parts.length === 5 && fifth !== undefined && TXID_PATTERN.test(fifth)) return `/address/${second}/txs/chain/${fifth}`;
+    }
     return null;
   }
   if (first === 'tx' && parts.length === 2 && second !== undefined && TXID_PATTERN.test(second)) {
     return `/tx/${second}`;
   }
   return null;
+}
+
+/**
+ * How many chain reads one page of an address's older transactions counts
+ * as, when it is asked for by an ID (address/<address>/txs/chain/<txid>).
+ *
+ * Every other read costs the practice network about the same whatever is
+ * asked: Esplora stops after one page, or answers from totals it keeps.
+ * This one does not. To find where the page begins, Esplora reads the
+ * address's list from its newest transaction down to the ID it was given,
+ * and to the very end when the ID is not in the list. (That is read from
+ * Esplora's source. It was not measured.) So the work grows with the length
+ * of the list, and any 64 hex characters will do for an ID. The Worker does
+ * not know how long the list of an address is, so it cannot tell a cheap
+ * question from a dear one.
+ *
+ * What the Worker can do is make the question scarce. The limiter for
+ * chain reads lets a reader's count go up to 6,000 in a minute
+ * (wrangler.jsonc). These pages are counted by the same limiter, but each
+ * as 50 and under a second key of the reader's (OLDER_PAGES), so in a count
+ * of their own: 120 of them a minute for one reader, whatever else that
+ * reader asks. A wallet has room in that. It asks for no older page at all
+ * for an address with fewer than 50 transactions, which is nearly every
+ * address, and for 39 at the very most for one address (addressTxsAll
+ * again): three whole readings of such a list fit into a minute.
+ *
+ * The count is kept apart so that neither kind of read can use up the
+ * other. A reader who has asked for too many older pages still sees coins
+ * and totals. And where many readers share one address (a classroom), a
+ * flood of older pages from one of them leaves the others' reads alone.
+ */
+export const OLDER_PAGE_COST = 50;
+
+/** What is added to a reader's key for the count of older pages (OLDER_PAGE_COST above). */
+export const OLDER_PAGES = 'older-pages';
+
+/**
+ * What a chain read counts for at the limiter. `upstream` is a path that
+ * esploraReadPath() has put together.
+ */
+export function chainReadCost(upstream: string): number {
+  // Only one of the seven shapes has something after "/txs/chain": the page asked for by an ID.
+  return upstream.includes('/txs/chain/') ? OLDER_PAGE_COST : 1;
 }
 
 function matchPath(pathname: string): Match | null {
@@ -179,7 +243,7 @@ function matchPath(pathname: string): Match | null {
   if (pathname === `${API.esplora}/tx`) return { route: 'esplora_broadcast' };
   if (pathname.startsWith(`${API.esplora}/`)) {
     const upstream = esploraReadPath(pathname.slice(API.esplora.length + 1).split('/'));
-    return upstream === null ? null : { route: 'esplora_read', upstream };
+    return upstream === null ? null : { route: 'esplora_read', upstream, cost: chainReadCost(upstream) };
   }
   return null;
 }
@@ -224,15 +288,37 @@ async function readBody(request: Request, max: number): Promise<{ text: string }
 }
 
 export function makeHandler(deps: Deps): Handler {
-  /** Counts this request against the reader's budget. False: over the limit. */
-  async function within(limiter: Limiter, name: LimiterName, request: Request): Promise<boolean> {
+  /**
+   * Counts this request against the reader's budget. False: over the limit.
+   *
+   * `cost` is how many requests this one counts as (one, unless told
+   * otherwise). With `apart`, it is counted under a second key of the same
+   * reader, the reader's own key with that word added: a count of its own
+   * at the same limiter, which the reader's other requests there neither
+   * add to nor draw on.
+   */
+  async function within(limiter: Limiter, name: LimiterName, request: Request, cost = 1, apart = ''): Promise<boolean> {
     // Read here and hashed at once. The address itself is not kept, logged or sent on by this check.
-    const key = await readerKey(name, request.headers.get('CF-Connecting-IP'));
-    return (await limiter.limit({ key })).success;
+    const reader = await readerKey(name, request.headers.get('CF-Connecting-IP'));
+    const key = apart === '' ? reader : `${reader}:${apart}`;
+    // Cloudflare's limiter counts a call as `delta` requests when it is
+    // given one ("weighted requests"), and as one request when it is not.
+    // A call is refused once the count has reached the limit, and a call
+    // that is refused adds nothing to the count. (The Limiter type in
+    // deps.ts names the key alone so far. An object that holds one field
+    // more is still one it takes.)
+    const options: { key: string; delta?: number } = cost === 1 ? { key } : { key, delta: cost };
+    return (await limiter.limit(options)).success;
   }
 
-  async function esploraRead(request: Request, upstream: string): Promise<Reply> {
-    if (!(await within(deps.limits.chain, 'chain', request))) return refuse('limit');
+  async function esploraRead(request: Request, upstream: string, cost: number): Promise<Reply> {
+    // A read that counts for more than one is a page of older transactions
+    // asked for by an ID. Those have a count of their own (OLDER_PAGE_COST).
+    const allowed =
+      cost === 1
+        ? await within(deps.limits.chain, 'chain', request)
+        : await within(deps.limits.chain, 'chain', request, cost, OLDER_PAGES);
+    if (!allowed) return refuse('limit');
     const result = await deps.origin.esplora(upstream);
     if (!result.ok) return refused(result);
     // The origin's body is passed on byte for byte, once all of it has
@@ -337,7 +423,7 @@ export function makeHandler(deps: Deps): Handler {
       case 'config':
         return { response: jsonAnswer(200, deps.config), upstream: null, fault: null };
       case 'esplora_read':
-        return esploraRead(request, match.upstream);
+        return esploraRead(request, match.upstream, match.cost);
       case 'esplora_broadcast':
         return broadcast(request);
       case 'faucet':

@@ -6,7 +6,10 @@ import type { Fault, LogLine } from '../src/deps.ts';
 import {
   EVENT_BODY_MAX,
   FAUCET_BODY_MAX,
+  OLDER_PAGES,
+  OLDER_PAGE_COST,
   TX_HEX_MAX,
+  chainReadCost,
   esploraReadPath,
   isPracticeAddress,
   makeHandler,
@@ -21,12 +24,14 @@ import {
   READER_IP,
   READER_IP6,
   TXID,
+  countingLimiter,
   errorOf,
   get,
   harness,
   noNetwork,
   post,
   readJson,
+  wranglerConfig,
 } from './fakes.ts';
 import type { Harness, HarnessOptions } from './fakes.ts';
 
@@ -133,15 +138,22 @@ test('GET /api/config answers the config, numbers as numbers', async () => {
 
 // -- the Esplora allowlist --------------------------------------------------------
 
+/** What may follow an address in a chain read: nothing, or one of these. */
+const ADDRESS_TAILS = ['', '/utxo', '/txs', '/txs/chain', `/txs/chain/${TXID}`];
+
 const READS: Array<[path: string, upstream: string]> = [
   [`${API.esplora}/blocks/tip/height`, '/blocks/tip/height'],
   [`${API.esplora}/address/${ADDRESS}`, `/address/${ADDRESS}`],
   [`${API.esplora}/address/${ADDRESS}/utxo`, `/address/${ADDRESS}/utxo`],
   [`${API.esplora}/address/${ADDRESS}/txs`, `/address/${ADDRESS}/txs`],
+  // The older pages of a long list: the newest 25 confirmed ones, and the 25 after a given one.
+  [`${API.esplora}/address/${ADDRESS}/txs/chain`, `/address/${ADDRESS}/txs/chain`],
+  [`${API.esplora}/address/${ADDRESS}/txs/chain/${TXID}`, `/address/${ADDRESS}/txs/chain/${TXID}`],
   [`${API.esplora}/tx/${TXID}`, `/tx/${TXID}`],
 ];
 
-test('the five chain reads reach the origin, each with a path rebuilt from its checked parts', async () => {
+test('the seven chain reads reach the origin, each with a path rebuilt from its checked parts', async () => {
+  assert.equal(READS.length, 7);
   for (const [path, upstream] of READS) {
     const { response, h } = await run(get(path));
     assert.equal(response.status, 200, path);
@@ -149,10 +161,141 @@ test('the five chain reads reach the origin, each with a path rebuilt from its c
     assert.deepEqual(h.originArgs, [upstream], path);
     assert.equal(await response.text(), '{"ok":true}', 'the body is passed on');
     assert.deepEqual(h.lines, [], 'a chain read that went well writes no log line');
+    // Each counts as one read at the limiter. One counts as 50: the page of older transactions asked for by an ID.
+    assert.deepEqual(h.limiters.chain.costs, [upstream === `/address/${ADDRESS}/txs/chain/${TXID}` ? 50 : 1], path);
   }
   // A taproot address is as good as a segwit one.
   const { h } = await run(get(`${API.esplora}/address/${TAPROOT}/txs`));
   assert.deepEqual(h.originArgs, [`/address/${TAPROOT}/txs`]);
+  const paged = await run(get(`${API.esplora}/address/${TAPROOT}/txs/chain/${'0'.repeat(64)}`));
+  assert.deepEqual(paged.h.originArgs, [`/address/${TAPROOT}/txs/chain/${'0'.repeat(64)}`]);
+});
+
+test('the two shapes for the older pages of an address are chain reads: the same limiter and the same silence, and the page asked for by an ID is counted apart, as 50', async () => {
+  assert.equal(OLDER_PAGE_COST, 50);
+  assert.equal(OLDER_PAGES, 'older-pages');
+  for (const [tail, cost] of [['/txs/chain', 1], [`/txs/chain/${TXID}`, OLDER_PAGE_COST]] as const) {
+    const path = `${API.esplora}/address/${ADDRESS}${tail}`;
+    // The chain limiter is asked, and no other; then the origin, with the path put together again.
+    const { response, h } = await run(get(path, { 'CF-Connecting-IP': READER_IP }));
+    assert.equal(response.status, 200, tail);
+    assert.deepEqual(h.trace, ['limit:chain', 'origin:esplora'], tail);
+    assert.deepEqual(h.originArgs, [`/address/${ADDRESS}${tail}`], tail);
+    // One call to the limiter. The newest 25 count as one read under the reader's key for chain
+    // reads, like any other read. The 25 after a given ID count as 50, under a second key of the
+    // same reader, so in a count of their own: to find that ID Esplora reads down the address's
+    // list, however long it is.
+    const key = await readerKey('chain', READER_IP);
+    assert.deepEqual(h.limiters.chain.costs, [cost], tail);
+    assert.deepEqual(h.limiters.chain.keys, [cost === 1 ? key : `${key}:older-pages`], tail);
+    assert.ok(!h.limiters.chain.keys[0]!.includes(READER_IP), 'neither key holds the reader address');
+    // The call itself: the key, and a weight only where the read counts for more than one. Every
+    // other read is asked for exactly as it was before there were weights.
+    assert.deepEqual(h.limiters.chain.asked, [cost === 1 ? { key } : { key: `${key}:older-pages`, delta: 50 }], tail);
+    for (const name of ['broadcast', 'faucet', 'pot', 'events'] as const) assert.deepEqual(h.limiters[name].keys, [], `${tail} ${name}`);
+    // It went well: nothing is written. Its URL holds an address, and in the second shape a transaction ID as well.
+    assert.deepEqual(h.lines, [], tail);
+
+    // Over the budget, the origin is not asked, and that is nobody's fault either.
+    const limited = await refusedWith(get(path), 'limit', ['limit:chain'], { over: ['chain'] });
+    assert.deepEqual(limited.lines, [], tail);
+
+    // Broken: one line, which names the route and the fault and nothing of the path.
+    const broken = await refusedWith(get(path), 'unavailable', ['limit:chain', 'origin:esplora'], {
+      esplora: () => ({ ok: false, code: 'unavailable', detail: null, upstream: 502, fault: 'origin_down' }),
+    });
+    assert.deepEqual(broken.lines, [{ route: 'esplora_read', status: 502, upstream: 502, ms: 5, fault: 'origin_down' }], tail);
+    assert.doesNotMatch(JSON.stringify(broken.lines), /bcrt1|[0-9a-f]{64}|chain/);
+
+    // Reading only: a POST is the wrong method, from our own page or anywhere else.
+    const posted = await refusedWith(post(path, HEX), 'method');
+    assert.deepEqual(posted.lines, [], tail);
+  }
+});
+
+test('what a chain read counts for: one, and 50 for a page of older transactions asked for by an ID', () => {
+  for (const [, upstream] of READS) {
+    assert.equal(chainReadCost(upstream), upstream === `/address/${ADDRESS}/txs/chain/${TXID}` ? OLDER_PAGE_COST : 1, upstream);
+  }
+  // Whatever the address and whatever the ID.
+  assert.equal(chainReadCost(`/address/${TAPROOT}/txs/chain/${'0'.repeat(64)}`), OLDER_PAGE_COST);
+  assert.equal(chainReadCost(`/address/${TAPROOT}/txs/chain`), 1);
+  assert.equal(chainReadCost(`/address/${TAPROOT}/txs`), 1);
+  // Against what wrangler.jsonc lets the limiter for chain reads count up to, that is 120 such
+  // pages a minute for one reader. The wallet package reads 39 of them at the most for one
+  // address (addressTxsAll).
+  const budget = (wranglerConfig().ratelimits as Array<{ name: string; simple: { limit: number; period: number } }>).find(
+    (limiter) => limiter.name === 'CHAIN_LIMIT',
+  );
+  assert.deepEqual(budget?.simple, { limit: 6000, period: 60 });
+  assert.equal(6000 / OLDER_PAGE_COST, 120);
+  assert.ok(Number.isInteger(OLDER_PAGE_COST) && OLDER_PAGE_COST > 0, 'the limiter takes whole weights above 0');
+});
+
+test('a flood of questions for older pages: 120 of them a minute reach the origin for one reader, whatever ID they ask by', async () => {
+  // The limiter here counts as Cloudflare's does, up to what wrangler.jsonc sets for chain
+  // reads: 6,000 a minute. All of what follows happens inside one minute.
+  const flooded = harness();
+  const chain = countingLimiter(6000);
+  flooded.deps.limits = { ...flooded.deps.limits, chain };
+  const handler = makeHandler(flooded.deps);
+  const key = await readerKey('chain', READER_IP);
+
+  // 6,000 questions from one reader, each for the page after an ID that is no transaction at
+  // all, about an address that need not be the asker's own. The Worker cannot tell: any 64 hex
+  // characters could be an ID. Esplora answers each with an empty list, after reading the
+  // address's whole list to look for the ID.
+  let passed = 0;
+  let refused = 0;
+  for (let n = 0; n < 6000; n += 1) {
+    const response = await handler(get(`${API.esplora}/address/${ADDRESS}/txs/chain/${n.toString(16).padStart(64, 'f')}`));
+    if (response.status === 200) {
+      passed += 1;
+    } else {
+      assert.equal(response.status, 429);
+      assert.deepEqual(await errorOf(response), { error: 'limit' });
+      refused += 1;
+    }
+  }
+  assert.deepEqual([passed, refused], [120, 5880]);
+  assert.equal(flooded.originArgs.length, 120, 'the origin was asked 120 times, not 6,000');
+  assert.equal(new Set(flooded.originArgs).size, 120);
+  assert.equal(chain.calls, 6000, 'one call to the limiter for each request');
+  assert.equal(chain.count(`${key}:older-pages`), 6000, 'a refused call adds nothing to the count');
+  assert.deepEqual(flooded.lines, [], 'asking too fast is nobody\'s fault: no line, and no address or ID kept beside one');
+
+  // The older pages are counted apart. The reader who asked for too many of them is still
+  // answered everything else: the height, coins, totals, a first page, the newest 25.
+  assert.equal(chain.count(key), 0);
+  for (const [path, upstream] of READS.filter(([, read]) => chainReadCost(read) === 1)) {
+    assert.equal((await handler(get(path))).status, 200, upstream);
+  }
+  assert.equal(chain.count(key), 6);
+  assert.equal((await handler(get(`${API.esplora}/address/${ADDRESS}/txs/chain/${TXID}`))).status, 429, 'but no older page');
+  // Another reader has counts of their own.
+  assert.equal((await handler(get(`${API.esplora}/address/${ADDRESS}/txs/chain/${TXID}`, { 'CF-Connecting-IP': '203.0.113.8' }))).status, 200);
+  assert.equal(flooded.originArgs.length, 120 + 6 + 1);
+
+  // The same flood of any other read is 6,000 requests to the origin: each of those costs the
+  // practice network one page or less, whatever is asked.
+  const plain = harness();
+  const counted = countingLimiter(6000);
+  plain.deps.limits = { ...plain.deps.limits, chain: counted };
+  const reads = makeHandler(plain.deps);
+  for (const [path] of READS.filter(([, upstream]) => chainReadCost(upstream) === 1)) {
+    for (let n = 0; n < 1000; n += 1) assert.equal((await reads(get(path))).status, 200);
+  }
+  assert.equal(plain.originArgs.length, 6000);
+  assert.equal((await reads(get(READS[0]![0]))).status, 429, 'the 6,001st is refused');
+  // And the other way about: a reader with no other reads left this minute can still ask for
+  // older pages, 120 of them.
+  assert.deepEqual([counted.count(key), counted.count(`${key}:older-pages`)], [6000, 0]);
+  let pages = 0;
+  for (let n = 0; n < 130; n += 1) {
+    if ((await reads(get(`${API.esplora}/address/${ADDRESS}/txs/chain/${n.toString(16).padStart(64, 'c')}`))).status === 200) pages += 1;
+  }
+  assert.equal(pages, 120);
+  assert.deepEqual([counted.count(key), counted.count(`${key}:older-pages`)], [6000, 6000]);
 });
 
 test('a chain read is sent with the content type the Worker picks, never the origin headers', async () => {
@@ -169,7 +312,7 @@ test('a chain read is sent with the content type the Worker picks, never the ori
 
 /** Paths that must never reach the origin. Each is given as typed; the comment says what it tries. */
 const TRICKS: string[] = [
-  // Not one of the five shapes.
+  // Not one of the seven shapes.
   API.esplora,
   `${API.esplora}/`,
   `${API.esplora}/blocks`,
@@ -181,8 +324,20 @@ const TRICKS: string[] = [
   `${API.esplora}/mempool`,
   `${API.esplora}/tx/${TXID}/hex`,
   `${API.esplora}/tx/${TXID}/status`,
-  `${API.esplora}/address/${ADDRESS}/txs/chain/${TXID}`,
+  `${API.esplora}/tx/${TXID}/chain`,
   `${API.esplora}/address/${ADDRESS}/txs/mempool`,
+  `${API.esplora}/address/${ADDRESS}/txs/mempool/${TXID}`,
+  `${API.esplora}/address/${ADDRESS}/txs/summary`,
+  `${API.esplora}/address/${ADDRESS}/txs/${TXID}`,
+  `${API.esplora}/address/${ADDRESS}/chain`,
+  `${API.esplora}/address/${ADDRESS}/chain/${TXID}`,
+  `${API.esplora}/address/${ADDRESS}/utxo/chain`,
+  `${API.esplora}/address/${ADDRESS}/utxo/chain/${TXID}`,
+  `${API.esplora}/address/${ADDRESS}/txs/chain/${TXID}/${TXID}`,
+  `${API.esplora}/address/${ADDRESS}/txs/chain/${TXID}/hex`,
+  `${API.esplora}/address/${ADDRESS}/txs/chain/chain`,
+  `${API.esplora}/address/txs/chain/${TXID}`,
+  `${API.esplora}/txs/chain/${TXID}`,
   `${API.esplora}/address/${ADDRESS}/utxo/extra`,
   `${API.esplora}/address/${ADDRESS}/${ADDRESS}`,
   `${API.esplora}/tx/${TXID}/${TXID}`,
@@ -191,6 +346,11 @@ const TRICKS: string[] = [
   `${API.esplora}/address/${ADDRESS}/`,
   `${API.esplora}/address/${ADDRESS}/utxo/`,
   `${API.esplora}/tx/${TXID}/`,
+  `${API.esplora}/address/${ADDRESS}/txs/`,
+  `${API.esplora}/address/${ADDRESS}/txs/chain/`,
+  `${API.esplora}/address/${ADDRESS}/txs/chain/${TXID}/`,
+  `${API.esplora}/address/${ADDRESS}/txs//chain`,
+  `${API.esplora}/address/${ADDRESS}/txs/chain//${TXID}`,
   `${API.esplora}//blocks/tip/height`,
   `${API.esplora}/blocks//tip/height`,
   `${API.esplora}/address//${ADDRESS}`,
@@ -205,10 +365,18 @@ const TRICKS: string[] = [
   `${API.esplora}/address/${ADDRESS}/UTXO`,
   `${API.esplora}/tx/${TXID.toUpperCase()}`,
   `${API.esplora}/TX/${TXID}`,
+  `${API.esplora}/address/${ADDRESS}/txs/Chain`,
+  `${API.esplora}/address/${ADDRESS}/TXS/chain`,
+  `${API.esplora}/address/${ADDRESS}/txs/CHAIN/${TXID}`,
+  `${API.esplora}/address/${ADDRESS}/txs/chain/${TXID.toUpperCase()}`,
   // A query string.
   `${API.esplora}/blocks/tip/height?`.concat('x=1'),
   `${API.esplora}/address/${ADDRESS}?after=${TXID}`,
   `${API.esplora}/address/${ADDRESS}/txs?x`,
+  `${API.esplora}/address/${ADDRESS}/txs?after_txid=${TXID}`,
+  `${API.esplora}/address/${ADDRESS}/txs?max_txs=100`,
+  `${API.esplora}/address/${ADDRESS}/txs/chain?max_txs=1000`,
+  `${API.esplora}/address/${ADDRESS}/txs/chain/${TXID}?max_txs=1000`,
   `${API.esplora}/tx/${TXID}?/../../bots/health`,
   // Not an address, not a transaction ID.
   `${API.esplora}/address/bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq`,
@@ -225,8 +393,17 @@ const TRICKS: string[] = [
   `${API.esplora}/tx/${TXID}0`,
   `${API.esplora}/tx/${'g'.repeat(64)}`,
   `${API.esplora}/tx/${TXID.slice(0, 62)}%61`,
-  // Text with all the looks of an address that is not one, in each of the three shapes.
-  ...LOOKALIKES.flatMap(([, text]) => ['', '/utxo', '/txs'].map((tail) => `${API.esplora}/address/${text}${tail}`)),
+  // The ID in the paging shape is held to the same pattern.
+  `${API.esplora}/address/${ADDRESS}/txs/chain/${TXID.slice(0, 63)}`,
+  `${API.esplora}/address/${ADDRESS}/txs/chain/${TXID}0`,
+  `${API.esplora}/address/${ADDRESS}/txs/chain/${'g'.repeat(64)}`,
+  `${API.esplora}/address/${ADDRESS}/txs/chain/${TXID.slice(0, 62)}%61`,
+  `${API.esplora}/address/${ADDRESS}/txs/chain/${TXID}%0a`,
+  `${API.esplora}/address/${ADDRESS}/txs/chain/x`,
+  `${API.esplora}/address/${ADDRESS}/txs/chain/${ADDRESS}`,
+  `${API.esplora}/address/${TXID}/txs/chain/${TXID}`,
+  // Text with all the looks of an address that is not one, in each of the five address shapes.
+  ...LOOKALIKES.flatMap(([, text]) => ADDRESS_TAILS.map((tail) => `${API.esplora}/address/${text}${tail}`)),
   // Dot segments, plain and percent-encoded, and encoded slashes: the ways
   // to climb out of /esplora/ and into /bots/ on the origin.
   `${API.esplora}/../bots/pot/address`,
@@ -247,6 +424,10 @@ const TRICKS: string[] = [
   `${API.esplora}/address/${ADDRESS}/%2e%2e/%2e%2e/%2e%2e/bots/health`,
   `${API.esplora}/tx/..%2f..%2fbots%2fhealth`,
   `${API.esplora}/tx/${TXID}%2f..%2f..%2f..%2fbots%2fpot%2faddress`,
+  `${API.esplora}/address/${ADDRESS}/txs/chain/../../../../bots/health`,
+  `${API.esplora}/address/${ADDRESS}/txs/chain/..%2f..%2f..%2f..%2fbots%2fhealth`,
+  `${API.esplora}/address/${ADDRESS}/txs/chain/${TXID}%2f..%2f..%2f..%2f..%2f..%2fbots%2fpot%2faddress`,
+  `${API.esplora}/address/${ADDRESS}/txs/chain/%2e%2e/%2e%2e/%2e%2e/%2e%2e/bots/health`,
   `${API.esplora}\\..\\bots\\health`,
   `${API.esplora}/..;/bots/health`,
   // The origin's own prefixes, asked for directly.
@@ -272,6 +453,8 @@ test('the path check itself, part by part', () => {
   assert.equal(esploraReadPath(['address', ADDRESS]), `/address/${ADDRESS}`);
   assert.equal(esploraReadPath(['address', ADDRESS, 'utxo']), `/address/${ADDRESS}/utxo`);
   assert.equal(esploraReadPath(['address', ADDRESS, 'txs']), `/address/${ADDRESS}/txs`);
+  assert.equal(esploraReadPath(['address', ADDRESS, 'txs', 'chain']), `/address/${ADDRESS}/txs/chain`);
+  assert.equal(esploraReadPath(['address', ADDRESS, 'txs', 'chain', TXID]), `/address/${ADDRESS}/txs/chain/${TXID}`);
   assert.equal(esploraReadPath(['tx', TXID]), `/tx/${TXID}`);
   const bad: string[][] = [
     [],
@@ -284,7 +467,31 @@ test('the path check itself, part by part', () => {
     ['address', ''],
     ['address', ADDRESS, ''],
     ['address', ADDRESS, 'utxo', ''],
-    ['address', ADDRESS, 'txs', 'chain'],
+    ['address', ADDRESS, 'txs', ''],
+    ['address', ADDRESS, 'txs', 'chain', ''],
+    ['address', ADDRESS, 'txs', 'chain', TXID, ''],
+    ['address', ADDRESS, 'txs', 'chain', TXID, TXID],
+    ['address', ADDRESS, 'txs', 'chain', TXID.toUpperCase()],
+    ['address', ADDRESS, 'txs', 'chain', TXID.slice(1)],
+    ['address', ADDRESS, 'txs', 'chain', `${TXID}\n`],
+    ['address', ADDRESS, 'txs', 'chain', ` ${TXID}`],
+    ['address', ADDRESS, 'txs', 'chain', '..'],
+    ['address', ADDRESS, 'txs', 'chain', ADDRESS],
+    ['address', ADDRESS, 'txs', 'Chain'],
+    ['address', ADDRESS, 'txs', 'mempool'],
+    ['address', ADDRESS, 'txs', TXID],
+    ['address', ADDRESS, 'utxo', 'chain'],
+    ['address', ADDRESS, 'utxo', 'chain', TXID],
+    ['address', ADDRESS, 'chain'],
+    ['address', ADDRESS, 'chain', TXID],
+    ['address', ADDRESS, 'txs', 'txs', 'chain'],
+    ['address', NEARLY, 'txs', 'chain'],
+    ['address', NEARLY, 'txs', 'chain', TXID],
+    ['address', TXID, 'txs', 'chain', TXID],
+    ['address', 'txs', 'chain', TXID],
+    ['txs', 'chain', TXID],
+    ['tx', TXID, 'chain'],
+    ['tx', TXID, 'txs', 'chain'],
     ['address', `${ADDRESS}\n`],
     ['address', ` ${ADDRESS}`],
     ['address', NEARLY],
@@ -410,7 +617,7 @@ test('text with the looks of an address that is not one gets the 404 of an unkno
     throw new Error('the origin was asked about text that is no address');
   };
   for (const [what, text] of LOOKALIKES) {
-    for (const tail of ['', '/utxo', '/txs']) {
+    for (const tail of ADDRESS_TAILS) {
       const { response, h } = await run(get(`${API.esplora}/address/${text}${tail}`), { esplora });
       assert.equal(response.status, 404, what);
       assert.deepEqual(await errorOf(response), { error: 'not_found' }, what);
@@ -418,9 +625,9 @@ test('text with the looks of an address that is not one gets the 404 of an unkno
       assert.deepEqual(h.lines, [], `${what}: no line, least of all one with a fault`);
     }
   }
-  // And each real address is asked about, in all three shapes.
+  // And each real address is asked about, in all five shapes.
   for (const [what, address] of ADDRESSES) {
-    for (const tail of ['', '/utxo', '/txs']) {
+    for (const tail of ADDRESS_TAILS) {
       const { response, h } = await run(get(`${API.esplora}/address/${address}${tail}`));
       assert.equal(response.status, 200, what);
       assert.deepEqual(h.originArgs, [`/address/${address}${tail}`], what);
@@ -922,6 +1129,8 @@ test('each limiter is asked with a hash of the reader, never the address itself'
     for (const [other, limiter] of Object.entries(h.limiters)) {
       assert.equal(limiter.keys.length, other === name ? 1 : 0, `${name}: only its own limiter is asked`);
     }
+    assert.deepEqual(h.limiters[name].costs, [1], `${name}: one request counts as one`);
+    assert.deepEqual(h.limiters[name].asked.map((options) => Object.keys(options)), [['key']], `${name}: the limiter is handed the key and nothing else`);
     const key = h.limiters[name].keys[0]!;
     assert.match(key, /^[0-9a-f]{24}$/);
     assert.ok(!key.includes(READER_IP));
@@ -1056,10 +1265,16 @@ test('any other path under the Esplora prefix writes no line either: its URL can
     // What the wallet's own Esplora client can ask for and the Worker does not carry.
     `${API.esplora}/tx/${TXID}/hex`,
     `${API.esplora}/fee-estimates`,
-    // The next page of an address's transactions, and other shapes Esplora has.
-    `${API.esplora}/address/${ADDRESS}/txs/chain/${TXID}`,
-    `${API.esplora}/address/${ADDRESS}/txs/chain`,
+    // Other shapes Esplora has, and the paging shapes spelled a little wrong.
     `${API.esplora}/address/${ADDRESS}/txs/mempool`,
+    `${API.esplora}/address/${ADDRESS}/txs/chain/`,
+    `${API.esplora}/address/${ADDRESS}/txs/chain/${TXID}/`,
+    `${API.esplora}/address/${ADDRESS}/txs/chain/${TXID.toUpperCase()}`,
+    `${API.esplora}/address/${ADDRESS}/txs/chain/${TXID.slice(1)}`,
+    `${API.esplora}/address/${ADDRESS}/txs/chain?max_txs=100`,
+    `${API.esplora}/address/${ADDRESS}/txs/chain/${TXID}?x=1`,
+    `${API.esplora}/address/${NEARLY}/txs/chain`,
+    `${API.esplora}/address/${NEARLY}/txs/chain/${TXID}`,
     `${API.esplora}/tx/${TXID}/status`,
     `${API.esplora}/scripthash/${TXID}/utxo`,
     // A stray slash, a query string, capitals.

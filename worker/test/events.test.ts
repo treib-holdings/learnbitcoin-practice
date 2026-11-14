@@ -111,20 +111,77 @@ test('the headers hold the reader address twice, and are left out when there is 
   assert.deepEqual(eventHeaders({ ip: null, userAgent: null }), { 'Content-Type': 'application/json' });
 });
 
-test('an event the service did not take is reported, for the log only', async () => {
-  const dropped = fakeFetch(() => new Response('ok', { status: 202, headers: { 'x-plausible-dropped': '1' } }));
-  assert.deepEqual(await forward(dropped, false)({ name: 'pageview', path: '/' }, META), {
-    ok: false,
-    upstream: 202,
-    fault: 'events_down',
-  });
-  for (const status of [200, 301, 400, 402, 429, 500]) {
-    const result = await forward(fakeFetch(() => reply(status, 'no')), false)({ name: 'pageview', path: '/' }, META);
-    assert.deepEqual(result, { ok: false, upstream: status, fault: 'events_down' }, String(status));
+test('an event the service accepts and then drops is taken: a 202 is a 202, and the header that marks a drop is not looked at', async () => {
+  // Plausible answers 202 either way, and marks an answer with the number of events it dropped.
+  const answers: Array<[what: string, headers: Record<string, string>]> = [
+    ['counted', {}],
+    ['dropped', { 'x-plausible-dropped': '1' }],
+    ['dropped, the header in capitals', { 'X-Plausible-Dropped': '1' }],
+    ['more than one dropped', { 'x-plausible-dropped': '3' }],
+    ['the header with some other value', { 'x-plausible-dropped': 'true' }],
+  ];
+  for (const [what, headers] of answers) {
+    const fetch = fakeFetch(() => new Response('ok', { status: 202, headers }));
+    const result = await forward(fetch, false)({ name: 'pageview', path: '/' }, META);
+    assert.deepEqual(result, { ok: true, upstream: 202, fault: null }, what);
+    assert.equal(fetch.calls.length, 1, what);
+  }
+
+  // What gets an event dropped is the visitor's to choose: a user agent the service takes for a
+  // robot's, sent on as it came. Such a visitor must not be able to write faults into the log.
+  for (const userAgent of ['curl/8.7.1', 'Googlebot/2.1 (+http://www.google.com/bot.html)', 'HeadlessChrome', '']) {
+    const robot = fakeFetch((call) =>
+      new Response('ok', { status: 202, headers: /Mozilla/.test(call.headers['user-agent'] ?? '') ? {} : { 'x-plausible-dropped': '1' } }),
+    );
+    const result = await forward(robot, true)({ name: 'Faucet', path: '/wallet/receive', value: 'ok' }, { ip: READER_IP, userAgent });
+    assert.deepEqual(result, { ok: true, upstream: 202, fault: null }, userAgent);
+    assert.equal(robot.calls[0]?.headers['user-agent'], userAgent === '' ? undefined : userAgent);
   }
 });
 
-test('forwarding never throws', async () => {
+test('the header says that an event was dropped, never why: a domain the service does not know reads like a counted event', async () => {
+  // Read from the service's source, not seen on the wire: the same answer, a 202 with the header,
+  // goes to a robot's event and to every event sent under a domain that is no site of the
+  // service (and to those of a site over its rate, or one whose plan has run out). The first is
+  // the service sorting. The second is a mistake in PLAUSIBLE_DOMAIN that loses every event.
+  // Nothing in the answer tells them apart, so nothing in the result does: no fault, and a log
+  // line like that of a counted event. This test is here so that the limit is known. What shows
+  // a wrong domain is the service's own dashboard (wrangler.jsonc, at the setting).
+  const MISSPELLED = 'practise.learnbitcoin.com';
+  const service = fakeFetch((call) => {
+    const sent = JSON.parse(call.init.body as string) as { domain: string };
+    const known = sent.domain === DOMAIN;
+    const robot = !/Mozilla/.test(call.headers['user-agent'] ?? '');
+    return new Response('ok', { status: 202, headers: known && !robot ? {} : { 'x-plausible-dropped': '1' } });
+  });
+  const event = { name: 'pageview', path: '/' } as const;
+  const counted = await forward(service, false)(event, META);
+  const robot = await forward(service, false)(event, { ip: READER_IP, userAgent: 'curl/8.7.1' });
+  const wrongDomain = await forward(service, false, MISSPELLED)(event, META);
+  assert.deepEqual(counted, { ok: true, upstream: 202, fault: null });
+  assert.deepEqual(robot, counted, 'a robot: dropped, and no fault');
+  assert.deepEqual(wrongDomain, counted, 'a domain the service does not know: every event dropped, and it reads the same');
+  // The domain goes on as it was set: the Worker has no list of the service's sites to hold it against.
+  assert.deepEqual(service.calls.map((call) => (JSON.parse(call.init.body as string) as { domain: string }).domain), [DOMAIN, DOMAIN, MISSPELLED]);
+});
+
+test('an event the service refuses is a fault, for the log only', async () => {
+  // Any status but 202: the service cannot read the request (400), wants something else first
+  // (a redirect, a payment, fewer requests) or is down. The header changes nothing about that.
+  // A domain the service does not know is not among these: it is a 202 (the test above).
+  for (const status of [200, 201, 301, 400, 402, 404, 429, 500, 502, 503]) {
+    const result = await forward(fakeFetch(() => reply(status, 'no')), false)({ name: 'pageview', path: '/' }, META);
+    assert.deepEqual(result, { ok: false, upstream: status, fault: 'events_down' }, String(status));
+    const marked = fakeFetch(() => new Response('no', { status, headers: { 'x-plausible-dropped': '1' } }));
+    assert.deepEqual(
+      await forward(marked, false)({ name: 'pageview', path: '/' }, META),
+      { ok: false, upstream: status, fault: 'events_down' },
+      `${status}, marked as dropped`,
+    );
+  }
+});
+
+test('forwarding never throws: a fetch that fails and one that takes too long are faults', async () => {
   const thrown = fakeFetch(() => {
     throw new TypeError('fetch failed');
   });

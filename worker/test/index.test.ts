@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import { afterEach, beforeEach, test } from 'node:test';
 import { API } from '@learnbitcoin/practice-contract';
 import type { LogLine } from '../src/deps.ts';
+import { OLDER_PAGE_COST } from '../src/handler.ts';
 import { FIXED_HEADERS } from '../src/headers.ts';
 import worker from '../src/index.ts';
 import { ADDRESS, APP, POT_ADDRESS, READER_IP, TXID, fakeFetch, fakeLimiter, post, reply, wranglerConfig } from './fakes.ts';
@@ -226,6 +227,42 @@ test('a chain read goes to the configured origin with the Access token and the p
   assert.deepEqual(logged, [], 'a chain read that went well writes nothing to the log');
 });
 
+test('the older pages of an address go to the origin as chain reads, on the chain limiter, and write nothing; the page asked for by an ID is counted apart, as 50', async () => {
+  outside = () => reply(200, []);
+  const { env, limiters } = bindings();
+  for (const tail of ['/txs/chain', `/txs/chain/${TXID}`]) {
+    const response = await send(get(`${API.esplora}/address/${ADDRESS}${tail}`), env);
+    assert.equal(response.status, 200, tail);
+    assert.equal(await response.text(), '[]', tail);
+    assert.equal(response.headers.get('Content-Type'), 'application/json; charset=utf-8');
+    assert.equal(asked.at(-1)?.url, `${ORIGIN}/esplora/address/${ADDRESS}${tail}`);
+    assert.equal(asked.at(-1)?.init.method, 'GET');
+  }
+  assert.equal(asked.length, 2);
+  assert.equal(limiters.CHAIN_LIMIT.keys.length, 2);
+  // The binding itself is told how to count each read. The newest 25: one read, under the
+  // reader's key and nothing else. The 25 after a given ID: 50, as the weight ("delta") of the
+  // call, under a second key of the same reader, so in a count of their own.
+  const reader = limiters.CHAIN_LIMIT.keys[0]!;
+  assert.match(reader, /^[0-9a-f]{24}$/);
+  assert.deepEqual(limiters.CHAIN_LIMIT.costs, [1, OLDER_PAGE_COST]);
+  assert.deepEqual(limiters.CHAIN_LIMIT.asked, [{ key: reader }, { key: `${reader}:older-pages`, delta: 50 }]);
+  assert.equal(OLDER_PAGE_COST, 50);
+  assert.ok(!JSON.stringify(limiters.CHAIN_LIMIT.asked).includes(READER_IP));
+  for (const name of ['BROADCAST_LIMIT', 'FAUCET_LIMIT', 'POT_LIMIT', 'EVENTS_LIMIT'] as const) assert.equal(limiters[name].keys.length, 0, name);
+  assert.deepEqual(logged, [], 'neither wrote a line');
+
+  // The origin is down: the reader is told "unavailable", and the one line written names no address and no ID.
+  outside = () => reply(502, '<html>Bad gateway</html>', 'text/html');
+  const failed = await send(get(`${API.esplora}/address/${ADDRESS}/txs/chain/${TXID}`), env);
+  assert.equal(failed.status, 502);
+  assert.deepEqual(
+    logged.map(({ level, line }) => ({ level, line: { ...(line as LogLine), ms: 0 } })),
+    [{ level: 'error', line: { route: 'esplora_read', status: 502, upstream: 502, ms: 0, fault: 'origin_down' } }],
+  );
+  assert.ok(!JSON.stringify(logged).includes(ADDRESS) && !JSON.stringify(logged).includes(TXID));
+});
+
 test('a chain read writes to the log only when it ends in a fault', async () => {
   // Workers Logs can keep a request's URL beside each line written in it,
   // and the URL of a chain read holds an address or a transaction ID.
@@ -322,7 +359,9 @@ test('a path under the Esplora prefix that the Worker does not carry writes noth
   const { env } = bindings();
   const paths = [
     `${API.esplora}/tx/${TXID}/hex`,
-    `${API.esplora}/address/${ADDRESS}/txs/chain/${TXID}`,
+    `${API.esplora}/address/${ADDRESS}/txs/mempool`,
+    `${API.esplora}/address/${ADDRESS}/txs/chain/${TXID}/`,
+    `${API.esplora}/address/${ADDRESS}/txs/chain?max_txs=100`,
     `${API.esplora}/address/${ADDRESS}/`,
     `${API.esplora}/address/${ADDRESS}?x=1`,
     `${API.esplora}/address/${ADDRESS.toUpperCase()}`,
@@ -532,6 +571,56 @@ test('with a domain set, events go on through waitUntil, counted under the addre
     await send(post(API.event, event, headers), other.env);
     assert.equal((JSON.parse(asked.at(-1)?.init.body as string) as { name: string }).name, 'Passkey: ok', setting);
   }
+});
+
+test('an event the events service drops writes a plain line, whatever it was dropped for; one it refuses, or never answers, writes an error line', async () => {
+  const event = { name: 'pageview', path: '/' };
+  // The user agent is the visitor's to choose, and it is one of the things that get an event dropped.
+  const robot = { 'User-Agent': 'curl/8.7.1' };
+  const { env } = bindings({ PLAUSIBLE_DOMAIN: 'counted.example' });
+
+  outside = () => new Response('ok', { status: 202, headers: { 'x-plausible-dropped': '1' } });
+  for (let n = 0; n < 3; n += 1) assert.equal((await send(post(API.event, event, robot), env)).status, 202);
+  assert.equal(asked.length, 3);
+  assert.equal(asked[0]?.headers['user-agent'], 'curl/8.7.1');
+  assert.deepEqual(
+    logged.map(({ level, line }) => ({ level, line: { ...(line as LogLine), ms: 0 } })),
+    [0, 1, 2].map(() => ({ level: 'log', line: { route: 'event', status: 202, upstream: 202, ms: 0, fault: null } })),
+    'three dropped events, and not one error line',
+  );
+
+  // The service gives the same answer to every event sent under a domain it does not know (so
+  // its source has it). A misspelled PLAUSIBLE_DOMAIN therefore writes the same plain lines as
+  // a good one, while every event is thrown away: the log cannot show that mistake. What shows
+  // it is the service's own dashboard (wrangler.jsonc says so at the setting).
+  logged = [];
+  const browser = { 'User-Agent': 'Mozilla/5.0 (a browser)' };
+  const known = (call: FetchCall): boolean => (JSON.parse(call.init.body as string) as { domain: string }).domain === 'counted.example';
+  outside = (call) => new Response('ok', { status: 202, headers: known(call) ? {} : { 'x-plausible-dropped': '1' } });
+  assert.equal((await send(post(API.event, event, browser), env)).status, 202);
+  assert.equal((await send(post(API.event, event, browser), bindings({ PLAUSIBLE_DOMAIN: 'countd.example' }).env)).status, 202);
+  assert.deepEqual(asked.slice(-2).map(known), [true, false], 'the second went out under the misspelled name');
+  assert.deepEqual(
+    logged.map(({ level, line }) => ({ level, line: { ...(line as LogLine), ms: 0 } })),
+    [0, 1].map(() => ({ level: 'log', line: { route: 'event', status: 202, upstream: 202, ms: 0, fault: null } })),
+    'a counted event and one lost to a wrong domain: the same line',
+  );
+
+  // A real failure still tells the owner: the service refuses the event, or cannot be reached.
+  logged = [];
+  outside = () => reply(500, 'no');
+  assert.equal((await send(post(API.event, event, robot), env)).status, 202);
+  outside = () => {
+    throw new TypeError('fetch failed');
+  };
+  assert.equal((await send(post(API.event, event, robot), env)).status, 202);
+  assert.deepEqual(
+    logged.map(({ level, line }) => ({ level, line: { ...(line as LogLine), ms: 0 } })),
+    [
+      { level: 'error', line: { route: 'event', status: 202, upstream: 500, ms: 0, fault: 'events_down' } },
+      { level: 'error', line: { route: 'event', status: 202, upstream: null, ms: 0, fault: 'events_down' } },
+    ],
+  );
 });
 
 test('a line with a fault is logged as an error, any other as a plain line; each is the five fields', async () => {

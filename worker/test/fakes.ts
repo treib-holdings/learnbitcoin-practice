@@ -156,16 +156,76 @@ export function reply(status: number, body: string | object | null, type?: strin
   return new Response(text, { status, headers: body === null ? {} : { 'Content-Type': contentType } });
 }
 
-/** A rate limiter that says `success` and remembers the keys it was asked about. */
-export function fakeLimiter(success = true): Limiter & { keys: string[] } {
+/**
+ * What one call to a limiter counts for: its `delta`, or 1 when it has
+ * none. Cloudflare's limiter takes the weight of a call under that name
+ * (deps.ts's Limiter type names the key alone so far). It throws for a
+ * field it does not know and for a weight that is not a whole number above
+ * 0, and so does this, so that a call the real one would refuse fails here.
+ */
+export function costOf(options: { key: string }): number {
+  for (const name of Object.keys(options)) assert.ok(name === 'key' || name === 'delta', `bad rate limit options: [${name}]`);
+  assert.equal(typeof options.key, 'string');
+  const delta = (options as { delta?: unknown }).delta;
+  if (delta === undefined) {
+    assert.ok(!('delta' in options), 'a call that counts as one names no delta at all');
+    return 1;
+  }
+  assert.ok(typeof delta === 'number' && Number.isInteger(delta) && delta > 0, `delta must be a whole number above 0: ${String(delta)}`);
+  return delta;
+}
+
+/** A rate limiter for the tests, and what it remembers of the calls made to it, in order. */
+export type FakeLimiter = Limiter & {
+  /** The key of each call. */
+  keys: string[];
+  /** What each call counted for. */
+  costs: number[];
+  /** Each call's options, whole, as they were handed over. */
+  asked: Array<Record<string, unknown>>;
+};
+
+/** A rate limiter that says `success` and remembers what it was asked. */
+export function fakeLimiter(success = true): FakeLimiter {
   const keys: string[] = [];
+  const costs: number[] = [];
+  const asked: Array<Record<string, unknown>> = [];
   return {
     keys,
-    async limit({ key }) {
-      keys.push(key);
+    costs,
+    asked,
+    async limit(options) {
+      costs.push(costOf(options));
+      keys.push(options.key);
+      asked.push({ ...options });
       return { success };
     },
   };
+}
+
+/**
+ * A rate limiter that counts, by the rule Cloudflare's own follows (its
+ * documentation under "Weighted requests", and the stand-in that Wrangler
+ * runs locally): a call is let through while the count for its key is
+ * below the limit, and then adds its weight to the count, even when that
+ * takes the count past the limit. A call that is refused adds nothing. One
+ * window only: the count never starts again, as it would after a minute.
+ */
+export function countingLimiter(limit: number): Limiter & { count(key: string): number; calls: number } {
+  const counts = new Map<string, number>();
+  const limiter = {
+    calls: 0,
+    count: (key: string): number => counts.get(key) ?? 0,
+    async limit(options: { key: string }): Promise<{ success: boolean }> {
+      limiter.calls += 1;
+      const cost = costOf(options);
+      const count = counts.get(options.key) ?? 0;
+      if (count >= limit) return { success: false };
+      counts.set(options.key, count + cost);
+      return { success: true };
+    },
+  };
+  return limiter;
 }
 
 function textBody(text: string, type: OriginBody['type']): OriginBody {
@@ -184,7 +244,7 @@ export interface Harness {
   originArgs: string[];
   botCalls: Array<{ token: string; address: string }>;
   forwarded: Array<{ event: EventBody; meta: EventMeta }>;
-  limiters: Record<keyof Limits, Limiter & { keys: string[] }>;
+  limiters: Record<keyof Limits, FakeLimiter>;
 }
 
 export interface HarnessOptions {
@@ -209,10 +269,12 @@ export function harness(options: HarnessOptions = {}): Harness {
   const forwarded: Harness['forwarded'] = [];
   const over = options.over ?? [];
 
-  const limiter = (name: keyof Limits): Limiter & { keys: string[] } => {
+  const limiter = (name: keyof Limits): FakeLimiter => {
     const inner = fakeLimiter(!over.includes(name));
     return {
       keys: inner.keys,
+      costs: inner.costs,
+      asked: inner.asked,
       limit(args) {
         trace.push(`limit:${name}`);
         return inner.limit(args);

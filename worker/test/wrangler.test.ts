@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { configFromEnv } from '../src/config.ts';
 import type { ConfigVars } from '../src/config.ts';
-import { readFile, stripJsonComments, wranglerConfig } from './fakes.ts';
+import { readFile, readJson, stripJsonComments, wranglerConfig } from './fakes.ts';
 
 const config = wranglerConfig();
 const source = readFile('../wrangler.jsonc');
@@ -50,15 +50,38 @@ test('one door: the custom domain, with no workers.dev copy and no preview URLs'
   assert.deepEqual(config.routes, [{ pattern: 'practice.learnbitcoin.com', custom_domain: true }]);
 });
 
-test('Workers Logs are on, invocation logs are off, and traces are off by name', () => {
+test('Workers Logs are on, invocation logs are off, query strings are cut from stored URLs, and traces are off by name', () => {
   // A trace records the full URL of a request and of each fetch made for it,
   // so the address or transaction ID. Left unsaid, traces are off only for
   // as long as that stays Cloudflare's default.
+  //
+  // redact_query_string: no route takes a query string, so whatever follows
+  // a question mark was put there by a visitor or picked up by a link on
+  // its way, and is not kept. Left unsaid, it is.
   assert.deepEqual(config.observability, {
     enabled: true,
+    redact_query_string: true,
     logs: { enabled: true, invocation_logs: false },
     traces: { enabled: false },
   });
+});
+
+test("the setting that cuts query strings is one this version of wrangler knows, by that name and at that place", () => {
+  // The config's own schema (the file "$schema" points at) describes the
+  // setting. A key that wrangler does not know would be an error at deploy
+  // time at best, and at worst a setting that silently does nothing.
+  assert.equal(config.$schema, './node_modules/wrangler/config-schema.json');
+  const schema = readJson('../node_modules/wrangler/config-schema.json') as {
+    definitions: { Observability: { properties: Record<string, { type?: string; description?: string; default?: unknown }> } };
+  };
+  const setting = schema.definitions.Observability.properties.redact_query_string;
+  assert.ok(setting, 'observability.redact_query_string is in the schema');
+  assert.equal(setting.type, 'boolean');
+  assert.equal(setting.default, false, 'off unless asked for');
+  assert.equal(setting.description, 'Whether query strings are removed from request URLs in logs and traces.');
+  // Every key set under "observability" is one the schema has there.
+  const known = Object.keys(schema.definitions.Observability.properties);
+  for (const key of Object.keys(config.observability as object)) assert.ok(known.includes(key), key);
 });
 
 test('five rate limiters with the per-minute limits of the spec and namespaces of their own', () => {

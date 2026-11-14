@@ -31,6 +31,15 @@
   // location. They are sized so that a classroom behind one address is never
   // refused. The faucet's real rules (one payment per address per day, a cap
   // per minute) live in the bots, which see every request.
+  //
+  // One kind of chain read is counted apart from the others, by the same
+  // limiter: a page of an address's older transactions that is asked for by
+  // an ID. What that read costs the practice network grows with the length
+  // of the address's list. The Worker has each of them counted as 50 (the
+  // weight it gives the call) under a second key of the reader's, so one
+  // reader gets 120 of them a minute beside the 6,000 other chain reads
+  // (src/handler.ts, OLDER_PAGE_COST).
+  //
   // namespace_id is a number we pick; it only has to be unique in the account.
   "ratelimits": [
     { "name": "CHAIN_LIMIT", "namespace_id": "2620", "simple": { "limit": 6000, "period": 60 } },
@@ -53,6 +62,11 @@
     "ELECTRUM_HOST": "practice-electrum.learnbitcoin.com",
     "ELECTRUM_PORT": "50002",
     // The site events are counted under. Empty means the app sends none.
+    // It has to be spelled as the events service knows the site. For a name
+    // it does not know, the service answers each event as it answers one
+    // it counted and throws the event away, so the Worker's log shows
+    // nothing wrong (src/events.ts). After setting this, send one event
+    // from a real browser and look for it on the service's own dashboard.
     "PLAUSIBLE_DOMAIN": "",
     // "on" sends an event's value as a property; "off" folds it into the
     // event's name ("Passkey: ok"), for a plan without custom properties.
@@ -89,6 +103,17 @@
   // every fetch made for it, and "off unless asked for" is only today's
   // default.
   //
+  // Query strings are cut from the URLs that logs and traces keep
+  // (redact_query_string; left out, they are kept). No path of this Worker
+  // takes a query string, so the app never sends one. But a link can pick
+  // one up on its way (a tracking tag added by a mail program or another
+  // site), and a visitor can type anything after a question mark: an
+  // address, a transaction ID, an email address. None of it is any use to
+  // the owner, so none of it is kept. This covers what follows the
+  // question mark and nothing before it: the path of a chain read still
+  // holds its address or transaction ID, which is what the next paragraph
+  // is about.
+  //
   // That may not be all. Workers Logs can store the Worker's own line
   // together with the request it was written in: a stored line has fields
   // for that ($metadata.url, $metadata.trigger, $workers.event.request),
@@ -113,8 +138,11 @@
   // and so does the line for an unknown path outside /api/esplora/ into
   // which a visitor typed one. If the IP address is there, every line says
   // who asked. Either has to change, or be said on the app's About screen.
+  // Then ask once for /api/nothing?probe=1 and open that line too: a URL
+  // stored beside it should end before the question mark.
   "observability": {
     "enabled": true,
+    "redact_query_string": true,
     "logs": { "enabled": true, "invocation_logs": false },
     "traces": { "enabled": false }
   }

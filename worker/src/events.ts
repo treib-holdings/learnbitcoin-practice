@@ -58,9 +58,39 @@ export function makeForwardEvent(options: ForwardEventOptions): ForwardEvent {
         signal: AbortSignal.timeout(TIMEOUT_MS),
       });
       await drop(response);
-      // Plausible answers 202 for an event it took. It marks one it threw
-      // away (a robot's, by its reckoning) with a header.
-      const taken = response.status === 202 && response.headers.get('x-plausible-dropped') !== '1';
+      // Plausible answers 202 for every event it accepts, and it accepts
+      // more than it counts. An event it throws away is answered 202 as
+      // well, marked with a header: x-plausible-dropped, which holds the
+      // number of events it dropped. The header says that an event was
+      // dropped and never why, and by the service's source the reasons
+      // are many. Its bot filter took the visitor for a robot (by the
+      // user agent, or by an address that belongs to a data centre). The
+      // site has a rule against the visitor's address, country or page.
+      // The site is sent more events than it is allowed, or is no longer
+      // counted because its plan has run out. Or the domain named is no
+      // site the service knows.
+      //
+      // The 202 is taken as it stands, and the header is not looked at.
+      // Most of those reasons are the service doing its own sorting, and
+      // the first is the visitor's to choose. Were a dropped event a
+      // fault, anyone could fill the owner's log with error lines just by
+      // sending events under a robot's user agent, and the real faults
+      // would be lost among them.
+      //
+      // The price: two things the owner would want to know look like a
+      // counted event here. With a domain the service does not know
+      // (PLAUSIBLE_DOMAIN misspelled, or the site not added there yet),
+      // every event is dropped and every one is logged as a 202 with no
+      // fault. So is every event of a site the service has stopped
+      // counting. The log cannot show either. The place to see them is
+      // the service's own dashboard, where an event sent from a real
+      // browser has to turn up (wrangler.jsonc says so at the setting).
+      //
+      // A fault is what the Worker can see and the owner has to fix: any
+      // other status (the service refuses the request, or is down), and
+      // no answer at all, which is the catch below (the service could not
+      // be reached, or took longer than the time limit).
+      const taken = response.status === 202;
       return { ok: taken, upstream: response.status, fault: taken ? null : 'events_down' };
     } catch {
       return { ok: false, upstream: null, fault: 'events_down' };

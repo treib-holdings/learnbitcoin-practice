@@ -153,14 +153,25 @@ export type ForwardEvent = (
 
 // -- limits -------------------------------------------------------------------
 
-/** The shape of Cloudflare's rate limiting binding, and of the stand-ins used in tests. */
+/**
+ * The shape of Cloudflare's rate limiting binding, and of the stand-ins used in tests.
+ *
+ * A call counts as one request against `key`, or as `delta` requests when it
+ * names one (a whole number above 0: Cloudflare's "weighted requests").
+ * `success` is false once the count for the key has reached the limit, and
+ * a call that is refused adds nothing to the count.
+ */
 export interface Limiter {
-  limit(options: { key: string }): Promise<{ success: boolean }>;
+  limit(options: { key: string; delta?: number }): Promise<{ success: boolean }>;
 }
 
 /** One limiter per kind of traffic. They are brakes on a flood; the faucet's real rules live in the bots. */
 export interface Limits {
-  /** Chain reads (GET /api/esplora/...). */
+  /**
+   * Chain reads (GET /api/esplora/...). A page of an address's older
+   * transactions asked for by an ID is counted apart, under a second key of
+   * the reader's, and as 50 (handler.ts, OLDER_PAGE_COST): 120 a minute.
+   */
   chain: Limiter;
   broadcast: Limiter;
   faucet: Limiter;
