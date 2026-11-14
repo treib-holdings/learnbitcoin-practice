@@ -1,0 +1,96 @@
+// The practice wallet's Worker: where it runs, what it may reach, what it is told.
+//
+// Nothing in this file is secret, and nothing in it names an account. The four
+// secrets are listed by name only; their values are set on the deployed Worker
+// (the first deploy carries them with: wrangler deploy --secrets-file <a file
+// kept outside this repository>).
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "learnbitcoin-practice",
+  "main": "./src/index.ts",
+  "compatibility_date": "2026-11-14",
+
+  // One door only. A wallet lives on one origin (its keys are kept per origin,
+  // and a passkey belongs to one host name), so there is no workers.dev copy
+  // and no preview or version URL.
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [{ "pattern": "practice.learnbitcoin.com", "custom_domain": true }],
+
+  // The built app. A path with no file gets index.html, so the app's own
+  // router can answer it. The Worker runs for /api/ and /p/ only, and it
+  // answers every path there itself (a JSON 404 for the ones it does not
+  // know), so it never needs to read a built file: no assets binding.
+  "assets": {
+    "directory": "../app/dist",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*", "/p/*"]
+  },
+
+  // Brakes on a flood, counted per reader and per minute at each Cloudflare
+  // location. They are sized so that a classroom behind one address is never
+  // refused. The faucet's real rules (one payment per address per day, a cap
+  // per minute) live in the bots, which see every request.
+  // namespace_id is a number we pick; it only has to be unique in the account.
+  "ratelimits": [
+    { "name": "CHAIN_LIMIT", "namespace_id": "2620", "simple": { "limit": 6000, "period": 60 } },
+    { "name": "BROADCAST_LIMIT", "namespace_id": "2621", "simple": { "limit": 120, "period": 60 } },
+    { "name": "FAUCET_LIMIT", "namespace_id": "2622", "simple": { "limit": 40, "period": 60 } },
+    { "name": "POT_LIMIT", "namespace_id": "2623", "simple": { "limit": 60, "period": 60 } },
+    { "name": "EVENTS_LIMIT", "namespace_id": "2624", "simple": { "limit": 600, "period": 60 } }
+  ],
+
+  // Public settings. Every value is text; the Worker turns the three numbers
+  // into numbers for GET /api/config.
+  "vars": {
+    // The practice network's origin: Esplora under /esplora/, the bots under /bots/.
+    "ORIGIN_URL": "https://practice-origin.learnbitcoin.com",
+    // The faucet's bot check. An empty site key means the faucet is closed.
+    "TURNSTILE_SITE_KEY": "",
+    // The host a bot-check token must have been made on.
+    "TURNSTILE_HOSTNAME": "practice.learnbitcoin.com",
+    "EXPLORER_URL": "https://practice-explorer.learnbitcoin.com",
+    "ELECTRUM_HOST": "practice-electrum.learnbitcoin.com",
+    "ELECTRUM_PORT": "50002",
+    // The site events are counted under. Empty means the app sends none.
+    "PLAUSIBLE_DOMAIN": "",
+    // "on" sends an event's value as a property; "off" folds it into the
+    // event's name ("Passkey: ok"), for a plan without custom properties.
+    "EVENT_PROPS": "off",
+    "SITE_URL": "https://www.learnbitcoin.com",
+    "SOURCE_URL": "https://github.com/treib-holdings/learnbitcoin-practice",
+    // The one host where passkeys are offered.
+    "PASSKEY_HOST": "practice.learnbitcoin.com",
+    "FAUCET_SATS": "100000",
+    "BLOCK_SECONDS": "30"
+  },
+
+  // A deploy stops while one of these is not set on the Worker.
+  //   TURNSTILE_SECRET_KEY                    the bot check's secret
+  //   ACCESS_CLIENT_ID, ACCESS_CLIENT_SECRET  the service token that lets this Worker through to the origin
+  //   BOTS_API_TOKEN                          the bearer token the faucet and the pot ask for
+  "secrets": {
+    "required": ["TURNSTILE_SECRET_KEY", "ACCESS_CLIENT_ID", "ACCESS_CLIENT_SECRET", "BOTS_API_TOKEN"]
+  },
+
+  // What Cloudflare keeps about a request. The Worker writes one line per
+  // request itself: a route name, two status codes, a duration and a fault
+  // code. Cloudflare's own record of each request (the invocation log: the
+  // request, the answer and their details) is off, because here a URL carries
+  // a wallet address or a transaction ID. Traces are off by name for the same
+  // reason: a trace records the full URL of the request and of every fetch
+  // made for it, and "off unless asked for" is only today's default.
+  //
+  // What this does not settle: Workers Logs may store the Worker's own line
+  // together with the URL of the request it was written in. A stored line has
+  // fields for one ($workers.event.request.url and $metadata.trigger), and it
+  // is not known here whether invocation_logs empties them. So after the
+  // first deploy, open one stored line of a chain read and look. If the URL
+  // is there, addresses are being kept for as long as the lines are, and
+  // that has to change or be said on the app's About screen.
+  "observability": {
+    "enabled": true,
+    "logs": { "enabled": true, "invocation_logs": false },
+    "traces": { "enabled": false }
+  }
+}

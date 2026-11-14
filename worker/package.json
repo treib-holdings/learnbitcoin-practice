@@ -1,0 +1,24 @@
+{
+  "name": "@learnbitcoin/practice-worker",
+  "version": "0.1.0",
+  "private": true,
+  "description": "The practice wallet's Cloudflare Worker: it answers /api/ and /p/, and the static app is served beside it.",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/lib.ts"
+  },
+  "scripts": {
+    "test": "node --test test/",
+    "check": "tsc --noEmit -p .",
+    "types": "wrangler types --include-runtime=false --strict-vars=false"
+  },
+  "dependencies": {
+    "@learnbitcoin/practice-contract": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "typescript": "6.0.3",
+    "wrangler": "4.161.0"
+  }
+}

@@ -1,0 +1,311 @@
+// Stand-ins for everything the Worker's parts are given from outside, so the
+// tests run with no network, no Cloudflare and no clock of their own.
+// (Not a test file itself: it only exports.)
+
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { after } from 'node:test';
+import type { AppConfig, EventBody, FaucetPayment } from '@learnbitcoin/practice-contract';
+import type {
+  BotCheckResult,
+  Deps,
+  EventMeta,
+  FetchLike,
+  Limiter,
+  Limits,
+  LogLine,
+  Origin,
+  OriginAnswer,
+  OriginBody,
+} from '../src/deps.ts';
+
+/** Where the app lives, as the handler sees it in a request's URL. */
+export const APP = 'https://practice.learnbitcoin.com';
+
+// Real values from the recorded samples (e2e/fixtures/origin-samples.json).
+export const ADDRESS = 'bcrt1qdpwsxpwkt6dc0c0l9vq3xgaz6s0jsjjnnk6ppw';
+export const TXID = '2bfbd6c40dbd2ed74b3b180fb96a83a0c0c97cfc4b5d4fe788b99347127a2287';
+export const POT_ADDRESS = 'bcrt1qxagpc0v6mxg2dq230xmphn8nuzaasw8uk6v5l9';
+
+// Reader addresses from the ranges set aside for documentation: nobody's.
+export const READER_IP = '203.0.113.7';
+export const READER_IP6 = '2001:db8:aa:bb:1:2:3:4';
+
+export const CONFIG: AppConfig = {
+  turnstileSiteKey: 'site-key',
+  explorerUrl: 'https://practice-explorer.learnbitcoin.com',
+  electrumHost: 'practice-electrum.learnbitcoin.com',
+  electrumPort: 50002,
+  siteUrl: 'https://www.learnbitcoin.com',
+  sourceUrl: 'https://example.com/source',
+  passkeyHost: 'practice.learnbitcoin.com',
+  faucetSats: 100000,
+  blockSeconds: 30,
+  events: true,
+};
+
+/** Reads a JSON file that sits beside the tests, or anywhere else in the repository. */
+export function readJson(relative: string): unknown {
+  return JSON.parse(readFileSync(new URL(relative, import.meta.url), 'utf8'));
+}
+
+/** The text of a file, by its path from this folder. */
+export function readFile(relative: string): string {
+  return readFileSync(new URL(relative, import.meta.url), 'utf8');
+}
+
+/** JSON with comments (wrangler.jsonc), without them. A "//" inside a string, as in a URL, is left alone. */
+export function stripJsonComments(source: string): string {
+  let out = '';
+  let inString = false;
+  for (let i = 0; i < source.length; i += 1) {
+    const char = source[i]!;
+    const next = source[i + 1];
+    if (inString) {
+      out += char;
+      if (char === '\\') {
+        out += next ?? '';
+        i += 1;
+      } else if (char === '"') {
+        inString = false;
+      }
+    } else if (char === '"') {
+      inString = true;
+      out += char;
+    } else if (char === '/' && next === '/') {
+      while (i < source.length && source[i] !== '\n') i += 1;
+      out += '\n';
+    } else if (char === '/' && next === '*') {
+      i = source.indexOf('*/', i + 2) + 1;
+    } else {
+      out += char;
+    }
+  }
+  return out;
+}
+
+/** The Worker's own config file, parsed. */
+export function wranglerConfig(): Record<string, unknown> {
+  return JSON.parse(stripJsonComments(readFile('../wrangler.jsonc'))) as Record<string, unknown>;
+}
+
+/**
+ * Takes the real fetch away for the whole test file, and checks at the end
+ * that nothing reached for it. Every part under test is handed a fake.
+ */
+export function noNetwork(): void {
+  let calls = 0;
+  globalThis.fetch = () => {
+    calls += 1;
+    return Promise.reject(new Error('a test reached for the network'));
+  };
+  after(() => assert.equal(calls, 0, 'a test reached for the network'));
+}
+
+export interface FetchCall {
+  url: string;
+  init: RequestInit;
+  /** The headers that were sent, with lower-case names. */
+  headers: Record<string, string>;
+}
+
+/** A fetch that records what it was asked and answers with `respond`. */
+export function fakeFetch(
+  respond: (call: FetchCall) => Response | Promise<Response>,
+): FetchLike & { calls: FetchCall[] } {
+  const calls: FetchCall[] = [];
+  const send = async (input: string, init: RequestInit = {}): Promise<Response> => {
+    const headers: Record<string, string> = {};
+    new Headers(init.headers).forEach((value, name) => {
+      headers[name] = value;
+    });
+    const call = { url: input, init, headers };
+    calls.push(call);
+    return respond(call);
+  };
+  return Object.assign(send, { calls });
+}
+
+/**
+ * A fetch that answers only after `ms` (never, by default), unless the
+ * request's own time limit aborts it first, as a real fetch would be.
+ */
+export function slowFetch(ms: number | null, respond: () => Response): FetchLike & { calls: FetchCall[] } {
+  return fakeFetch(
+    (call) =>
+      new Promise<Response>((resolve, reject) => {
+        const signal = call.init.signal;
+        assert.ok(signal, 'every request carries a time limit');
+        // Node does not wait for an AbortSignal's timer, so this one keeps the test alive.
+        const timer = setTimeout(
+          () => (ms === null ? reject(new Error('the time limit never fired')) : resolve(respond())),
+          ms ?? 5000,
+        );
+        signal.addEventListener('abort', () => {
+          clearTimeout(timer);
+          reject(signal.reason);
+        });
+      }),
+  );
+}
+
+/** A response as the origin, the verify service or the events service would send it. */
+export function reply(status: number, body: string | object | null, type?: string): Response {
+  const text = body === null || typeof body === 'string' ? body : JSON.stringify(body);
+  const contentType = type ?? (typeof body === 'string' ? 'text/plain' : 'application/json');
+  return new Response(text, { status, headers: body === null ? {} : { 'Content-Type': contentType } });
+}
+
+/** A rate limiter that says `success` and remembers the keys it was asked about. */
+export function fakeLimiter(success = true): Limiter & { keys: string[] } {
+  const keys: string[] = [];
+  return {
+    keys,
+    async limit({ key }) {
+      keys.push(key);
+      return { success };
+    },
+  };
+}
+
+function textBody(text: string, type: OriginBody['type']): OriginBody {
+  return { body: new Response(text).body, type };
+}
+
+export interface Harness {
+  deps: Deps;
+  /** Every log line written, in order. */
+  lines: LogLine[];
+  /** Everything handed to waitUntil. */
+  pending: Promise<unknown>[];
+  /** What was asked of the outside, in order: "limit:faucet", "botCheck", "origin:faucet", "forward". */
+  trace: string[];
+  /** The argument of each call to the origin. */
+  originArgs: string[];
+  botCalls: Array<{ token: string; address: string }>;
+  forwarded: Array<{ event: EventBody; meta: EventMeta }>;
+  limiters: Record<keyof Limits, Limiter & { keys: string[] }>;
+}
+
+export interface HarnessOptions {
+  config?: Partial<AppConfig>;
+  /** Limiters that refuse. */
+  over?: Array<keyof Limits>;
+  esplora?: (path: string) => OriginAnswer<OriginBody> | Promise<OriginAnswer<OriginBody>>;
+  broadcast?: (hex: string) => OriginAnswer<string>;
+  faucet?: (address: string) => OriginAnswer<FaucetPayment>;
+  potAddress?: () => OriginAnswer<string>;
+  botCheck?: BotCheckResult;
+  forward?: () => Promise<{ ok: boolean; upstream: number | null; fault: LogLine['fault'] }>;
+}
+
+/** A Deps made of fakes that all succeed unless told otherwise, with a record of what the handler did with them. */
+export function harness(options: HarnessOptions = {}): Harness {
+  const lines: LogLine[] = [];
+  const pending: Promise<unknown>[] = [];
+  const trace: string[] = [];
+  const originArgs: string[] = [];
+  const botCalls: Harness['botCalls'] = [];
+  const forwarded: Harness['forwarded'] = [];
+  const over = options.over ?? [];
+
+  const limiter = (name: keyof Limits): Limiter & { keys: string[] } => {
+    const inner = fakeLimiter(!over.includes(name));
+    return {
+      keys: inner.keys,
+      limit(args) {
+        trace.push(`limit:${name}`);
+        return inner.limit(args);
+      },
+    };
+  };
+  const limiters = {
+    chain: limiter('chain'),
+    broadcast: limiter('broadcast'),
+    faucet: limiter('faucet'),
+    pot: limiter('pot'),
+    events: limiter('events'),
+  };
+
+  const origin: Origin = {
+    async esplora(path) {
+      trace.push('origin:esplora');
+      originArgs.push(path);
+      return options.esplora?.(path) ?? { ok: true, value: textBody('{"ok":true}', 'json'), upstream: 200 };
+    },
+    async broadcast(hex) {
+      trace.push('origin:broadcast');
+      originArgs.push(hex);
+      return options.broadcast?.(hex) ?? { ok: true, value: TXID, upstream: 200 };
+    },
+    async faucet(address) {
+      trace.push('origin:faucet');
+      originArgs.push(address);
+      return (
+        options.faucet?.(address) ?? {
+          ok: true,
+          value: { txid: TXID, amountSats: 100000, potTxid: null },
+          upstream: 200,
+        }
+      );
+    },
+    async potAddress() {
+      trace.push('origin:potAddress');
+      return options.potAddress?.() ?? { ok: true, value: POT_ADDRESS, upstream: 200 };
+    },
+  };
+
+  let clock = 1000;
+  const deps: Deps = {
+    config: { ...CONFIG, ...options.config },
+    origin,
+    async botCheck(token, address) {
+      trace.push('botCheck');
+      botCalls.push({ token, address });
+      return options.botCheck ?? { verdict: 'pass', upstream: 200, fault: null };
+    },
+    async forwardEvent(event, meta) {
+      trace.push('forward');
+      forwarded.push({ event, meta });
+      return options.forward?.() ?? { ok: true, upstream: 202, fault: null };
+    },
+    limits: limiters,
+    log: (line) => {
+      lines.push(line);
+    },
+    waitUntil: (promise) => {
+      pending.push(promise);
+    },
+    // Each look at the clock is 5 ms after the last.
+    now: () => (clock += 5),
+  };
+
+  return { deps, lines, pending, trace, originArgs, botCalls, forwarded, limiters };
+}
+
+/** The headers of a request, with every header that was set to "" left out. */
+function without(headers: Record<string, string>): Record<string, string> {
+  return Object.fromEntries(Object.entries(headers).filter(([, value]) => value !== ''));
+}
+
+/** A GET as a browser would send it to the app's own host (a header set to "" is left out). */
+export function get(path: string, headers: Record<string, string> = {}): Request {
+  return new Request(`${APP}${path}`, { headers: without({ 'CF-Connecting-IP': READER_IP, ...headers }) });
+}
+
+/** A POST from one of the app's own pages, unless `headers` says otherwise (a header set to "" is left out). */
+export function post(path: string, body: string | object | null, headers: Record<string, string> = {}): Request {
+  return new Request(`${APP}${path}`, {
+    method: 'POST',
+    headers: without({ Origin: APP, 'CF-Connecting-IP': READER_IP, ...headers }),
+    body: body === null || typeof body === 'string' ? body : JSON.stringify(body),
+  });
+}
+
+/** The body of a refusal, checked to be exactly the contract's shape. */
+export async function errorOf(response: Response): Promise<{ error: string; detail?: string }> {
+  assert.match(response.headers.get('Content-Type') ?? '', /^application\/json/);
+  const body = (await response.json()) as { error: string; detail?: string };
+  for (const key of Object.keys(body)) assert.ok(key === 'error' || key === 'detail', `unexpected key ${key}`);
+  return body;
+}
