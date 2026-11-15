@@ -22,13 +22,11 @@
   // the lines under it say exactly that.
   //
   // "Try again" is answered when the list has been read, not before. The
-  // wallet's refresh() resolves once the coins are read again; the list is
-  // read only after that, and the wallet has no word for "the list is being
-  // read". So the button stays busy until the wallet shows another list
-  // (it worked), another cause, or the time a read may take is up
-  // (read.ts, listTryEnded). Only then is a failure read out again. Said
-  // at the moment refresh() resolves, it would be the old failure, read
-  // out while the try is still under way and about to work.
+  // wallet's refresh() reads the coins again and then the list, and
+  // resolves when that read of the list has ended: the button stays busy
+  // until then, and what the wallet shows at that moment is how the try
+  // went. A failure is read out again then, also when it is the same
+  // failure as before and nothing on screen has changed.
 
   import { onDestroy, tick, untrack } from 'svelte';
   import Actions from '../../components/Actions.svelte';
@@ -36,12 +34,12 @@
   import Empty from '../../components/Empty.svelte';
   import Notice from '../../components/Notice.svelte';
   import Waiting from '../../components/Waiting.svelte';
-  import { chainFailureText } from '../../components/wallet/frame.ts';
+  import { chainFailureText, faucetLink } from '../../components/wallet/frame.ts';
   import TxList from '../../components/wallet/TxList.svelte';
   import { focusHeading, router } from '../../lib/router.svelte.ts';
   import { useWallet } from '../../lib/wallet-context.ts';
   import { strings } from '../../strings/index.ts';
-  import { LIST_TRY_MS, activityNotice, activityShows, firstFew, listTryEnded, type ListSeen } from './read.ts';
+  import { activityNotice, activityShows, firstFew } from './read.ts';
 
   interface Props {
     /** Show only the latest so many. Without it, every transaction. */
@@ -77,54 +75,32 @@
   let tries = $state(0);
   /** The reader's try ended with the coins unread: the line that stands under the frame's notice is its answer. */
   let answered = $state(false);
-  /** What the wallet showed of the list when the reader pressed "Try again", while that try waits for the list. */
-  let asked = $state.raw<ListSeen | null>(null);
-  /** The time a read of the list may take is up. */
-  let timeUp = $state(false);
-  let timer: ReturnType<typeof setTimeout> | undefined;
 
   /** True once this list has left the screen. */
   let gone = false;
   onDestroy(() => {
     gone = true;
-    clearTimeout(timer);
   });
 
   async function tryAgain(): Promise<void> {
     if (trying) return;
     trying = true;
-    const before: ListSeen = { list: wallet.history, failure: wallet.historyError };
-    // Resolves when the wallet's coins have been read again. The list is read only after that.
+    // Resolves when the wallet's coins have been read again and, if that worked, the list after them.
     await wallet.refresh();
     if (gone) return;
+    trying = false;
     if (wallet.chain.error !== null) {
       // The coins could not be read, so the list was not tried at all. The
       // frame shows the cause now, and this list's own notice has made way
       // for it. Once that is drawn, the line that stands here instead is
       // read out: it is the answer to the reader's try.
-      trying = false;
       await tick();
       if (!gone) answered = true;
       return;
     }
-    // The list is being read now: the effect below sees how that ends.
-    timeUp = false;
-    asked = before;
-    clearTimeout(timer);
-    timer = setTimeout(() => (timeUp = true), LIST_TRY_MS);
-  }
-
-  // The end of the reader's try, seen in what the wallet shows.
-  $effect(() => {
-    if (asked === null) return;
-    const ended = listTryEnded(asked, { list: wallet.history, failure: wallet.historyError }, timeUp);
-    if (ended === null) return;
-    clearTimeout(timer);
-    asked = null;
-    trying = false;
     // Still not read: the cause is drawn afresh, so that it is read out again.
-    if (ended === 'failed') tries += 1;
-  });
+    if (wallet.historyError !== null) tries += 1;
+  }
 
   // An answer belongs to the notice it was given under. Whenever another
   // takes that notice's place (the frame's failure comes or goes with a
@@ -206,7 +182,7 @@
     {#if faucet}
       <!-- The same look as the Coins screen's empty line: the two screens are siblings. -->
       <Empty text={t.activityEmpty} data-testid="activity-empty">
-        <Button variant="primary" small href={router.link({ name: 'receive' })} data-testid="activity-faucet">
+        <Button variant="primary" small href={faucetLink(router.link({ name: 'receive' }))} data-testid="activity-faucet">
           {t.getCoins}
         </Button>
       </Empty>

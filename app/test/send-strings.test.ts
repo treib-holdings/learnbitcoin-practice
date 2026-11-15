@@ -202,8 +202,10 @@ test('send screen: it reaches the wallet through useWallet() alone, and marks it
   for (const call of ['potAddress', 'unlock', 'broadcast']) {
     assert.match(screen, new RegExp(`await busyWhile\\(wallet\\.${call}\\(`), call);
   }
-  // The look for a payment that got no answer is part of the wait "Send it" started.
-  assert.match(screen, /await busyWhile\(wallet\.lookupTx\(payment\.txid\)\)/);
+  // The look for a payment that got no answer is the wallet's own, inside broadcast() (after no
+  // answer at all, and after "could not answer": test/chain-sync.test.ts). The screen makes no
+  // second look of its own, which would only repeat the wallet's and double the wait.
+  assert.doesNotMatch(screen, /wallet\.lookupTx\(/);
   // The way back out of the unlock step is off while a passkey prompt is open (the unlock step
   // must stay until its prompt is answered), and as wide as the step's own buttons on a phone.
   assert.match(screen, /<Button class="w-full sm:w-auto" data-testid="send-unlock-back" disabled=\{working\(\)\} onclick=\{leaveUnlock\}>/);

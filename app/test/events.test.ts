@@ -17,7 +17,7 @@ import {
   type ScreenName,
   type ValueOf,
 } from '@learnbitcoin/practice-contract';
-import { initEvents, track, trackPage } from '../src/lib/events.ts';
+import { initEvents, screenArrived, screenLeaving, track, trackPage } from '../src/lib/events.ts';
 import type { Route } from '../src/lib/router.ts';
 
 const TXID = '6c0443f5'.padEnd(64, 'a');
@@ -94,6 +94,58 @@ test('an event is filed under the screen the reader is on', () => {
     { name: 'Words shown', path: '/wallet/backup', value: 'passkey' },
     { name: 'pageview', path: '/es/wallet/receive' },
     { name: 'Faucet', path: '/es/wallet/receive', value: 'already-paid' },
+  ]);
+});
+
+test('a change of screen: what the old screen counts as it leaves is its own, and what the new one counts as it starts is its own', () => {
+  const sent = recording();
+  const bodies = (): unknown[] => sent.map((body) => JSON.parse(body) as unknown);
+  trackPage({ name: 'restore' }, 'en');
+  // The address changes. The new screen is named before anything of it is drawn...
+  trackPage({ name: 'home' }, 'en');
+  // ...so what it counts while it is put on the page is filed under it.
+  track('Unlock', 'opened');
+  // Then the old screen is taken off the page, and counts as it goes: under its own name.
+  screenLeaving();
+  track('Restore', 'erased');
+  // The new screen has the page to itself: what follows is its own again.
+  screenArrived();
+  track('Wallet created', 'words');
+  assert.deepEqual(bodies(), [
+    { name: 'pageview', path: '/restore' },
+    { name: 'pageview', path: '/' },
+    { name: 'Unlock', path: '/', value: 'opened' },
+    { name: 'Restore', path: '/restore', value: 'erased' },
+    { name: 'Wallet created', path: '/', value: 'words' },
+  ]);
+
+  // The same when the old screen leaves first and the new one starts after it.
+  sent.length = 0;
+  trackPage({ name: 'backup' }, 'es');
+  screenLeaving();
+  track('Restore', 'erased');
+  screenArrived();
+  track('Words shown', 'passkey');
+  assert.deepEqual(bodies(), [
+    { name: 'pageview', path: '/es/wallet/backup' },
+    { name: 'Restore', path: '/', value: 'erased' },
+    { name: 'Words shown', path: '/es/wallet/backup', value: 'passkey' },
+  ]);
+
+  // A parting that nobody ended is over when the next screen is named: nothing is filed under a screen two back.
+  sent.length = 0;
+  screenLeaving();
+  trackPage({ name: 'about' }, 'en');
+  track('Payment', 'sent');
+  assert.deepEqual(bodies().at(-1), { name: 'Payment', path: '/about', value: 'sent' });
+
+  // The same screen in the other language is no change of screen: nobody leaves, and the path follows.
+  sent.length = 0;
+  trackPage({ name: 'about' }, 'es');
+  track('Payment', 'sent');
+  assert.deepEqual(bodies(), [
+    { name: 'pageview', path: '/es/about' },
+    { name: 'Payment', path: '/es/about', value: 'sent' },
   ]);
 });
 

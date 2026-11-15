@@ -27,14 +27,6 @@ export const FAUCET_ONCE_HOURS = 24;
 /** How long Bitcoin's real network takes to make a block, on average, in minutes. */
 export const BITCOIN_BLOCK_MINUTES = 10;
 
-/**
- * How long the faucet's card waits for the wallet's settings before it
- * takes an empty site key to mean a closed faucet, in milliseconds. The
- * wallet gives its one request for the settings 20 seconds; this is a
- * little more, so that the card never says "closed" while that request is
- * still out, and never says "loading" for ever.
- */
-export const SETTINGS_WAIT_MS = 25_000;
 
 /**
  * How long the bot check's box has to stand on screen, unanswered, before

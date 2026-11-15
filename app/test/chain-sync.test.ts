@@ -22,9 +22,22 @@ import {
 } from '@learnbitcoin/practice-wallet';
 import { makeApi } from '../src/lib/api.ts';
 import { FAUCET_REQUEST_MS, REQUEST_MS, makeBoard, makeChainSync, withDeadline, type ChainSync } from '../src/lib/chain-sync.ts';
-import { DEFAULT_CONFIG, loadConfig } from '../src/lib/config.ts';
+import { CONFIG_RETRY_MS, DEFAULT_CONFIG, loadConfig } from '../src/lib/config.ts';
 import type { TxLookup } from '../src/lib/wallet-api.ts';
-import { FakeClock, FakeNetwork, FakeTimers, POT, SOMEONE, flush, giveUpOn, recorder, test, type Failure } from './engine-fakes.ts';
+import {
+  CHAIN_PAGE,
+  FIRST_PAGE,
+  FakeClock,
+  FakeNetwork,
+  FakeTimers,
+  POT,
+  SOMEONE,
+  flush,
+  giveUpOn,
+  recorder,
+  test,
+  type Failure,
+} from './engine-fakes.ts';
 
 interface VectorWallet {
   mnemonic: string;
@@ -1081,6 +1094,203 @@ test('a block that confirms a waiting coin: the list is read again once, not twi
   assert.equal(w.net.count(TXS), 0);
 });
 
+test('"Send all" while Esplora lags: once a read has caught up the list shows the payment, although the coins compare equal', async () => {
+  const w = await opened((net) => net.pay(receive(0), 100_000, { confirmed: true }));
+  w.chain.watch('activity');
+  await w.settle();
+  // Esplora hears of what the node takes only later.
+  w.net.lag = true;
+  const payment = signed(w.chain, { to: SOMEONE, amount: 'all', feeRate: 2n });
+  w.net.willTake(payment);
+  assert.deepEqual(await w.chain.broadcast(payment), { ok: true, txid: payment.txid });
+  await w.settle();
+  // The wallet is empty at once. The list was read while Esplora did not know the payment yet.
+  assert.equal(stateOf(w.chain).coins.length, 0);
+  assert.deepEqual(w.chain.view().history?.map((tx) => tx.direction), ['received']);
+
+  // Polls that are still behind change nothing, and do not read the list.
+  w.reset();
+  await w.advance(15_000);
+  assert.equal(stateOf(w.chain).coins.length, 0);
+  assert.equal(w.net.count(TXS), 0);
+  assert.deepEqual(w.chain.view().history?.map((tx) => tx.direction), ['received']);
+
+  // Esplora catches up, with no new block. The coins it reports are the ones the page already
+  // holds (none before, none after), so the coins alone would be no reason to read the list.
+  w.net.hear(payment.txid);
+  await w.advance(15_000);
+  assert.equal(stateOf(w.chain).coins.length, 0);
+  assert.deepEqual(w.chain.view().history?.map((tx) => [tx.direction, tx.confirmed]), [
+    ['sent', false],
+    ['received', true],
+  ]);
+  // Once, and then the list rests again.
+  w.reset();
+  await w.advance(15_000);
+  assert.equal(w.net.count(TXS), 0);
+});
+
+test('"Try again" after a payment made while Esplora lagged: the list shows the payment, and is read once', async () => {
+  const w = await opened((net) => net.pay(receive(0), 100_000, { confirmed: true }));
+  w.chain.watch('activity');
+  await w.settle();
+  w.net.lag = true;
+  const payment = signed(w.chain, { to: SOMEONE, amount: 'all', feeRate: 2n });
+  w.net.willTake(payment);
+  assert.deepEqual(await w.chain.broadcast(payment), { ok: true, txid: payment.txid });
+  await w.settle();
+  assert.deepEqual(w.chain.view().history?.map((tx) => tx.direction), ['received']);
+
+  // The tab goes out of view, Esplora catches up, and the next read fails: after a failure the
+  // page reads everything again, from the start.
+  w.show(false);
+  w.net.hear(payment.txid);
+  w.net.down = 'unavailable';
+  w.show(true);
+  await w.settle();
+  assert.equal(w.view().error, 'unavailable');
+  w.net.down = null;
+  // The reader's own "Try again" is a full scan. It finds the wallet as empty as the page shows it.
+  w.reset();
+  await w.chain.refresh();
+  assert.equal(stateOf(w.chain).coins.length, 0);
+  assert.deepEqual(w.chain.view().history?.map((tx) => tx.direction), ['sent', 'received']);
+  // One read of the list did it: the scan's own, with no second one for the reader's asking.
+  assert.equal(w.net.count(TXS), 1, 'one read, of the one address that was ever used');
+});
+
+test('refresh() resolves when the list has been read again, or that read has failed: not before', async () => {
+  const w = await opened((net) => net.pay(receive(0), 100_000, { confirmed: true }));
+  w.chain.watch('activity');
+  await w.settle();
+  const old = w.chain.view().history;
+  assert.equal(old?.length, 1);
+
+  // The list's answer is held back: the coins are read again, and the list is still on its way.
+  w.reset();
+  let release = w.net.hold(TXS);
+  let done = false;
+  let refreshing = w.chain.refresh().then(() => {
+    done = true;
+  });
+  await turns();
+  assert.equal(w.view().scanning, false, 'the coins have been read again');
+  assert.equal(w.net.count(TXS), 1, 'and the list has been asked for');
+  assert.equal(done, false, 'the reader is still waiting');
+  release();
+  await refreshing;
+  assert.equal(done, true);
+  assert.notEqual(w.chain.view().history, old, 'another list, read after the scan');
+  assert.equal(w.chain.view().historyError, null);
+
+  // A read that fails: the reason is there the moment refresh() resolves, with nothing else waited for.
+  w.net.down = 'limit';
+  w.net.downFor = TXS;
+  await w.chain.refresh();
+  assert.equal(w.chain.view().historyError, 'limit');
+  // It fails again, for the same reason. Nothing a screen can see has changed, and still the
+  // caller knows that its try is over: that is what the wait is for.
+  const failed = w.chain.view();
+  w.reset();
+  await w.chain.refresh();
+  assert.equal(w.net.count(TXS), 1, 'the list was tried again, although its own next try was not due');
+  assert.equal(w.chain.view().historyError, 'limit');
+  assert.equal(w.chain.view().history, failed.history);
+  // And then it works.
+  w.net.down = null;
+  await w.chain.refresh();
+  assert.deepEqual([w.chain.view().historyError, w.chain.view().history?.length], [null, 1]);
+
+  // The coins could not be read: the list is not tried at all, and nothing is waited for.
+  w.net.down = 'unavailable';
+  w.net.downFor = null;
+  w.reset();
+  await w.chain.refresh();
+  assert.equal(w.view().error, 'unavailable');
+  assert.equal(w.net.count(TXS), 0);
+  w.net.down = null;
+  await w.chain.refresh();
+
+  // No screen that shows the list is open: nothing is read, and refresh() does not wait for a list.
+  w.chain.watch('coins');
+  w.reset();
+  await w.chain.refresh();
+  assert.equal(w.net.count(TXS), 0);
+
+  // The wallet leaves the page while its list is on the way: the wait ends all the same.
+  w.chain.watch('activity');
+  release = w.net.hold(TXS);
+  done = false;
+  refreshing = w.chain.refresh().then(() => {
+    done = true;
+  });
+  await turns();
+  assert.equal(done, false);
+  w.chain.close();
+  await refreshing;
+  assert.equal(done, true);
+  release();
+  await w.settle();
+  assert.equal(w.chain.view().history, null);
+});
+
+test('the stand-in network lists an address\'s transactions in pages, as the practice network does', async () => {
+  const net = new FakeNetwork();
+  const esplora = makeApi(net.fetch).esplora;
+  // 60 confirmed payments to one address, each in a block of its own, and 3 that are still waiting.
+  const confirmed: string[] = [];
+  for (let n = 0; n < 60; n++) confirmed.push(net.pay(receive(0), 1_000 + n, { confirmed: true }));
+  const waiting = [net.pay(receive(0), 7), net.pay(receive(0), 8), net.pay(receive(0), 9)];
+  const newestFirst = [...confirmed].reverse();
+
+  // The first answer: 50 in all, the waiting ones first, then the newest confirmed ones.
+  const first = await esplora.addressTxs(receive(0));
+  assert.equal(first.length, FIRST_PAGE);
+  assert.deepEqual(first.map((tx) => tx.txid), [...waiting, ...newestFirst.slice(0, FIRST_PAGE - waiting.length)]);
+
+  // The older ones, 25 at a time, each page asked for by the last ID of the one before.
+  const second = await esplora.addressTxsChain(receive(0), first.at(-1)!.txid);
+  assert.deepEqual(second.map((tx) => tx.txid), newestFirst.slice(47, 60));
+  assert.ok(second.length < CHAIN_PAGE, 'a short page: the end');
+  // With no ID: the newest 25 confirmed ones.
+  assert.deepEqual((await esplora.addressTxsChain(receive(0))).map((tx) => tx.txid), newestFirst.slice(0, CHAIN_PAGE));
+  // After the oldest, after an ID the address does not have, and after one that is still waiting: nothing.
+  assert.deepEqual(await esplora.addressTxsChain(receive(0), newestFirst.at(-1)), []);
+  assert.deepEqual(await esplora.addressTxsChain(receive(0), 'ab'.repeat(32)), []);
+  assert.deepEqual(await esplora.addressTxsChain(receive(0), waiting[0]), []);
+  // Every page, as the wallet reads them: each transaction once.
+  const all = await esplora.addressTxsAll(receive(0));
+  assert.deepEqual(all.map((tx) => tx.txid), [...waiting, ...newestFirst]);
+  assert.deepEqual(net.requests.slice(-2).map((request) => request.replace(/[0-9a-f]{64}$/, '<txid>')), [
+    `GET /api/esplora/address/${receive(0)}/txs`,
+    `GET /api/esplora/address/${receive(0)}/txs/chain/<txid>`,
+  ]);
+
+  // An address with exactly 50: the first page is full, so one more question is asked, and answered with nothing.
+  const exact = new FakeNetwork();
+  for (let n = 0; n < FIRST_PAGE; n++) exact.pay(receive(1), 500, { confirmed: true });
+  assert.equal((await makeApi(exact.fetch).esplora.addressTxsAll(receive(1))).length, FIRST_PAGE);
+  assert.equal(exact.count(/\/txs\/chain\/[0-9a-f]{64}$/), 1);
+});
+
+test('the list of a wallet whose address has more than 50 transactions is read whole', async () => {
+  // The practice network lists 50 at most in its first answer. A wallet that read only that
+  // answer would show a busy address's newest 50 and lose the rest without a word.
+  const w = watching();
+  const paid: string[] = [];
+  for (let n = 0; n < 58; n++) paid.push(w.net.pay(receive(0), 100 + n, { confirmed: true }));
+  void w.chain.open(A.xpub);
+  w.chain.watch('activity');
+  await w.settle();
+  assert.equal(stateOf(w.chain).coins.length, 58);
+  const history = w.chain.view().history;
+  assert.equal(history?.length, 58);
+  assert.deepEqual(new Set(history?.map((tx) => tx.txid)), new Set(paid));
+  // The first page, then the older ones by the last ID of that page.
+  assert.equal(w.net.count(TXS), 1);
+  assert.equal(w.net.count(/\/txs\/chain\/[0-9a-f]{64}$/), 1);
+});
+
 // -- one transaction -----------------------------------------------------------------
 
 test('lookupTx: from the list when it is there, else from the network', async () => {
@@ -1577,8 +1787,10 @@ test('broadcast: a payment to an address the pot handed out here is counted as p
   assert.deepEqual(await w.chain.potAddress(), { ok: false, reason: 'unavailable' });
 });
 
-test('broadcast: "already sent", "coin spent" and no answer are a success when the network knows the transaction', async () => {
-  for (const how of ['already_sent', 'coin_spent', 'network'] as const) {
+test('broadcast: "already sent", "coin spent", "could not answer" and no answer are a success when the network knows the transaction', async () => {
+  // "unavailable" is what the Worker says when it has waited for the practice network as long as
+  // it will. The node may have taken the payment in that time, as after no answer at all.
+  for (const how of ['already_sent', 'coin_spent', 'unavailable', 'network'] as const) {
     const w = await opened((net) => net.pay(receive(0), 100_000, { confirmed: true }));
     const before = stateOf(w.chain);
     const payment = signed(w.chain, { to: SOMEONE, amount: 60_000n, feeRate: 2n });
@@ -1623,9 +1835,10 @@ test('broadcast: a refusal comes back with its code and the node\'s own words, a
     assert.equal(w.chain.state(), state, code);
     assert.equal(w.chain.view().notice, null, code);
     assert.deepEqual(w.events, counted ? ['Payment: refused'] : [], code);
-    // An unknown transaction was looked for only where that could change the answer.
+    // An unknown transaction was looked for only where that could change the answer: after the
+    // answers a payment can also get when it did reach the node. ("forbidden" reads as "unavailable".)
     const looked = w.net.count(new RegExp(`GET /api/esplora/tx/${payment.txid}$`));
-    assert.equal(looked, code === 'coin_spent' || code === 'already_sent' ? 1 : 0, code);
+    assert.equal(looked, expected === 'coin_spent' || expected === 'already_sent' || expected === 'unavailable' ? 1 : 0, code);
   }
 
   // No answer, and the network does not know the transaction either: not sent, and not "refused".
@@ -1688,19 +1901,31 @@ test('withDeadline: every request carries a signal that ends it, with more time 
     { input: '/api/esplora/tx', init: post },
   ]);
 
-  // The settings are loaded through it too: with no answer, the built-in ones stand after 20 s.
+  // The settings are loaded through it too. With no answer the first try is given up after 20 s,
+  // a second one follows a moment later, and when that is given up as well the built-in settings
+  // stand, marked as not loaded.
   const net = new FakeNetwork();
   net.silent = true;
   const clock = new FakeClock();
   const timers = new FakeTimers(clock);
+  const pause = (ms: number): Promise<void> => new Promise((resolve) => void timers.set(resolve, ms));
   let loaded: unknown = null;
-  void loadConfig(withDeadline(net.fetch, giveUpOn(timers))).then((config) => {
-    loaded = config;
+  void loadConfig(withDeadline(net.fetch, giveUpOn(timers)), pause).then((answer) => {
+    loaded = answer;
   });
   await timers.advance(19_999, turns);
   assert.equal(loaded, null);
+  assert.equal(net.count(/^GET \/api\/config$/), 1);
+  // Given up. Nothing is said yet: the second try is still to come.
   await timers.advance(1, turns);
-  assert.deepEqual(loaded, { ...DEFAULT_CONFIG });
+  assert.equal(loaded, null);
+  await timers.advance(CONFIG_RETRY_MS, turns);
+  assert.equal(net.count(/^GET \/api\/config$/), 2);
+  await timers.advance(19_999, turns);
+  assert.equal(loaded, null);
+  await timers.advance(1, turns);
+  assert.deepEqual(loaded, { config: { ...DEFAULT_CONFIG }, loaded: false });
+  assert.equal(net.count(/^GET \/api\/config$/), 2);
 });
 
 test('a request that gets no answer is given up after 20 s: nothing waits behind it for ever', async () => {

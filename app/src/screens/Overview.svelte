@@ -22,10 +22,18 @@
   // are warnings: the stored passkey gave a wallet that fits nothing saved
   // here, and the wallet was replaced in another tab. This screen stays, so
   // it holds them and draws them at its top (read/ChooseAnswer.svelte).
+  //
+  // A restore ends here. For that one visit the screen says that the wallet
+  // was restored and that its 12 words are now kept in this browser
+  // (components/outcome.ts): the Overview would otherwise simply appear.
 
+  import { onMount, tick } from 'svelte';
   import Button from '../components/Button.svelte';
   import Mono from '../components/Mono.svelte';
+  import Notice from '../components/Notice.svelte';
+  import { takeOutcome } from '../components/outcome.ts';
   import Section from '../components/Section.svelte';
+  import { announce } from '../components/status.svelte.ts';
   import { EYEBROW } from '../components/styles.ts';
   import TextLink from '../components/TextLink.svelte';
   import CoinList from '../components/wallet/CoinList.svelte';
@@ -59,6 +67,13 @@
 
   /** What "Choose another passkey" came to after the list of causes had left the screen. */
   let late = $state.raw<ChooseLate | null>(null);
+
+  /** The reader restored this wallet on the screen before this one: said here, for this visit. */
+  const restored = takeOutcome('restored');
+  onMount(() => {
+    // Read out as well, once the status region has been emptied for the new screen.
+    if (restored) void tick().then(() => announce(t.restoredHere));
+  });
 </script>
 
 <WalletFrame title={c.section_wallet}>
@@ -67,6 +82,10 @@
          it is a warning about the wallet that is shown below it. -->
     {#if late !== null}
       <ChooseAnswer outcome={late} />
+    {/if}
+
+    {#if restored}
+      <Notice kind="info" text={t.restoredHere} data-testid="overview-restored" />
     {/if}
 
     {#if known}

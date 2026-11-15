@@ -26,6 +26,11 @@
   //     first of them;
   //   - Enter moves on to the next field, and in the last one calls `onenter`.
   //
+  // `onedit` tells the caller that the reader has changed what is in the
+  // fields (typed or pasted). A caller that shows an answer about the words
+  // that were tried takes it away then: it is not about the words that are
+  // there now.
+  //
   // Every field carries the attributes SPEC section 12 asks of a field for
   // seed words: no spell check, no autocomplete, no autocorrect, no
   // capitals, never translated, no name, and no form around it. So no
@@ -34,6 +39,10 @@
   //
   // On paper the fields are left out: the words are written by hand
   // (the print rule in app.css).
+  //
+  // A caller that puts what the reader should know before typing above the
+  // fields names it with aria-describedby: it lands on the group of twelve,
+  // so a screen reader says it as the reader comes into the fields.
 
   import { tick } from 'svelte';
   import { fill } from '../../lib/format.ts';
@@ -51,11 +60,15 @@
     disabled?: boolean;
     /** Enter was pressed in the last field. */
     onenter?: () => void;
+    /** The reader typed or pasted something: the fields no longer hold what they held at the last check. */
+    onedit?: () => void;
+    /** The ids of what describes the twelve fields together: the caller's own lines above them. */
+    'aria-describedby'?: string;
     class?: string;
     [key: `data-${string}`]: string | undefined;
   }
 
-  let { label, disabled = false, onenter, class: extra = '', ...rest }: Props = $props();
+  let { label, disabled = false, onenter, onedit, class: extra = '', ...rest }: Props = $props();
 
   const wallet = useWallet();
   const id = $props.id();
@@ -99,6 +112,7 @@
   /** Something was typed into field `index`. */
   function typed(index: number): void {
     failed = false;
+    onedit?.();
     const value = fields[index] ?? '';
     // A space ends a word. Whatever the field now holds (one word and a
     // space, or several words from a keyboard that suggests them) is spread
@@ -112,6 +126,7 @@
     if (words.length < 2) return;
     event.preventDefault();
     failed = false;
+    onedit?.();
     void place(index, words);
   }
 

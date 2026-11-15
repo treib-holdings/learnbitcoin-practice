@@ -10,7 +10,6 @@ import { test } from 'node:test';
 import { ERROR_CODES, LANGS, type FaucetPayment } from '@learnbitcoin/practice-contract';
 import { ACCOUNT_PATH, accountFromMnemonic, deriveAddress, watchOnlyAccount } from '@learnbitcoin/practice-wallet';
 import { splitLead } from '../src/components/text.ts';
-import { REQUEST_MS } from '../src/lib/chain-sync.ts';
 import { fill, slotNames } from '../src/lib/format.ts';
 import type { FaucetFailure, FaucetPhase, FaucetView } from '../src/lib/wallet-api.ts';
 import { BOT_CHECK_WAIT_MS, type NoToken } from '../src/screens/receive/bot-check.ts';
@@ -18,7 +17,6 @@ import {
   BITCOIN_BLOCK_MINUTES,
   BOX_SAY_MS,
   FAUCET_ONCE_HOURS,
-  SETTINGS_WAIT_MS,
   addressHeld,
   addressPath,
   arrivedText,
@@ -254,25 +252,39 @@ test('the box is said to a reader who cannot see it, a moment after it has appea
 
 // -- the faucet is closed, or its settings are not here yet -------------------------------
 
-test('the card waits for the settings a little longer than the wallet does, and then no longer', () => {
-  // The wallet gives its one request for the settings REQUEST_MS. Until that has ended, an empty
-  // site key is not yet a closed faucet.
-  assert.ok(SETTINGS_WAIT_MS > REQUEST_MS, `${SETTINGS_WAIT_MS} > ${REQUEST_MS}`);
-  assert.ok(SETTINGS_WAIT_MS <= REQUEST_MS + 10_000);
+test('the card goes by what the wallet says of the settings: loading, never came, or here', () => {
+  // The built-in settings name no bot check, so an empty site key alone says nothing. The wallet
+  // says where the request for the server's settings stands, and the card has no clock of its own.
+  const card = readFileSync(new URL('../src/screens/receive/FaucetCard.svelte', import.meta.url), 'utf8');
+  assert.match(card, /let settings = \$derived\(wallet\.settings\);/);
+  assert.doesNotMatch(card, /passkeyOffered|setTimeout\(\(\) => \(waited/);
+  // In this order: not known yet, could not be learned, learned and closed, open.
+  const loading = card.indexOf("{#if settings === 'loading'}");
+  const failed = card.indexOf("{:else if settings === 'failed'}");
+  const closed = card.indexOf('{:else if !open}');
+  assert.ok(loading > 0 && failed > loading && closed > failed);
+  assert.match(card.slice(loading, failed), /data-testid="faucet-loading"/);
+  // Settings that never came are not a closed faucet: the sentence is the one for a request with no answer.
+  assert.match(card.slice(failed, closed), /<Notice kind="problem" silent text=\{e\.network\} data-testid="faucet-settings-failed">/);
+  assert.match(card.slice(failed, closed), /\{t\.settingsFailed\}/);
+  assert.match(card.slice(failed, closed), /<ReloadButton [^>]*data-testid="faucet-settings-reload"/);
+  assert.doesNotMatch(card.slice(failed, closed), /e\.closed/);
 });
 
-test('a closed faucet: the line under its sentence gives the other cause and the way to look again', () => {
+test('a closed faucet, and settings that never came: each line adds the way to look again', () => {
   const { en, es } = strings.receive;
   // The sentence is the error table's, and its way out alone does not work on a page that is already open.
   assert.match(strings.errors.en.closed, /^The faucet is switched off right now\./);
   assert.match(strings.errors.en.closed, /Try again later\.$/);
-  // So the screen adds: when the page learns it, what else an empty answer can mean, and Reload.
-  assert.match(en.closedReload, /when it loads/);
-  assert.match(en.closedReload, /If that answer did not arrive, the faucet shows as switched off as well\./);
-  assert.match(en.closedReload, /Reload the page to check again\.$/);
+  // So the screen adds when the page learns it, and Reload. It names no second cause: a closed
+  // faucet is now said only when the server's own settings say so.
+  assert.equal(en.closedReload, 'This page learns whether the faucet is open when it loads. Reload the page to check again.');
   assert.match(es.closedReload, /cuando se carga/);
-  assert.match(es.closedReload, /Si esa respuesta no llegó, el faucet también aparece como apagado\./);
   assert.match(es.closedReload, /Recarga la página para volver a comprobarlo\.$/);
+  for (const lang of LANGS) assert.doesNotMatch(strings.receive[lang].closedReload, /did not arrive|no llegó/, lang);
+  // Settings that never came: what that leaves unknown, and the same way out.
+  assert.equal(en.settingsFailed, 'So this page does not know whether the faucet is open. Reload the page to ask again.');
+  assert.match(es.settingsFailed, /no sabe si el faucet está abierto\. Recarga la página para volver a preguntar\.$/);
 });
 
 // -- a new address ----------------------------------------------------------------------
@@ -492,6 +504,21 @@ test('what the screen says of the bot check, and nothing more', () => {
   // A passkey wallet: asking locks it, and the next move to another screen loads the page afresh.
   assert.match(en.faucetLocks, /^Asking for coins locks this wallet, and your next move to another screen loads the page afresh\./);
   assert.match(es.faucetLocks, /^Pedir monedas bloquea esta billetera, y tu próximo paso a otra pantalla carga la página de nuevo\./);
+  // What that is good for, and no more than that: the check's code cannot read keys that were loaded
+  // before it. It can still ask the passkey itself, or open a window (test/info-kept.test.ts and
+  // e2e/scenarios/trust.test.ts), so the screen never says the check is kept away from the keys ...
+  assert.match(en.faucetLocks, /So the bot check's code cannot read keys that were loaded before it\.$/);
+  for (const lang of LANGS) assert.doesNotMatch(strings.receive[lang].faucetLocks, /away from|lejos de/, lang);
+  // ... and the line under it tells the reader what to do about the rest.
+  assert.match(en.faucetNoPrompt, /^After you ask, this screen never asks for your passkey and opens no window by itself\./);
+  assert.match(en.faucetNoPrompt, /cancel it or close it\.$/);
+  assert.match(es.faucetNoPrompt, /cancélala o ciérrala\.$/);
+  // Both lines are for a wallet opened with a passkey, and stay above the button while the request runs.
+  const card = readFileSync(new URL('../src/screens/receive/FaucetCard.svelte', import.meta.url), 'utf8');
+  assert.match(
+    card,
+    /\{#if button !== 'done'\}\s*<p [^>]*>\{t\.faucetCheck\}<\/p>\s*\{#if passkey\}\s*<p [^>]*data-testid="faucet-locks">\{t\.faucetLocks\}<\/p>\s*<p [^>]*data-testid="faucet-no-prompt">\{t\.faucetNoPrompt\}<\/p>\s*\{\/if\}/,
+  );
   // No promise the page cannot keep (notes/06 section 4.2), in any text of the screen.
   for (const lang of LANGS) {
     for (const [key, text] of Object.entries(strings.receive[lang])) {
@@ -519,8 +546,10 @@ test('the words the app holds to', () => {
   const { en, es } = strings.receive;
   assert.match(en.stateArrived, /unconfirmed until the next block/);
   assert.match(es.stateArrived, /sin confirmar hasta el próximo bloque/);
-  // The Spanish names the faucet by its loanword, and says what it is where it is first met.
-  assert.match(es.lede, /el faucet, que reparte monedas de práctica a quien las pide/);
+  // The Spanish names the faucet by its loanword, and says what it is where it is first met: what
+  // the English says of it, that it pays practice coins to this address.
+  assert.equal(en.lede, 'The address this wallet is paid at, and the faucet that pays practice coins to it.');
+  assert.equal(es.lede, 'La dirección donde esta billetera recibe pagos, y el faucet, que le paga monedas de práctica.');
   assert.match(es.faucetCheck, /comprobación contra bots/);
   // The address is a practice address, and real bitcoin never goes to it.
   assert.match(en.addressFor, /practice address: never send real bitcoin to it\.$/);
@@ -530,7 +559,7 @@ test('the words the app holds to', () => {
 test('a line that follows a failure adds to its sentence and never repeats it', () => {
   for (const lang of LANGS) {
     const t = strings.receive[lang];
-    for (const key of ['failedOtherCause', 'failedNewAddress', 'closedReload'] as const) {
+    for (const key of ['failedOtherCause', 'failedNewAddress', 'closedReload', 'settingsFailed'] as const) {
       assert.ok(t[key].endsWith('.'), `${lang}.${key}`);
       for (const sentence of Object.values(strings.errors[lang])) assert.ok(!sentence.includes(t[key]), `${lang}.${key}`);
     }

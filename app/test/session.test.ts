@@ -159,7 +159,7 @@ class RacingStorage extends MemoryStorage {
 /** A passkey port whose every call answers the same thing: for outcomes the stand-in manager cannot produce. */
 function answering(outcome: unknown): PasskeyPort {
   const answer = async () => outcome as PasskeyOutcome;
-  return { offered: async () => true, create: answer, finish: answer, get: answer, signalUnknown: () => {} };
+  return { offered: async () => true, create: answer, finish: answer, get: answer, signalUnknown: () => {}, end: () => {} };
 }
 
 // -- starting up ------------------------------------------------------------------------
@@ -178,6 +178,7 @@ test('a failed self-test: status "broken", every way to a wallet answers "broken
       persisted: null,
       setup: null,
       created: null,
+      createdName: null,
       pendingSwitch: null,
       pendingRestore: false,
       openedEmpty: false,
@@ -235,6 +236,7 @@ test('what is stored decides the status: nothing, a wallet, something unreadable
     persisted: null,
     setup: null,
     created: null,
+    createdName: null,
     pendingSwitch: null,
     pendingRestore: false,
     openedEmpty: false,
@@ -458,6 +460,8 @@ test('createWithPasskey: the words come from the passkey, the record is stored w
     persisted: null,
     setup: null,
     created: 'passkey',
+    // The name as this page wrote it into the passkey a moment ago.
+    createdName: `Practice wallet ${tag} (no real money)`,
     pendingSwitch: null,
     pendingRestore: false,
     openedEmpty: false,
@@ -472,9 +476,12 @@ test('createWithPasskey: the words come from the passkey, the record is stored w
 
   // The passkey's name carries the tag, in the language of the page.
   assert.equal(passkey.name, `Practice wallet ${tag} (no real money)`);
+  // And that very name is what the "Wallet made" step is handed: the one the password manager holds.
+  assert.equal(t.view().createdName, passkey.name);
 
   t.session.ackCreated();
   assert.equal(t.view().created, null);
+  assert.equal(t.view().createdName, null, 'the name goes with the step: from here on only the tag is known');
   assert.equal(t.view().unlocked, true);
 });
 
@@ -483,6 +490,82 @@ test('a passkey made on a Spanish page is named in Spanish', async () => {
   t.page.lang = 'es';
   assert.deepEqual(await t.session.createWithPasskey(), { kind: 'created' });
   assert.equal(t.auth.passkeys[0]?.name, `Billetera de práctica ${t.view().record?.tag} (sin dinero de verdad)`);
+  assert.equal(t.view().createdName, t.auth.passkeys[0]?.name);
+});
+
+test('createdName is the name as it was written at create(), whatever the page\'s language is by the time the wallet is made', async () => {
+  // The language changes while the prompt is open. The name was written before that.
+  const t = start();
+  const release = t.auth.hold();
+  const creating = t.session.createWithPasskey();
+  t.page.lang = 'es';
+  release();
+  assert.deepEqual(await creating, { kind: 'created' });
+  const made = t.auth.passkeys[0];
+  assert.ok(made);
+  assert.equal(made.name, `Practice wallet ${tagFromUserId(made.userId)} (no real money)`);
+  assert.equal(t.view().createdName, made.name, 'the English name, on what is now a Spanish page');
+
+  // "Finish setting up", pressed after the reader switched language: still the name written at create().
+  const u = start();
+  u.page.lang = 'es';
+  u.auth.secretAtCreate = false;
+  u.auth.refuseGet.push('NotAllowedError');
+  assert.deepEqual(await u.session.createWithPasskey(), { kind: 'unfinished' });
+  assert.equal(u.view().createdName, null, 'no wallet was made yet');
+  u.page.lang = 'en';
+  // Refused once more, and then it works.
+  u.auth.refuseGet.push('NotAllowedError');
+  assert.deepEqual(await u.session.finishSetup(), { kind: 'unfinished' });
+  assert.equal(u.view().createdName, null);
+  assert.deepEqual(await u.session.finishSetup(), { kind: 'created' });
+  const finished = u.auth.passkeys[0];
+  assert.ok(finished);
+  assert.equal(finished.name, `Billetera de práctica ${tagFromUserId(finished.userId)} (sin dinero de verdad)`);
+  assert.deepEqual([u.view().created, u.view().createdName], ['passkey', finished.name]);
+});
+
+test('createdName is set only beside created "passkey", and goes with everything that ends the step', async () => {
+  // A wallet made without a passkey has no passkey to name.
+  const w = start();
+  assert.deepEqual(await w.session.createWithWords(), { kind: 'created' });
+  assert.deepEqual([w.view().created, w.view().createdName], ['words', null]);
+
+  // A wallet opened with a passkey was not made by this page: its name is not known here.
+  const o = start();
+  o.auth.add(1);
+  assert.deepEqual(await o.session.openWithPasskey(), { kind: 'opened' });
+  assert.deepEqual([o.view().created, o.view().createdName], [null, null]);
+
+  // Another tab changes what is stored: the page starts again from it, and the step is over.
+  const t = start();
+  assert.deepEqual(await t.session.createWithPasskey(), { kind: 'created' });
+  assert.notEqual(t.view().createdName, null);
+  put(t.storage, makeRecord('words', A.mnemonic, START_MS));
+  t.session.storageChanged(RECORD_KEY);
+  assert.deepEqual([t.view().created, t.view().createdName], [null, null]);
+
+  // Removed, and made again without a passkey: nothing of the first wallet's name is left.
+  const r = start();
+  assert.deepEqual(await r.session.createWithPasskey(), { kind: 'created' });
+  assert.equal(r.session.removeWallet(), 'removed');
+  assert.deepEqual([r.view().status, r.view().createdName], ['none', null]);
+  assert.deepEqual(await r.session.createWithWords(), { kind: 'created' });
+  assert.deepEqual([r.view().created, r.view().createdName], ['words', null]);
+
+  // A passkey call that never asks for a name: the wallet is made, and no name is claimed.
+  const port = passkeyPort(new VirtualAuthenticator().env());
+  const silent = makeSession({
+    local: new MemoryStorage() as Storage,
+    passkeys: { ...port, create: () => port.create((tag) => `some name ${tag}`) },
+    chain: new FakeChain(),
+    now: () => START_MS,
+    track: () => {},
+    persist: async () => null,
+    lang: () => 'en',
+  });
+  assert.deepEqual(await silent.createWithPasskey(), { kind: 'created' });
+  assert.deepEqual([silent.view().created, silent.view().createdName], ['passkey', null]);
 });
 
 test('createWithPasskey: a provider that gives the secret only at the follow-up prompt', async () => {
@@ -1239,6 +1322,77 @@ test('unlockWithWords: this wallet\'s words load its keys for this page, and not
   assert.deepEqual(words.events, []);
 });
 
+test('unlockWithWords: a record altered in one of its two parts is noticed, rebuilt from the words, and the reader is told', async () => {
+  const alterations: [string, (record: WalletRecord) => WalletRecord][] = [
+    ['the public key', (record) => ({ ...record, xpub: B.xpub, firstAddress: firstOf(B) })],
+    ['the wallet fingerprint', (record) => ({ ...record, fingerprint: 'deadbeef' })],
+  ];
+  for (const [what, alter] of alterations) {
+    // Altered before the page loaded.
+    const auth = new VirtualAuthenticator();
+    const storage = new MemoryStorage();
+    const wallet = passkeyWallet(auth);
+    put(storage, alter(wallet.record));
+    const t = start({ auth, storage });
+    assert.equal(t.view().status, 'ready', what);
+
+    // The reader's own words: never refused as another wallet's, and never taken without a word about the record.
+    assert.equal(t.session.unlockWithWords(wallet.words), 'tampered', what);
+    // The record is the wallet's own again: the passkey's ID and tag kept, and nothing of the words in it.
+    assert.deepEqual(loadRecord(storage as Storage), wallet.record, what);
+    assert.ok(!(stored(storage) ?? '').includes(wallet.words.split(' ')[0] ?? 'no words'), what);
+    assert.deepEqual(t.view().record, wallet.record, what);
+    // And so are the descriptors, which carry both the wallet fingerprint and the public key.
+    const own = `wpkh([${wallet.account.masterFingerprint}/84h/1h/0h]${wallet.account.xpub}/`;
+    assert.ok(t.session.descriptors()?.receive.startsWith(`${own}0/*)`), what);
+    assert.ok(t.session.descriptors()?.change.startsWith(`${own}1/*)`), what);
+    assert.equal(t.view().unlocked, true, what);
+    assert.deepEqual(t.session.revealWords(), wallet.words.split(' '), what);
+    // Whatever was read for the altered record is dropped: the wallet is opened again by its real key.
+    assert.equal(t.chain.opened.length, 2, what);
+    assert.deepEqual(t.chain.opened.at(-1), { xpub: wallet.account.xpub, seeded: false }, what);
+    assert.deepEqual(t.events, ['Unlock: tampered', 'Words shown: passkey'], what);
+    assert.deepEqual(t.chain.announced, ['unlocked'], what);
+    assert.deepEqual(auth.calls, [], 'no passkey was asked');
+
+    // The next unlock with the words is an ordinary one, and writes nothing.
+    t.session.lock();
+    const writes = storage.writes;
+    assert.equal(t.session.unlockWithWords(wallet.words), 'unlocked', what);
+    assert.equal(storage.writes, writes, what);
+  }
+
+  // Both parts altered: nothing of the record says it is this wallet's, so the words are another wallet's.
+  const both = lockedTab();
+  const forged = { ...both.wallet.record, fingerprint: B.masterFingerprint, xpub: B.xpub, firstAddress: firstOf(B) };
+  put(both.storage, forged);
+  assert.equal(both.session.unlockWithWords(both.wallet.words), 'other-wallet');
+  assert.deepEqual(JSON.parse(stored(both.storage) ?? ''), forged);
+  assert.equal(both.view().unlocked, false);
+
+  // Words that fit the altered fingerprint alone are judged the same way: one of the two fits, so the
+  // record was altered, and it is rebuilt from the words that were typed.
+  const half = lockedTab();
+  put(half.storage, { ...half.wallet.record, fingerprint: A.masterFingerprint });
+  assert.equal(half.session.unlockWithWords(A.mnemonic), 'tampered');
+  assert.deepEqual([half.view().record?.xpub, half.view().record?.fingerprint], [A.xpub, A.masterFingerprint]);
+  assert.equal(half.view().record?.credentialId, half.wallet.record.credentialId);
+
+  // The record cannot be written again (the browser stopped storing): the keys are not loaded on top of
+  // a record that is known to be wrong, and nothing is changed.
+  const storage = new FullStorage();
+  storage.full = false;
+  const stuck = lockedTab({ storage });
+  const altered = { ...stuck.wallet.record, xpub: B.xpub, firstAddress: firstOf(B) };
+  put(storage, altered);
+  storage.full = true;
+  assert.equal(stuck.session.unlockWithWords(stuck.wallet.words), 'no-storage');
+  assert.deepEqual(JSON.parse(stored(storage) ?? ''), altered);
+  assert.equal(stuck.view().unlocked, false);
+  assert.equal(stuck.session.revealWords(), null);
+  assert.deepEqual(stuck.events, []);
+});
+
 // -- lock, reveal, remove ---------------------------------------------------------------
 
 test('lock drops a passkey wallet\'s keys; a wallet made without a passkey stays unlocked', async () => {
@@ -1311,6 +1465,7 @@ test('removeWallet deletes this wallet\'s record and nothing else, and only the 
     persisted: null,
     setup: null,
     created: null,
+    createdName: null,
     pendingSwitch: null,
     pendingRestore: false,
     openedEmpty: false,
@@ -1560,6 +1715,7 @@ test('other tabs: a wallet removed elsewhere locks and empties this page', async
     persisted: null,
     setup: null,
     created: null,
+    createdName: null,
     pendingSwitch: null,
     pendingRestore: false,
     openedEmpty: false,
@@ -1596,6 +1752,57 @@ test('other tabs: a storage that was cleared counts; another key\'s change does 
   t.storage.map.clear();
   t.session.storageChanged(null);
   assert.deepEqual([t.view().status, t.view().unlocked, t.chain.closed], ['none', false, 1]);
+});
+
+test('other tabs: one wallet put in another\'s place is announced as "replaced", and nothing else is', async () => {
+  const theirs = makeRecord('words', A.mnemonic, START_MS);
+
+  // Another wallet where this page's wallet was: the screens are told, once.
+  const t = lockedTab();
+  put(t.storage, theirs);
+  t.session.storageChanged(RECORD_KEY);
+  assert.equal(t.view().record?.xpub, A.xpub);
+  assert.deepEqual(t.chain.announced, ['replaced']);
+  // The same event again, and a change that leaves the wallet what it is (the same record written again): nothing new to say.
+  t.session.storageChanged(RECORD_KEY);
+  put(t.storage, { ...theirs, createdAt: START_MS + 1000 });
+  t.session.storageChanged(RECORD_KEY);
+  assert.deepEqual(t.chain.announced, ['replaced']);
+
+  // Found by an action of this page before the storage event came: said then, and not a second time when the event arrives.
+  const u = lockedTab();
+  put(u.storage, theirs);
+  assert.deepEqual(await u.session.unlock(), { kind: 'unlocked' }, 'the wallet that is here now keeps its words in the record');
+  assert.deepEqual(u.chain.announced, ['replaced']);
+  u.session.storageChanged(RECORD_KEY);
+  assert.deepEqual(u.chain.announced, ['replaced']);
+
+  // A wallet removed elsewhere, one that arrives where there was none, and what cannot be read: not "replaced".
+  const removed = lockedTab();
+  removed.storage.map.delete(RECORD_KEY);
+  removed.session.storageChanged(RECORD_KEY);
+  put(removed.storage, theirs);
+  removed.session.storageChanged(RECORD_KEY);
+  put(removed.storage, 'not a record');
+  removed.session.storageChanged(RECORD_KEY);
+  assert.deepEqual(removed.chain.announced, []);
+
+  // What this page does to its own wallet is never "replaced": a switch, a record rebuilt, a remove and a restore.
+  const own = lockedTab();
+  passkeyWallet(own.auth, 2);
+  own.auth.pick = 1;
+  assert.equal((await own.session.unlock('picker')).kind, 'other-passkey');
+  assert.equal(own.session.confirmSwitch(), 'switched');
+  assert.equal(own.session.removeWallet(), 'removed');
+  assert.deepEqual(await own.session.restore(A.mnemonic), { kind: 'empty' });
+  assert.equal(own.session.keepRestored(), 'restored');
+  assert.ok(!own.chain.announced.includes('replaced'), own.chain.announced.join(' '));
+  const rebuilt = lockedTab();
+  put(rebuilt.storage, { ...rebuilt.wallet.record, xpub: B.xpub, firstAddress: firstOf(B) });
+  rebuilt.session.storageChanged(RECORD_KEY);
+  assert.deepEqual(rebuilt.chain.announced, ['replaced'], 'the altered record is another wallet to this page, until an unlock says otherwise');
+  assert.deepEqual(await rebuilt.session.unlock(), { kind: 'tampered' });
+  assert.deepEqual(rebuilt.chain.announced, ['replaced', 'unlocked']);
 });
 
 test('other tabs: a write that lands between this page\'s own look at the storage and its write is never written over', async () => {
@@ -1708,37 +1915,65 @@ test('beforeBotCheck: a wallet made without a passkey can still show its words a
   assert.equal(t.session.unlockWithWords(A.mnemonic), 'reload');
 });
 
-test('the bot check arrives while a prompt is open: what the prompt gives is thrown away', async () => {
+test('the bot check arrives while a prompt is open: the prompt is ended, and what it gives afterwards is never read', async () => {
+  // The stand-in manager does not listen when it is told to close a prompt: the worst provider there is.
+  // So the prompt really is still open when the script comes, and is answered with the script in the page.
+  const answered = async (release: () => void): Promise<void> => {
+    release();
+    await flush();
+    await flush();
+  };
+
   // An unlock.
   const t = lockedTab();
   let release = t.auth.hold();
   const unlocking = t.session.unlock();
+  await flush();
+  let reads = t.auth.secretReads;
   t.session.beforeBotCheck();
-  release();
+  // The prompt is told to close, and the call answers without waiting for the reader ...
+  assert.equal(t.auth.signals.at(-1)?.aborted, true);
   assert.deepEqual(await unlocking, { kind: 'reload' });
+  // ... so when the reader answers it after all, with the script in the page, the secret is never read.
+  await answered(release);
+  assert.equal(t.auth.secretReads, reads, 'the passkey answered after the bot check came, and the page read its secret');
   assert.equal(t.view().unlocked, false);
   assert.equal(t.session.revealWords(), null);
-  assert.deepEqual(t.events, []);
+  assert.deepEqual(t.events, [], 'nothing is counted for a prompt the page ended');
 
-  // A create: the passkey exists, nothing is stored here, and nothing tells the provider to forget it.
-  // After the reload, "Open with my passkey" finds it.
+  // A create: nothing is stored here, and nothing tells the provider to forget a passkey.
+  // (If the provider made one all the same, "Open with my passkey" finds it after the reload.)
   const c = start();
   release = c.auth.hold();
   const creating = c.session.createWithPasskey();
+  await flush();
+  reads = c.auth.secretReads;
   c.session.beforeBotCheck();
-  release();
+  assert.equal(c.auth.signals.at(-1)?.aborted, true);
   assert.deepEqual(await creating, { kind: 'reload' });
+  await answered(release);
+  assert.equal(c.auth.secretReads, reads);
   assert.deepEqual([stored(c.storage), c.view().status, c.view().unlocked, c.auth.forgotten], [null, 'none', false, []]);
+  assert.deepEqual(c.auth.calls, ['create'], 'no follow-up prompt was opened');
 
   // An open.
   const o = start();
   passkeyWallet(o.auth);
   release = o.auth.hold();
   const opening = o.session.openWithPasskey();
+  await flush();
+  reads = o.auth.secretReads;
   o.session.beforeBotCheck();
-  release();
+  assert.equal(o.auth.signals.at(-1)?.aborted, true);
   assert.deepEqual(await opening, { kind: 'reload' });
+  await answered(release);
+  assert.equal(o.auth.secretReads, reads);
   assert.deepEqual([stored(o.storage), o.view().status], [null, 'none']);
+
+  // A port that cannot end a prompt (it throws) stops nothing: the keys are dropped all the same.
+  const boom = start({ passkeys: { ...answering(null), end: () => { throw new Error('no'); } } });
+  boom.session.beforeBotCheck();
+  assert.deepEqual(await boom.session.openWithPasskey(), { kind: 'reload' });
 
   // A restore whose scan was running: the words are dropped and nothing is stored.
   const r = start();
@@ -1768,7 +2003,7 @@ async function everyAction(session: Session): Promise<void> {
   for (const how of ['stored', 'picker', undefined] as const) {
     check('unlock', (await session.unlock(how)).kind, ['unlocked', 'tampered', 'other-passkey', 'changed', 'gone', ...ceremony]);
   }
-  check('unlockWithWords', session.unlockWithWords(A.mnemonic), ['unlocked', 'invalid', 'other-wallet', 'gone', 'reload', 'broken']);
+  check('unlockWithWords', session.unlockWithWords(A.mnemonic), ['unlocked', 'tampered', 'invalid', 'other-wallet', 'no-storage', 'gone', 'reload', 'broken']);
   check('confirmSwitch', session.confirmSwitch(), ['switched', 'gone', 'no-storage', 'nothing-pending']);
   session.cancelSwitch();
   assert.equal(typeof session.checkWords(A.mnemonic).valid, 'boolean');
@@ -1829,7 +2064,7 @@ test('passkey calls that throw, reject or answer nonsense: an "error" answer, an
     throw new Error('not today');
   };
   const ports: [string, PasskeyPort][] = [
-    ['throws before it returns', { offered: boom, create: boom, finish: boom, get: boom, signalUnknown: boom }],
+    ['throws before it returns', { offered: boom, create: boom, finish: boom, get: boom, signalUnknown: boom, end: boom }],
     ['rejects', { ...answering(null), create: () => Promise.reject(new TypeError('x')), get: () => Promise.reject(new TypeError('x')) }],
     ['null', answering(null)],
     ['a string', answering('ok')],
@@ -2482,7 +2717,7 @@ test('the whole engine with everything around it failing: every action of Wallet
     // Nothing works at all.
     makeEngine({
       local: new BlockedStorage() as Storage,
-      passkeys: { offered: boom, create: boom, finish: boom, get: boom, signalUnknown: boom },
+      passkeys: { offered: boom, create: boom, finish: boom, get: boom, signalUnknown: boom, end: boom },
       api: makeApi(boom),
       now: boom,
       timers: { set: boom, clear: boom },

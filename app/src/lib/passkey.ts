@@ -14,6 +14,8 @@
 //   - One prompt at a time. A second call while one is open answers "Busy".
 //   - No prompt stays open for ever. A little after the browser should have
 //     ended one, this file ends it itself, so "Busy" always passes.
+//   - The page can end the open prompt itself (endPrompt). Its answer, if
+//     one still comes, is never read.
 //   - The 32 bytes are the wallet. They leave this file only inside an "ok"
 //     outcome. Nothing here logs, and a credential is never turned into
 //     JSON: its JSON form holds the secret as text.
@@ -299,6 +301,23 @@ async function ceremony(run: () => Promise<PasskeyOutcome>): Promise<PasskeyOutc
 /** What ask() hears from its own timer when it gives up on a prompt: a value no browser call resolves with. */
 const GAVE_UP = Symbol('gave up');
 
+/** Ends the browser call that is waiting for the reader, if one is. Set by ask() for as long as it waits. */
+let endOpenCall: (() => void) | null = null;
+
+/**
+ * Ends the passkey prompt this page has open, if it has one: the browser is
+ * told to close it, and whoever asked is answered "cancelled" at once.
+ * What the browser hands back for that prompt afterwards, if anything, is
+ * never read.
+ *
+ * The wallet calls this before somebody else's code (the faucet's bot
+ * check) is let into the page. A prompt answered after that would hand the
+ * passkey's secret to a page that such code can read.
+ */
+export function endPrompt(): void {
+  endOpenCall?.();
+}
+
 /**
  * Makes one browser call and says how it ended: with an answer, or with a
  * failure.
@@ -306,13 +325,16 @@ const GAVE_UP = Symbol('gave up');
  * The call is handed a signal to pass on to the browser. If the prompt is
  * still open at GIVE_UP_MS, the signal tells the browser to close it, and
  * this function stops waiting whether the browser listens or not. That
- * ending is reported as a prompt that ran out of time.
+ * ending is reported as a prompt that ran out of time. endPrompt() ends it
+ * the same way, at once, and that ending is a plain "cancelled".
  */
 async function ask(
   call: (signal: AbortSignal) => Promise<unknown>,
 ): Promise<{ answer: unknown } | { failure: Failure }> {
   const started = Date.now();
   const controller = new AbortController();
+  /** True once the page itself has ended this prompt (endPrompt). */
+  let ended = false;
   let giveUp = (): void => {};
   const gaveUp = new Promise<typeof GAVE_UP>((resolve) => {
     giveUp = () => resolve(GAVE_UP);
@@ -323,18 +345,27 @@ async function ask(
     controller.abort();
     giveUp();
   }, GIVE_UP_MS);
+  const end = (): void => {
+    ended = true;
+    controller.abort();
+    giveUp();
+  };
+  endOpenCall = end;
   try {
     const answer = await Promise.race([call(controller.signal), gaveUp]);
+    // Ended by the page: whatever came back in the same moment is left unread.
+    if (ended) return { failure: { kind: 'cancelled', timedOut: false } };
     if (answer === GAVE_UP) return { failure: { kind: 'cancelled', timedOut: true } };
     return { answer };
   } catch (error) {
     // A rejection after our own abort is the prompt this file ended, whatever
     // name the browser gives it (AbortError, by the standard).
-    if (controller.signal.aborted) return { failure: { kind: 'cancelled', timedOut: true } };
+    if (controller.signal.aborted) return { failure: { kind: 'cancelled', timedOut: !ended } };
     // The clock is read here, not kept by a timer: a hidden tab may run its timers late.
     return { failure: failureOf(error, Date.now() - started >= TIMED_OUT_FROM_MS) };
   } finally {
     clearTimeout(timer);
+    if (endOpenCall === end) endOpenCall = null;
   }
 }
 

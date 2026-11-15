@@ -17,10 +17,12 @@ import {
 } from '@learnbitcoin/practice-wallet';
 import { splitLead } from '../src/components/text.ts';
 import {
+  FAUCET_PART,
   SAFARI_KEEPS_DAYS,
   SECTIONS,
   chainFailureText,
   chainPhase,
+  faucetLink,
   noteAnnouncement,
   noticeText,
   satsText,
@@ -36,10 +38,10 @@ import {
 import { WORD_COUNT, checkFields, placeWords, splitWords } from '../src/components/wallet/words.ts';
 import type { ApiFailure } from '../src/lib/api.ts';
 import { fill, slotNames } from '../src/lib/format.ts';
-import { needsWallet } from '../src/lib/router.ts';
+import { needsWallet, pathFor } from '../src/lib/router.ts';
 import type { CeremonyFailure, Notice, UnlockResult, UnlockWordsResult, WordsCheck } from '../src/lib/wallet-api.ts';
 import { strings } from '../src/strings/index.ts';
-import { frameDemo, galleryPage } from '../dev/pages.ts';
+import { frameDemo, galleryPage, playSteps } from '../dev/pages.ts';
 import { parseSteps } from '../dev/play.ts';
 
 /** WalletApi.checkWords, as the wallet package answers it. */
@@ -163,6 +165,36 @@ test('the sections are the seven wallet routes, each with a name in both languag
   }
 });
 
+test('"Get practice coins" leads to the faucet itself, a part of Receive, and never to the top of that screen', () => {
+  // On a phone the faucet is one to three screens below the top of Receive, under the address and
+  // its QR code. A reader who pressed "Get practice coins" must land where coins can be asked for.
+  assert.equal(FAUCET_PART, 'faucet');
+  assert.equal(faucetLink(pathFor({ name: 'receive' }, 'en')), '/wallet/receive#faucet');
+  assert.equal(faucetLink(pathFor({ name: 'receive' }, 'es')), '/es/wallet/receive#faucet');
+  // Every button with those words on another screen: the empty state of the Overview and of Send
+  // (NoCoins), Coins, Activity, and the first cause on the Overview of a wallet just opened.
+  const text = (path: string): string => readFileSync(new URL(`../src/${path}`, import.meta.url), 'utf8');
+  const leading = ['components/wallet/NoCoins.svelte', 'screens/Coins.svelte', 'screens/read/ActivityList.svelte', 'screens/read/OpenedEmpty.svelte'];
+  for (const path of leading) {
+    const source = text(path);
+    const buttons = source.match(/<Button[^>]*>\s*\{t\.getCoins\}\s*<\/Button>/g) ?? [];
+    assert.equal(buttons.length, 1, path);
+    assert.match(buttons[0] ?? '', /href=\{faucetLink\(router\.link\(\{ name: 'receive' \}\)\)\}/, path);
+  }
+  // No other file names that button, so none can lead to the top of the screen with its words.
+  const root = new URL('../src/', import.meta.url);
+  for (const name of readdirSync(root, { recursive: true, encoding: 'utf8' }).filter((each) => each.endsWith('.svelte'))) {
+    if (/\{t\.getCoins\}/.test(text(name))) assert.ok(leading.includes(name), `${name} has a "Get practice coins" of its own`);
+  }
+  // The faucet's card is that part, takes it when the screen was opened for it, and has a heading that can take focus.
+  const card = text('screens/receive/FaucetCard.svelte');
+  assert.match(card, /<Card tone="grey" title=\{t\.faucetTitle\} id=\{FAUCET_PART\}/);
+  assert.match(card, /if \(!router\.takePart\(FAUCET_PART\)\) return;/);
+  assert.match(text('components/Card.svelte'), /\{#if title && part !== undefined\}[\s\S]*?<h2 id="\{id\}-title" tabindex="-1"/);
+  // The words are the faucet's own button's words, in both languages.
+  for (const lang of LANGS) assert.equal(strings.wallet[lang].getCoins, strings.receive[lang].faucetAsk, lang);
+});
+
 test('chainPhase: no total until the first look has worked, and old values stay after a later failure', () => {
   const state = {} as NonNullable<Parameters<typeof chainPhase>[0]['state']>;
   assert.equal(chainPhase({ state: null, error: null }), 'looking');
@@ -178,6 +210,7 @@ test('noticeText: one sentence for each thing the wallet announces, in both lang
     'payment-sent': { id: 3, kind: 'payment-sent' },
     unlocked: { id: 4, kind: 'unlocked' },
     locked: { id: 5, kind: 'locked' },
+    replaced: { id: 6, kind: 'replaced' },
   };
   for (const lang of LANGS) {
     const said = Object.values(notices).map((notice) => noticeText(notice, lang));
@@ -193,6 +226,18 @@ test('noticeText: one sentence for each thing the wallet announces, in both lang
   assert.equal(noticeText({ id: 6, kind: 'coins-arrived', sats: 1n }, 'en'), '1 practice sat arrived.');
   assert.equal(noticeText({ id: 6, kind: 'coins-arrived', sats: 1n }, 'es'), 'Llegó 1 sat de práctica.');
   assert.equal(noticeText(notices.confirmed, 'en'), '1 confirmation.');
+  // Another tab put a different wallet here: the first sentence of the note the frame shows, which
+  // says the rest (what the screen shows now).
+  assert.equal(noticeText(notices.replaced, 'en'), 'The wallet in this browser was replaced in another tab.');
+  assert.equal(noticeText(notices.replaced, 'es'), 'La billetera de este navegador fue reemplazada en otra pestaña.');
+  for (const lang of LANGS) {
+    assert.ok(strings.wallet[lang].noteReplaced.startsWith(`${noticeText(notices.replaced, lang)} `), lang);
+    // The note the frame draws for it is said by that sentence, and not a second time as a note.
+    assert.equal(noteAnnouncement({ kind: 'replaced' }, lang), null, lang);
+  }
+  const frame = readFileSync(new URL('../src/components/wallet/WalletFrame.svelte', import.meta.url), 'utf8');
+  assert.match(frame, /if \(notice\.kind === 'replaced'\) untrack\(\(\) => \(notes\.note = \{ kind: 'replaced' \}\)\);/);
+  assert.match(frame, /<Notice kind="caution" text=\{t\.noteReplaced\} data-testid="replaced-note">/);
 });
 
 test('chainFailureText: the frame does not tell the reader to wait a minute above its own countdown', () => {
@@ -268,9 +313,10 @@ const OPENED: Record<Exclude<UnlockResult['kind'], UnlockRefusal['kind']>, true>
   tampered: true,
   'other-passkey': true,
 };
-const WORD_REFUSALS: Record<Exclude<UnlockWordsResult, 'unlocked'>, UnlockProblem['kind']> = {
+const WORD_REFUSALS: Record<Exclude<UnlockWordsResult, 'unlocked' | 'tampered'>, UnlockProblem['kind']> = {
   invalid: 'words-invalid',
   'other-wallet': 'other-wallet',
+  'no-storage': 'words-no-storage',
   gone: 'gone',
   reload: 'passkey',
   broken: 'passkey',
@@ -299,9 +345,28 @@ test('unlock: one button before any try; the picker and the words after a refusa
     assert.deepEqual(unlockOffers({ kind: 'passkey', failure: CEREMONY[kind] }, true), all, kind);
   }
   assert.deepEqual(unlockOffers({ kind: 'passkey', failure: { kind: 'cancelled', timedOut: true } }, true), all);
-  for (const kind of ['words-invalid', 'other-wallet', 'no-storage'] as const) {
+  for (const kind of ['words-invalid', 'other-wallet', 'words-no-storage', 'no-storage'] as const) {
     assert.deepEqual(unlockOffers({ kind }, true), all, kind);
   }
+});
+
+test('unlock with the 12 words: an altered record is told as after a passkey, and an answer about the words goes when the words change', () => {
+  const source = readFileSync(new URL('../src/components/wallet/Unlock.svelte', import.meta.url), 'utf8');
+  // "tampered" from the words is the passkey's "tampered": the frame's note, and the screen is told.
+  assert.match(
+    source,
+    /if \(result === 'tampered'\) \{\s*(\/\/[^\n]*\n\s*)*if \(notes !== null\) notes\.note = \{ kind: 'tampered' \};\s*void finish\('tampered', done\);/,
+  );
+  // The browser would not store the rebuilt record: said with the sentence for a browser that stores nothing.
+  assert.match(source, /problem\.kind === 'words-no-storage'\}\s*(<!--[^>]*-->\s*)?<Notice kind="problem" text=\{t\.noStorage\} data-testid="unlock-problem" \/>/);
+  // What was said about the words that were tried is taken away as soon as the reader changes them:
+  // "These 12 words are valid" must not stand under a field that says its word is not on the list.
+  assert.match(source, /<WordsInput bind:this=\{input\} onenter=\{unlockWithWords\} onedit=\{wordsEdited\} \/>/);
+  assert.match(source, /function wordsEdited\(\): void \{[\s\S]*?if \(about === 'other-wallet' \|\| about === 'words-invalid' \|\| about === 'words-no-storage'\) problem = null;/);
+  const fields = readFileSync(new URL('../src/components/wallet/WordsInput.svelte', import.meta.url), 'utf8');
+  // Typing and pasting both say so.
+  assert.equal(fields.match(/onedit\?\.\(\);/g)?.length, 2);
+  assert.match(fields, /function typed\(index: number\): void \{\s*failed = false;\s*onedit\?\.\(\);/);
 });
 
 test('unlock: after "changed" only the words; after "gone", "reload" and "broken" nothing', () => {
@@ -332,6 +397,169 @@ test('unlock: what went wrong is drawn under the word fields, right above the bu
   assert.ok(answer < at('data-testid="unlock"'), 'and before the passkey buttons');
   // Every answer is drawn there: none is left above the fields.
   assert.equal(markup.slice(0, fields).includes('data-testid="unlock-problem"'), false);
+});
+
+/** A piece's source without its comments, so that a rule about the code is not met by a sentence about it. */
+function codeOf(path: string): string {
+  return readFileSync(new URL(path, import.meta.url), 'utf8')
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^\s*\/\/.*$/gm, '');
+}
+
+test('the question before a switch is one piece, asked by the unlock step and by the Overview alike', () => {
+  const question = codeOf('../src/components/wallet/SwitchQuestion.svelte');
+  const unlock = codeOf('../src/components/wallet/Unlock.svelte');
+  const overview = codeOf('../src/screens/read/OpenedEmpty.svelte');
+  // The question, what tells the two wallets apart, and the two answers are written once.
+  for (const hook of ['switch-question', 'switch-confirm', 'switch-cancel']) {
+    assert.equal(question.match(new RegExp(`data-testid="${hook}"`, 'g'))?.length, 1, hook);
+    assert.doesNotMatch(unlock, new RegExp(`data-testid="${hook}"`), `Unlock.svelte: ${hook}`);
+    assert.doesNotMatch(overview, new RegExp(`data-testid="${hook}"`), `OpenedEmpty.svelte: ${hook}`);
+  }
+  assert.match(question, /<WalletId tag=\{pending\.tag\} fingerprint=\{pending\.fingerprint\} \/>/);
+  for (const caller of [unlock, overview]) {
+    assert.equal(caller.match(/<SwitchQuestion\b/g)?.length, 1);
+    assert.doesNotMatch(caller, /<WalletId\b|t\.switchAsk\b|t\.switchYes\b|t\.switchNo\b|t\.switchLead\b/);
+  }
+  // The piece asks and no more: what an answer does is the caller's.
+  assert.doesNotMatch(question, /useWallet|confirmSwitch|cancelSwitch/);
+  assert.match(unlock, /onswitch=\{switchWallet\}\s+onkeep=\{keepWallet\}/);
+  assert.match(overview, /onswitch=\{\(\) => void switchWallet\(\)\}\s+onkeep=\{keepWallet\}/);
+
+  // A switch the browser would not store: the wallet keeps the offer, so the question stays, and
+  // the reason stands inside it, above the two answers, where it is read out.
+  const refused = question.indexOf('{#if refused}');
+  assert.ok(refused > question.indexOf('{t.switchAsk}') && refused < question.indexOf('data-testid="switch-confirm"'));
+  assert.match(question, /\{#if refused\}\s*<p [^>]*role="alert" data-testid=\{refusedHook\}>\{t\.switchNoStorage\}<\/p>/);
+  // Each caller says it under the hook its own answers carry.
+  assert.match(unlock, /refused=\{switchRefused\}\s+refusedHook="unlock-problem"/);
+  assert.match(overview, /\{refused\}\s+refusedHook="opened-problem"/);
+  assert.match(unlock, /if \(result === 'no-storage' && wallet\.pendingSwitch !== null\) \{\s*switchRefused = true;/);
+
+  // The two answers are one width where they stand one under the other.
+  assert.equal(question.match(/<Button class="w-full sm:w-auto" data-testid="switch-(confirm|cancel)"/g)?.length, 2);
+});
+
+test('what is stored cannot be used: Remove asks first, and the question cannot be answered before it is seen', () => {
+  const piece = codeOf('../src/components/wallet/StoredTrouble.svelte');
+  // Focus by itself must not move the page: a browser would bring the question to the middle of the
+  // screen, where "Remove it" can land under the finger that pressed the button. The whole question
+  // is brought on screen by the shortest way instead.
+  assert.match(piece, /question\?\.focus\(\{ preventScroll: true \}\);\s*box\?\.scrollIntoView\(\{ block: 'nearest' \}\);/);
+  // Neither answer counts in the first moment, or as the second click of a double tap.
+  assert.match(piece, /function tooSoon\(event: MouseEvent\): boolean \{\s*return !answerCounts\(performance\.now\(\) - askedAt, event\);/);
+  assert.match(piece, /async function keep\(event: MouseEvent\): Promise<void> \{\s*if \(tooSoon\(event\)\) return;/);
+  assert.match(piece, /async function remove\(event: MouseEvent\): Promise<void> \{\s*if \(tooSoon\(event\)\) return;/);
+  assert.match(piece, /askedAt = performance\.now\(\);/);
+  // The buttons of each group are one width where they stand one under the other.
+  const markup = piece.slice(piece.indexOf('</script>'));
+  const unreadable = markup.slice(markup.indexOf("{#if status === 'unreadable'}"), markup.indexOf("{:else if status === 'newer'}"));
+  const buttons = unreadable.match(/<(Button|ReloadButton)\b[^>]*>/g) ?? [];
+  assert.equal(buttons.length, 4, 'Reload, Remove, and the two answers');
+  for (const button of buttons) assert.match(button, /class="w-full sm:w-auto"/, button);
+});
+
+test('open with my passkey: every answer is handed on, and the button can be sized from outside', () => {
+  const piece = codeOf('../src/components/wallet/OpenWithPasskey.svelte');
+  // "exists" takes the piece off a screen that draws it only while there is no wallet: such a
+  // screen has to say it itself, so it is told.
+  assert.match(piece, /onanswer\?: \(answer: Exclude<OpenResult, \{ kind: 'opened' \}>\) => void;/);
+  assert.match(piece, /const answered = onanswer;/);
+  assert.match(piece, /answer = result;\s*answered\?\.\(result\);/);
+  assert.match(piece, /<Button\s+\{variant\}\s+class=\{buttonClass\}\s+data-testid="open-passkey"/);
+});
+
+test('a transaction row: on a phone its four parts stand one under the other, in every row alike', () => {
+  // Side by side where they fit, "Sent" and its amount shared a line and "Received" and its amount
+  // took two: rows of one list differed. From 640 px up every pair fits.
+  const row = codeOf('../src/components/wallet/TxRow.svelte');
+  const lines = row.match(/<span class="[^"]*\bflex\b[^"]*">/g) ?? [];
+  assert.equal(lines.length, 2, 'the direction with its amount, and when with the ID');
+  for (const line of lines) {
+    assert.match(line, /\bflex-col\b/, line);
+    assert.match(line, /\bsm:flex-row\b/, line);
+    assert.match(line, /\bsm:justify-between\b/, line);
+    // Never "wrap where it must" on a phone: that is what made the rows differ.
+    assert.doesNotMatch(line, /(^|[\s"])flex-wrap\b/, line);
+  }
+});
+
+test('the gate with no wallet: its three ways in are one width on a phone, and so is the way back under Backup\'s unlock step', () => {
+  // Stacked buttons of one group get one width, the whole column under 640 px.
+  const gate = readFileSync(new URL('../src/components/wallet/NoWallet.svelte', import.meta.url), 'utf8');
+  assert.match(gate, /<OpenWithPasskey \{onopened\} buttonClass="w-full sm:w-auto" \/>/);
+  const links = gate.match(/<Button [^>]*href=[^>]*>/g) ?? [];
+  assert.equal(links.length, 2, 'Restore and Create');
+  for (const link of links) assert.match(link, /class="w-full sm:w-auto"/, link);
+  // The piece that draws the first of the three hands the width on to its button.
+  const open = readFileSync(new URL('../src/components/wallet/OpenWithPasskey.svelte', import.meta.url), 'utf8');
+  assert.match(open, /<Button\s+\{variant\}\s+class=\{buttonClass\}\s+data-testid="open-passkey"/);
+
+  // Backup's unlock step has a way back, as Send's has: a button as wide as the step's own, off
+  // while a passkey prompt is open, that returns to the screen's first view.
+  const backup = readFileSync(new URL('../src/screens/Backup.svelte', import.meta.url), 'utf8');
+  assert.match(
+    backup,
+    /<Unlock why=\{t\.unlockWhy\} onunlocked=\{unlocked\} \/>\s*<Actions>\s*(<!--[^>]*-->\s*)?<Button class="w-full sm:w-auto" data-testid="backup-unlock-back" disabled=\{working\(\)\} onclick=\{\(\) => void leaveUnlock\(\)\}>\s*\{c\.back\}/,
+  );
+  assert.match(backup, /async function leaveUnlock\(\): Promise<void> \{\s*if \(working\(\)\) return;\s*unlocking = false;/);
+});
+
+test('unlock: the buttons of a group are one width on a phone', () => {
+  const unlock = codeOf('../src/components/wallet/Unlock.svelte');
+  const markup = unlock.slice(unlock.indexOf('</script>'));
+  const buttons = markup.match(/<Button\b[^>]*>/g) ?? [];
+  // The passkey's, the picker's, the words', "Unlock with these words" and the way back from the fields.
+  assert.equal(buttons.length, 5);
+  for (const button of buttons) assert.match(button, /class="w-full sm:w-auto"/, button);
+});
+
+test('unlock: the same screen in the other language is the same screen', () => {
+  // A reader who switches language while the passkey prompt is open is still waiting for the
+  // step's answer. The address has changed (/wallet/backup to /es/wallet/backup); the screen has not.
+  // The step goes by the app's count of the screens it has put on the page, which stays the same
+  // when only the language changes (App.svelte's block is keyed on the screen, and the marker in
+  // front of it counts: test/shell.test.ts).
+  const unlock = codeOf('../src/components/wallet/Unlock.svelte');
+  assert.match(unlock, /const screen = screenNumber\(\);/);
+  assert.match(unlock, /if \(!opened \|\| screenNumber\(\) !== screen\) return;/);
+  // Not by the address, and not by the screen's name read when the answer comes either: a reader who
+  // left with the prompt open and is back at the address by then is on a new screen, which asked
+  // for nothing. The old one is gone, and telling it would have it take the 12 words (and the
+  // wallet count them as shown) for nobody to see. (e2e/scenarios/keys.test.ts plays it.)
+  assert.doesNotMatch(unlock, /router\.path/);
+  assert.doesNotMatch(unlock, /router\.route\.name/);
+  // The Overview's own prompt goes by the same rule.
+  const overview = codeOf('../src/screens/read/OpenedEmpty.svelte');
+  assert.match(overview, /const from = router\.route\.name;/);
+  assert.doesNotMatch(overview, /router\.path/);
+});
+
+test('unlock: focus is moved only for a reader who is still waiting at the step', () => {
+  const unlock = codeOf('../src/components/wallet/Unlock.svelte');
+  // The step was off the screen before its answer came (its screen took it away with the keys, or
+  // the reader left it by the screen's way back). The screen is still told. Focus goes to the
+  // heading only if it went with the step; a reader who is somewhere else on the screen keeps it.
+  assert.match(
+    unlock,
+    /const left = gone;\s*done\(how\);\s*await tick\(\);\s*const lost = document\.activeElement === null \|\| document\.activeElement === document\.body;\s*if \(left && !lost\) return;\s*focusHeading\(\);/,
+  );
+  // Why the step left is never judged from the app's state as it is torn down: during a teardown
+  // Svelte answers a read of state with the value from before the change that caused it. Read
+  // there, "is the wallet unlocked?" says no for the very unlock that takes the step away, and
+  // focus was left on the page itself (seen in the gallery, then fixed).
+  const teardown = /onDestroy\(\(\) => \{([\s\S]*?)\n  \}\);/.exec(unlock)?.[1] ?? '';
+  assert.match(teardown, /gone = true;/);
+  assert.doesNotMatch(teardown, /wallet\.unlocked|router\.route|router\.lang/);
+});
+
+test('unlock: a caller can start the step as it stands after a refused try', () => {
+  const unlock = codeOf('../src/components/wallet/Unlock.svelte');
+  assert.match(unlock, /refused: startRefused = false/);
+  assert.match(unlock, /let refused = \$state\(untrack\(\(\) => startRefused\)\);/);
+  // Which is: all three ways on, with nothing said to be wrong.
+  assert.deepEqual(unlockOffers(null, true), { stored: true, picker: true, words: true });
 });
 
 // -- coins and transactions ---------------------------------------------------------
@@ -413,6 +641,12 @@ test('wallet text: the sentences SPEC section 3 and 4 give word for word', () =>
   assert.equal(en.chainSlow, "The practice network is slow right now. That is our fault, not your wallet's.");
   assert.equal(en.unlockPromise, 'Unlocking sends nothing. You will check the payment first.');
   assert.equal(en.noCoins, 'No coins yet.');
+  // A wallet that has sent its last coin is not told that none have come yet.
+  assert.equal(en.noCoinsLeft, 'No coins left.');
+  assert.equal(strings.wallet.es.noCoinsLeft, 'No quedan monedas.');
+  const noCoins = readFileSync(new URL('../src/components/wallet/NoCoins.svelte', import.meta.url), 'utf8');
+  assert.match(noCoins, /text=\{used \? t\.noCoinsLeft : t\.noCoins\}/);
+  assert.match(noCoins, /state\.receive\.some\(\(address\) => address\.used\) \|\| state\.change\.some\(\(address\) => address\.used\)/);
   assert.equal(en.getCoins, 'Get practice coins');
   // The short form of the exception paragraph (notes/06 section 3.5), in both languages.
   assert.equal(en.wordsException, 'Practice words only. The words of a real wallet never go into a web page, this one included.');
@@ -562,6 +796,13 @@ test('gallery: its own pages have their addresses in both languages, and "#frame
   assert.equal(frameDemo('#frame'), '');
   assert.equal(frameDemo('#frame:demo-keys,unlock'), 'demo-keys,unlock');
   assert.equal(frameDemo('#framed'), null);
+  // "#play:" asks for steps on the app's own screen, on any route. Without steps it asks for nothing.
+  assert.equal(playSteps('#play:send-continue,unlock'), 'send-continue,unlock');
+  assert.equal(playSteps('#play:words=abandon+about,wait%3D300'), 'words=abandon+about,wait=300');
+  assert.equal(playSteps('#play'), null);
+  assert.equal(playSteps(''), null);
+  assert.equal(playSteps('#frame:demo-keys'), null);
+  assert.equal(frameDemo('#play:unlock'), null);
 });
 
 test('gallery: steps written at the end of an address', () => {

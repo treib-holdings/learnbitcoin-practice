@@ -13,7 +13,7 @@
   //
   // So no wallet screen ever has to ask whether there is a wallet. A route
   // that needs none (Home, Create, Restore, About, the Sparrow page) is
-  // always drawn: Home shows the same pieces itself (NoWallet,
+  // always drawn: Home shows the same ways in itself (OpenWithPasskey,
   // StoredTrouble), in its own layout.
 
   import { tick, type Snippet } from 'svelte';

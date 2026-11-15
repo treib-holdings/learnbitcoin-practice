@@ -23,6 +23,13 @@
   //       <TextInput {...field} bind:value={address} mono />
   //     {/snippet}
   //   </Field>
+  //
+  // An error is one sentence. What belongs to it and is more than that (a
+  // second paragraph, a button that puts it right, a link) goes in the
+  // `after` snippet. It is drawn under the sentence, inside the element the
+  // control names as its description, so a screen reader hears it with the
+  // error and the caller wires nothing by hand. It shows only while there
+  // is an error: a note that stands without one is the screen's own.
 
   import type { Snippet } from 'svelte';
 
@@ -32,11 +39,15 @@
     hint?: string;
     /** What is wrong with what was typed: the cause, then the way out. Empty: nothing is wrong. */
     error?: string;
+    /** More that belongs to the error, drawn under it and read out with it. Not drawn while there is no error. */
+    after?: Snippet;
     class?: string;
     children: Snippet<[FieldAttributes]>;
   }
 
-  let { label, hint = '', error = '', class: extra = '', children }: Props = $props();
+  let { label, hint = '', error = '', after, class: extra = '', children }: Props = $props();
+
+  const ERROR = 'text-pretty text-sm font-semibold leading-relaxed text-ink-800';
 
   // Unique to this field, so two fields on one screen never share an id.
   const id = $props.id();
@@ -58,6 +69,14 @@
   {/if}
   {@render children(attributes)}
   {#if error !== ''}
-    <p id="{id}-error" class="text-pretty text-sm font-semibold leading-relaxed text-ink-800">{error}</p>
+    {#if after}
+      <!-- The whole of it is the control's description: the sentence and what the caller hangs under it. -->
+      <div id="{id}-error" class="flex flex-col gap-2">
+        <p class={ERROR}>{error}</p>
+        {@render after()}
+      </div>
+    {:else}
+      <p id="{id}-error" class={ERROR}>{error}</p>
+    {/if}
   {/if}
 </div>

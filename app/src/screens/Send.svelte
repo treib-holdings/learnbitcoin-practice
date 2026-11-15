@@ -21,16 +21,22 @@
   // What each answer of the wallet leads to is in send/flow.ts. Both are
   // plain functions with tests of their own.
   //
-  // What the reader typed lives as long as the screen does, so "Change it"
-  // and a refused payment find the form as it was left. The signed payment
-  // lives only on the review: it is dropped when the reader goes back to the
-  // form, locks the wallet or leaves the screen.
+  // What the reader typed lives as long as the page does, so "Change it"
+  // and a refused payment find the form as it was left, and so does a
+  // reader who left the screen and came back (the browser's Back button at
+  // the unlock step or at the review leaves Send altogether): send/kept.ts.
+  // It is forgotten once the payment is sent. The signed payment lives only
+  // on the review: it is dropped when the reader goes back to the form,
+  // locks the wallet or leaves the screen.
+  //
+  // The document's title follows the step, as the heading does: a tab must
+  // not read "Send" over a page that reads "Payment sent".
   //
   // The screen never says more about a payment than it knows. An answer
   // that says nothing about the payment (none came, or the practice network
   // could not give one) gets a heading of its own, never "not sent": the
-  // payment may be out. After "could not answer" the screen looks for the
-  // transaction itself, and a payment the network has is shown as sent.
+  // payment may be out. The wallet has looked for the transaction by then
+  // (after either answer), and a payment the network has comes back as sent.
 
   import { onDestroy, tick, untrack } from 'svelte';
   import {
@@ -77,6 +83,7 @@
     requestOf,
     type PaymentFacts,
   } from './send/form.ts';
+  import { forgetForm, keepForm, keptForm } from './send/kept.ts';
   import Plan from './send/Plan.svelte';
   import Review from './send/Review.svelte';
   import Sent from './send/Sent.svelte';
@@ -95,10 +102,13 @@
 
   // -- the form's fields ------------------------------------------------------------
 
-  let toText = $state('');
-  let amountText = $state('');
-  let sendAll = $state(false);
-  let feeText = $state(formatSats(FEE_RATE.start));
+  /** What the reader typed here before leaving the screen, if this page still has it (send/kept.ts). */
+  const before = keptForm(wallet.record?.xpub ?? null);
+
+  let toText = $state(before?.to ?? '');
+  let amountText = $state(before?.amount ?? '');
+  let sendAll = $state(before?.sendAll ?? false);
+  let feeText = $state(before?.fee ?? formatSats(FEE_RATE.start));
 
   let to = $derived(readTo(toText));
   let amount = $derived(readAmount(amountText, sendAll));
@@ -167,7 +177,7 @@
   // -- pass it on -------------------------------------------------------------------
 
   /** The pot address the wallet last gave. A payment to it is counted as passed on. */
-  let potAddress = $state<string | null>(null);
+  let potAddress = $state<string | null>(before?.pot ?? null);
   let potBusy = $state(false);
   let potProblem = $state<ApiFailure | null>(null);
 
@@ -284,6 +294,21 @@
     });
   });
 
+  // The form is kept for a reader who leaves and comes back, until the
+  // payment is sent. A payment link is kept as the address it carries, as
+  // the field itself holds it once the reader has left it: read again as a
+  // link, it would put its amount back over one the reader has changed.
+  $effect(() => {
+    const link = readLink(toText);
+    const form = { to: link !== null && link.to !== null ? link.to : toText, amount: amountText, sendAll, fee: feeText, pot: potAddress };
+    const owner = wallet.record?.xpub ?? null;
+    const done = sent !== null;
+    untrack(() => {
+      if (owner === null || done) forgetForm();
+      else keepForm(owner, form);
+    });
+  });
+
   /** "Continue": sign the payment the form stands for. Nothing is sent. */
   async function next(): Promise<void> {
     if (request === null || signing) return;
@@ -350,9 +375,11 @@
 
   /**
    * "Back to the form", under the unlock step. Not while a passkey prompt
-   * is open (the button is switched off then): the step has to stay until
-   * the prompt is answered, or its answer would move focus to the heading
-   * under a reader who is typing in the form by then.
+   * is open (the button is switched off then): the page cannot take a
+   * prompt back, and a reader who left with one open would meet this step
+   * again at the next "Continue", with a prompt already waiting that the
+   * new step knows nothing about. (The unlock step itself leaves focus
+   * alone once it is off the screen, so this is no longer about focus.)
    */
   function leaveUnlock(): void {
     if (working()) return;
@@ -365,16 +392,9 @@
     if (signed === null || sending) return;
     const { payment, pot } = signed;
     sending = true;
-    let result = await busyWhile(wallet.broadcast(payment));
-    if (!result.ok && result.reason === 'unavailable') {
-      // The practice network could not answer in time. That is also what a
-      // payment gets that did reach the node, and the wallet looks for the
-      // transaction only after no answer at all ("network"). So look here.
-      const seen = await busyWhile(wallet.lookupTx(payment.txid));
-      // The network has it. Handed in once more, the same payment is taken
-      // as the one it is, and the wallet applies, announces and counts it once.
-      if (seen.kind === 'found') result = await busyWhile(wallet.broadcast(payment));
-    }
+    // With no answer about the payment the wallet looks for the transaction
+    // itself before it answers here: a payment the network has is "sent".
+    const result = await busyWhile(wallet.broadcast(payment));
     if (gone) return;
     sending = false;
     if (result.ok) {
@@ -447,7 +467,7 @@
   const NOTE = 'text-pretty text-sm leading-relaxed text-ink-600';
 </script>
 
-<WalletFrame {title} titleName={c.section_send} lede={step === 'form' ? t.lede : undefined}>
+<WalletFrame {title} lede={step === 'form' ? t.lede : undefined}>
   {#snippet children(known)}
     {#if step === 'sent' && sent !== null}
       <Sent txid={sent.txid} facts={sent.facts} pot={sent.pot} blockSeconds={wallet.config.blockSeconds} onanother={another} />
@@ -476,7 +496,7 @@
       <!-- The frame says why above: the coins are being looked up, or the look failed. No amount is shown, and never 0. -->
       <p class="text-pretty leading-relaxed text-ink-600" data-testid="send-unknown">{t.coinsUnknown}</p>
     {:else if funds.coins === 0}
-      <!-- "No coins yet.", and the way to the Receive screen, where the faucet is. -->
+      <!-- "No coins yet." (or "No coins left."), and the way to the Receive screen, where the faucet is. -->
       <NoCoins data-testid="send-no-coins" />
     {:else}
       <Section title={t.fundsTitle}>

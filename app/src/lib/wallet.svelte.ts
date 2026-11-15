@@ -29,7 +29,7 @@ import { initEvents, track } from './events.ts';
 import type { PasskeyEnv, PublicKeyCredentialLike } from './passkey.ts';
 import { parsePath } from './router.ts';
 import { makeEngine, passkeyPort } from './session.ts';
-import type { WalletApi } from './wallet-api.ts';
+import type { SettingsState, WalletApi } from './wallet-api.ts';
 
 // -- the browser's objects, each read so that a missing one cannot stop the page ----
 
@@ -85,6 +85,8 @@ const local = browserStorage();
 
 /** The settings: the built-in ones until the Worker's arrive. A copy, because the built-in object is frozen. */
 let config = $state.raw<AppConfig>({ ...DEFAULT_CONFIG });
+/** Whether the Worker's settings have arrived. `config` cannot say: built in, it looks like a closed faucet. */
+let settings = $state.raw<SettingsState>('loading');
 
 const engine = makeEngine({
   local,
@@ -118,6 +120,7 @@ let canStore = $state.raw(session.canStore);
 let persisted = $state.raw(session.persisted);
 let setup = $state.raw(session.setup);
 let created = $state.raw(session.created);
+let createdName = $state.raw(session.createdName);
 let pendingSwitch = $state.raw(session.pendingSwitch);
 let pendingRestore = $state.raw(session.pendingRestore);
 let openedEmpty = $state.raw(session.openedEmpty);
@@ -141,6 +144,7 @@ engine.session.subscribe(() => {
   persisted = now.persisted;
   setup = now.setup;
   created = now.created;
+  createdName = now.createdName;
   pendingSwitch = now.pendingSwitch;
   pendingRestore = now.pendingRestore;
   openedEmpty = now.openedEmpty;
@@ -173,13 +177,17 @@ document.addEventListener('visibilitychange', () => {
 
 // -- the settings ----------------------------------------------------------------
 
-void loadConfig(boundedFetch).then((loaded) => {
+// One request, and one more if it fails. Until that has ended the screens run on the built-in
+// settings, and `settings` tells them so: what the built-in ones say about the faucet and about
+// counting is not yet this deployment's word.
+void loadConfig(boundedFetch).then((answer) => {
   // Counting is switched on or left off before any screen can see the settings that say which.
   // App.svelte sends the screen views, from the route, once config.events is true.
-  initEvents(loaded.events);
-  config = loaded;
+  initEvents(answer.config.events);
+  config = answer.config;
+  settings = answer.loaded ? 'loaded' : 'failed';
   // Whether passkeys are offered depends on the host the settings name.
-  void engine.session.learnPasskeys(loaded.passkeyHost);
+  void engine.session.learnPasskeys(answer.config.passkeyHost);
 });
 
 // -- the bot check and the router ------------------------------------------------------
@@ -234,6 +242,9 @@ export const wallet: WalletApi = {
   get config() {
     return config;
   },
+  get settings() {
+    return settings;
+  },
   get passkeyOffered() {
     return passkeyOffered;
   },
@@ -248,6 +259,9 @@ export const wallet: WalletApi = {
   },
   get created() {
     return created;
+  },
+  get createdName() {
+    return createdName;
   },
   get pendingSwitch() {
     return pendingSwitch;

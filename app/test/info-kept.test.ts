@@ -120,8 +120,8 @@ test('About never sorts what is stored by how a wallet was made', () => {
 
 test("About, the bot check: a wallet opened with a passkey is locked before the check loads and stays locked; stored words are not shielded", async () => {
   const { en, es } = strings.about;
-  assert.match(en.botPasskey, /^A wallet opened with a passkey is locked before the check loads, so the check and the wallet's keys are never in the page together\. It stays locked until the page is loaded again\.$/);
-  assert.match(es.botPasskey, /^Una billetera que se abre con llave de acceso se bloquea antes de que la comprobación se cargue/);
+  assert.equal(en.botPasskey, "A wallet opened with a passkey is locked before the check loads, and it stays locked until the page is loaded again. So the check's code cannot read keys that were in the page before it.");
+  assert.match(es.botPasskey, /^Una billetera que se abre con llave de acceso se bloquea antes de que la comprobación se cargue, y sigue bloqueada hasta que la página se cargue de nuevo\./);
   assert.match(en.botWords, /^A wallet whose 12 words are stored here cannot be shielded that way\. The words are in this browser's storage, where the check's code could read them\.$/);
   assert.match(es.botWords, /^Una billetera cuyas 12 palabras están guardadas aquí no se puede proteger así\./);
 
@@ -148,4 +148,59 @@ test("About, the bot check: a wallet opened with a passkey is locked before the 
   const kept = (stored.session.revealWords() ?? []).join(' ');
   assert.equal(kept.split(' ').length, 12);
   assert.ok((stored.storage.getItem(RECORD_KEY) ?? '').includes(kept));
+});
+
+test('About and Receive, the bot check: the lock is said to do what it does, and no more', async () => {
+  // What the lock does: keys that were loaded before the check came cannot be read by its code. What it
+  // does not do: keep that code from getting keys afterwards. A script in the page can ask the passkey
+  // itself (the input a wallet's passkey is asked with is public, and the passkey's ID is in storage), and
+  // it can open another window of the app and reach into it. e2e/scenarios/trust.test.ts runs both.
+  // So no sentence may say that the check and the keys are never together, or that the check is kept
+  // away from them; and the reader is told what they can do: cancel the prompt, close the window.
+  const promise = {
+    en: /never (in|on) the (same )?page|never together|never share|away from the wallet|cannot (get|reach|touch) (the|your) (wallet's )?keys|keeps? the (bot )?check (away|out)/i,
+    es: /nunca están juntas|nunca (están|estén) en la misma página|queda lejos|lejos de las claves|no puede (obtener|alcanzar|tocar) las claves/i,
+  };
+  for (const lang of LANGS) {
+    for (const table of [strings.about[lang], strings.receive[lang]] as Readonly<Record<string, string>>[]) {
+      for (const [key, text] of Object.entries(table)) assert.doesNotMatch(text, promise[lang], `${lang}.${key}`);
+    }
+  }
+  const { en, es } = strings.about;
+  assert.match(en.botPasskeyStill, /^The lock goes no further than that\. While the check is in the page, its code could ask your passkey itself, or open another window of this site and follow what is done there\./);
+  assert.match(en.botPasskeyStill, /So if a passkey prompt or a new window shows up there, cancel it or close it\.$/);
+  assert.match(es.botPasskeyStill, /^El bloqueo no llega más lejos\. Mientras la comprobación está en la página, su código podría pedirle él mismo el secreto a tu llave de acceso, o abrir otra ventana de este sitio/);
+  assert.match(es.botPasskeyStill, /cancélala o ciérrala\.$/);
+  const receive = strings.receive;
+  assert.equal(receive.en.faucetLocks, "Asking for coins locks this wallet, and your next move to another screen loads the page afresh. So the bot check's code cannot read keys that were loaded before it.");
+  assert.equal(receive.en.faucetNoPrompt, 'After you ask, this screen never asks for your passkey and opens no window by itself. If a passkey prompt or a new window shows up while you are still here, cancel it or close it.');
+  assert.match(receive.es.faucetLocks, /Así el código de la comprobación contra bots no puede leer claves que se cargaron antes que él\.$/);
+  assert.match(receive.es.faucetNoPrompt, /^Después de que pides monedas, esta pantalla nunca te pide tu llave de acceso ni abre ninguna ventana por sí sola\./);
+
+  // "Never asks for your passkey": after the step every screen takes before it adds the check's script,
+  // no action of the wallet opens a prompt in that page, and a prompt that was open is ended.
+  const t = testEngine();
+  assert.deepEqual(await t.session.createWithPasskey(), { kind: 'created' });
+  await t.settle();
+  t.session.lock();
+  const release = t.auth.hold();
+  const unlocking = t.session.unlock();
+  await t.settle();
+  const prompts = t.auth.calls.length;
+  t.session.beforeBotCheck();
+  assert.equal(t.auth.signals.at(-1)?.aborted, true, 'the open prompt was told to close');
+  assert.deepEqual(await unlocking, { kind: 'reload' });
+  release();
+  for (const answer of [await t.session.unlock(), await t.session.unlock('picker'), await t.session.openWithPasskey(), await t.session.createWithPasskey(), await t.session.finishSetup()]) {
+    assert.deepEqual(answer, { kind: 'reload' });
+  }
+  assert.equal(t.auth.calls.length, prompts, 'a prompt was opened after the bot check came');
+
+  // What the check's code could read for any kind of wallet: the stored record, and in it the public key.
+  assert.match(en.botReads, /it could also read the record this browser keeps for the wallet\. The record holds the wallet's public key, and with that every address the wallet has and will have\.$/);
+  assert.match(es.botReads, /también podría leer el registro que este navegador guarda de la billetera\. El registro contiene la clave pública de la billetera/);
+  const record = loadRecord(t.storage as Storage);
+  assert.ok(record !== null && typeof record === 'object');
+  assert.equal(record.kind, 'passkey');
+  assert.ok((t.storage.getItem(RECORD_KEY) ?? '').includes(record.xpub), 'the record of a passkey wallet holds its public key');
 });

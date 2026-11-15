@@ -13,6 +13,16 @@
   // screen nothing more is needed: the gate that showed this piece gives way
   // to the screen by itself. Home passes a function that goes to the
   // overview.
+  //
+  // Every other answer the piece says itself, under the button. A caller
+  // can still hear of it through `onanswer`. That matters for one answer:
+  // "exists" means a wallet arrived from another tab while the prompt was
+  // open. The wallet then shows as being here, and a screen that draws this
+  // piece only while there is none takes it away, sentence and all, in that
+  // same moment. Such a screen says it itself.
+  //
+  // `buttonClass` sizes the button, for a caller that sets it beside
+  // another button of its own (`class` is the piece's outer box).
 
   import { router } from '../../lib/router.svelte.ts';
   import type { OpenResult } from '../../lib/wallet-api.ts';
@@ -29,10 +39,14 @@
     variant?: 'primary' | 'secondary';
     /** Called once the wallet is in this browser. Its first scan has started. */
     onopened?: () => void;
+    /** Called with any other answer, as the piece shows it (or would, were it still on screen). */
+    onanswer?: (answer: Exclude<OpenResult, { kind: 'opened' }>) => void;
     class?: string;
+    /** Classes for the button itself: its width, where it stands in a group with others. */
+    buttonClass?: string;
   }
 
-  let { variant = 'primary', onopened, class: extra = '' }: Props = $props();
+  let { variant = 'primary', onopened, onanswer, class: extra = '', buttonClass = '' }: Props = $props();
 
   const wallet = useWallet();
 
@@ -47,12 +61,17 @@
     if (busy) return;
     // Read now: by the time the wallet answers, the gate may have taken this piece away.
     const opened = onopened;
+    const answered = onanswer;
     busy = true;
     answer = null;
     const result = await busyWhile(wallet.openWithPasskey());
     busy = false;
-    if (result.kind === 'opened') opened?.();
-    else answer = result;
+    if (result.kind === 'opened') {
+      opened?.();
+    } else {
+      answer = result;
+      answered?.(result);
+    }
   }
 </script>
 
@@ -62,6 +81,7 @@
   {:else}
     <Button
       {variant}
+      class={buttonClass}
       data-testid="open-passkey"
       {busy}
       busyText={t.openBusy}

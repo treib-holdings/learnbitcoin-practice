@@ -48,6 +48,23 @@ export type WalletStatus = 'none' | 'ready' | 'unreadable' | 'newer' | 'broken';
  */
 export type PublicRecord = Omit<WalletRecord, 'mnemonic'> & { mnemonic?: never };
 
+/**
+ * Where the request for the Worker's settings stands.
+ *
+ * loading  it is still out (or being tried a second time): `config` holds the
+ *          built-in values, and what they say may yet change
+ * loaded   the Worker answered: `config` holds this deployment's settings
+ * failed   no usable answer came, twice: `config` holds the built-in values
+ *          and will go on holding them until the page is loaded again
+ *
+ * The built-in values name no bot check and switch counting off. So a screen
+ * that says "the faucet is closed" or "nothing is counted" from `config`
+ * alone would say it during every visit's first moment, and would say it of
+ * a server it never heard from. Such a line waits for "loaded"; for "failed"
+ * the true cause is that the settings could not be read.
+ */
+export type SettingsState = 'loading' | 'loaded' | 'failed';
+
 /** The wallet's coins as last read from the practice network. */
 export interface ChainView {
   /** Null until the first scan of this wallet has finished. Never show a total of 0 in its place. */
@@ -81,7 +98,9 @@ export type Notice =
   | { id: number; kind: 'confirmed' }
   | { id: number; kind: 'payment-sent' }
   | { id: number; kind: 'unlocked' }
-  | { id: number; kind: 'locked' };
+  | { id: number; kind: 'locked' }
+  /** Another tab put a different wallet in this browser: every wallet screen shows that one from now on. */
+  | { id: number; kind: 'replaced' };
 
 // -- how a passkey ceremony can fail ------------------------------------------------
 
@@ -142,10 +161,20 @@ export type UnlockResult =
 export type UnlockWordsResult =
   /** The words are this wallet's: keys loaded for this page. Nothing was stored. */
   | 'unlocked'
+  /**
+   * The words fit only one of the two things this browser stored about the wallet
+   * (its public key, its wallet fingerprint), so the stored record had been altered.
+   * It was rebuilt from the words (it stays a passkey wallet's record: the words are
+   * not stored) and the wallet rescanned; the keys are loaded. Say what "tampered"
+   * says after a passkey unlock.
+   */
+  | 'tampered'
   /** Not 12 valid words. */
   | 'invalid'
-  /** Valid words, but for another wallet. Point to Remove, then Restore. */
+  /** Valid words that fit nothing stored here: another wallet's. Point to Remove, then Restore. */
   | 'other-wallet'
+  /** The record had been altered (see "tampered") and the browser refused to store the right one. Nothing was opened. */
+  | 'no-storage'
   | 'gone'
   | 'reload'
   | 'broken';
@@ -273,6 +302,8 @@ export interface WalletApi {
   readonly unlocked: boolean;
   /** Public settings, usable at once: built-in values first, the Worker's once they load. */
   readonly config: AppConfig;
+  /** Whether the Worker's settings have arrived: `config` alone cannot say which values it holds. */
+  readonly settings: SettingsState;
   /** Whether this browser can make and use the wallet's passkeys. Null while that is being found out. */
   readonly passkeyOffered: boolean | null;
   /** False when this browser refuses to store anything: Create and Restore must say so and stop. */
@@ -284,6 +315,16 @@ export interface WalletApi {
   readonly setup: { tag: string | null } | null;
   /** Set straight after a create, until ackCreated(): Backup opens as the "Wallet made" step with the words shown. */
   readonly created: 'passkey' | 'words' | null;
+  /**
+   * The name this page gave the passkey it has just made, exactly as it was
+   * written at create(): in the language the page had at that moment. Set
+   * while `created` is "passkey", null otherwise (and null if the name was
+   * never told to the wallet). The "Wallet made" step is the one place that
+   * can show a passkey's whole name: this browser keeps only the tag, and a
+   * name built from the tag later could be the one in the other language,
+   * which the reader's password manager does not list.
+   */
+  readonly createdName: string | null;
   /** Set after unlock() met a different passkey, until confirmSwitch() or cancelSwitch(). */
   readonly pendingSwitch: { tag: string | null; fingerprint: string } | null;
   /** True while restored words with no practice history wait for keepRestored() or eraseRestored(). */
@@ -376,8 +417,11 @@ export interface WalletApi {
   newReceiveAddress(): void;
   /**
    * Call before the bot check's script is added to the page. It drops a passkey
-   * wallet's keys and tells the router, so that every later move between screens is
-   * a full page load and the script and the keys are never in one page together.
+   * wallet's keys, ends a passkey prompt that is still open, and tells the router,
+   * so that every later move between screens is a full page load. So the script
+   * cannot read keys that were loaded before it, and the wallet loads none while
+   * the script is in the page. (No more than that: a script in the page could still
+   * ask the passkey itself, which is why the screens promise nothing further.)
    * Until that page load, actions that load keys or take typed words answer "reload"
    * (unlock, unlockWithWords, create, open, restore) and sign() answers "locked". A
    * wallet made without a passkey goes on signing: its words are in storage, where

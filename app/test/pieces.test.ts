@@ -1,18 +1,42 @@
 // The plain helpers behind the shared pieces: how an error sentence is split
 // into its cause and its way out, what a countdown shows, where a link that
-// leaves the site goes and what it carries, and the path that draws a QR code.
+// leaves the site goes and what it carries, which taps do not count, and the
+// path that draws a QR code. And the rules the pieces' own markup keeps,
+// read from their source: a browser is the place to see them, and
+// e2e/scenarios and the gallery do that, but a rule that is written down
+// here cannot be dropped by an edit that nobody looked at.
 
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { test } from 'node:test';
 import { LANGS } from '@learnbitcoin/practice-contract';
 import decodeQR from 'qr/decode.js';
 import { fill } from '../src/lib/format.ts';
 import { QUIET_ZONE, pathOfSquares, qrShape } from '../src/components/qr-path.ts';
 import { OUTSIDE } from '../src/components/styles.ts';
+import { ANSWER_SETTLE_MS, answerCounts, isRepeatTap } from '../src/components/taps.ts';
 import { siteHome, splitLead, timeLeft, timeLeftKey, withoutLastSentence } from '../src/components/text.ts';
 import { DEFAULT_CONFIG } from '../src/lib/config.ts';
+import * as keysTaps from '../src/screens/keys/taps.ts';
 import { strings } from '../src/strings/index.ts';
+
+/** A file of the app, as text. */
+const read = (path: string): string => readFileSync(new URL(`../src/${path}`, import.meta.url), 'utf8');
+
+/** The same without its comments, so that a rule about the code is not met by a sentence about it. */
+const code = (path: string): string =>
+  read(path)
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^\s*\/\/.*$/gm, '');
+
+/** Every .svelte file under a folder of the app, with its code. */
+function svelteFiles(folder: string): { name: string; text: string }[] {
+  const root = new URL(`../src/${folder}/`, import.meta.url);
+  return readdirSync(root, { recursive: true, encoding: 'utf8' })
+    .filter((name) => name.endsWith('.svelte'))
+    .map((name) => ({ name: `${folder}/${name}`, text: code(`${folder}/${name}`) }));
+}
 
 // -- an error sentence: the cause, then the way out -------------------------------
 
@@ -138,6 +162,135 @@ test('a Spanish link to a page that exists in English only says so', () => {
   // address, with "(en ingles)", accent and all, at the end of the link's text.
   assert.match(strings.common.es.linkSource, /\(en ingl\u00e9s\)$/);
   assert.equal(strings.common.en.linkSource, 'Source code');
+});
+
+test('a link that leaves the site: the hidden words keep their space, and the arrow stays with the last word', () => {
+  const link = code('components/OutLink.svelte');
+  // Svelte drops white space at the start of an element. Written as plain text, the space before
+  // "(opens in a new tab)" was lost, and a screen reader ran the two together.
+  assert.match(link, /<span class="sr-only">\{' '\}\{t\.opensNewTab\}<\/span>/);
+  // With `text`: everything up to the last word, then the last word and the arrow as one piece that
+  // does not break. So a line ends before that word or after the arrow, never between the two.
+  assert.match(link, /let cut = \$derived\(text === undefined \? 0 : text\.lastIndexOf\(' '\) \+ 1\);/);
+  assert.match(link, /\{text\.slice\(0, cut\)\}<span class="whitespace-nowrap">\{text\.slice\(cut\)\}\{@render arrow\(\)\}<\/span/);
+  // The cut itself, on words as the screens hand them in.
+  const parts = (text: string): [string, string] => {
+    const cut = text.lastIndexOf(' ') + 1;
+    return [text.slice(0, cut), text.slice(cut)];
+  };
+  assert.deepEqual(parts('Chapter 4 of the Journey'), ['Chapter 4 of the ', 'Journey']);
+  assert.deepEqual(parts('LearnBitcoin.com'), ['', 'LearnBitcoin.com']);
+  assert.deepEqual(parts('Código fuente (en inglés)'), ['Código fuente (en ', 'inglés)']);
+
+  // Every such link in the app hands its words in as `text`. One does not, and may not: the
+  // explorer's address on About, which is no run of words and has to break anywhere.
+  const uses = [...svelteFiles('components'), ...svelteFiles('screens')].flatMap(({ name, text }) =>
+    (text.match(/<OutLink\b[^>]*>/g) ?? []).map((tag) => ({ name, tag })),
+  );
+  assert.ok(uses.length >= 10, `${uses.length} links that leave the site`);
+  const withoutText = uses.filter(({ tag }) => !/\btext=\{/.test(tag));
+  assert.deepEqual(withoutText.map(({ name }) => name), ['screens/About.svelte']);
+  assert.match(withoutText[0]!.tag, /href=\{wallet\.config\.explorerUrl\} class="break-all"/);
+});
+
+// -- boxes, cards and values --------------------------------------------------------
+
+test('a notice breaks a word that is too long for it, and every card has the same room inside', () => {
+  // errors.ts has a host name in a sentence, wider than a boxed sentence on the narrowest phone.
+  const notice = code('components/Notice.svelte');
+  const boxes = notice.slice(notice.indexOf('const BOX = {'), notice.indexOf('} as const;'));
+  assert.equal(boxes.match(/\bbreak-words\b/g)?.length, 3, 'info, caution and problem');
+  // Two cards one under the other start their text at one edge, whatever their tone.
+  const card = code('components/Card.svelte');
+  const looks = card.slice(card.indexOf('const BOX = {'), card.indexOf('} as const;'));
+  assert.equal(looks.match(/\bp-5\b/g)?.length, 3, 'white, grey and dashed, on a phone');
+  assert.equal(looks.match(/\bsm:p-6\b/g)?.length, 3, 'and from there up');
+  assert.doesNotMatch(looks, /(^|\s)p-6\b/);
+});
+
+test('a value set in the monospace font breaks at a hyphen before it breaks inside a word', () => {
+  // "break-all" cut a host name in the middle of a word ("...learnbitcoin.c" / "om") although it
+  // has hyphens to break at. An address or a transaction ID has none, and still wraps anywhere.
+  const mono = code('components/Mono.svelte');
+  assert.doesNotMatch(mono, /\bbreak-all\b/);
+  assert.equal(mono.match(/\[overflow-wrap:anywhere\]/g)?.length, 3, 'lead, plain and small');
+});
+
+test('a block of code that wraps is no stop for the Tab key, and one that scrolls is', () => {
+  const block = code('components/CodeBlock.svelte');
+  // A block that scrolls sideways takes focus, so that the arrow keys can scroll it, and has a name.
+  // One that wraps never scrolls: focus there would be a Tab stop that does nothing.
+  assert.match(block, /tabindex=\{wrap \? undefined : 0\}/);
+  assert.match(block, /role=\{wrap \? undefined : 'region'\}/);
+  assert.match(block, /aria-label=\{wrap \? undefined : label\}/);
+  assert.match(block, /const SCROLLS = 'overflow-x-auto overscroll-x-contain';/);
+  // Breaking as late as it can: "text-wrap" undoes the page's rule against a last line of one word.
+  // And a word longer than the line (a path) is broken at the line's end: without that it stuck out
+  // of the block and made the gallery's page 443 px wide on a 320 px screen.
+  assert.match(block, /const WRAPS = 'whitespace-pre-wrap text-wrap \[overflow-wrap:anywhere\]';/);
+  assert.match(block, /class=\{\[LOOK, wrap \? WRAPS : SCROLLS, !wrap && FOCUS, extra\]\}/);
+  // The Sparrow guide's commands are typed by hand from a phone's screen: they wrap.
+  assert.match(code('screens/info/CopyBlock.svelte'), /<CodeBlock \{text\} \{label\} \{wrap\} /);
+});
+
+test('a field has a place for what belongs to its error, inside what the control is described by', () => {
+  const field = code('components/Field.svelte');
+  // More than the one sentence (a second paragraph, a button, a link) goes in `after`. It is drawn
+  // inside the element that carries the error's id, which the control names in aria-describedby:
+  // a screen reader hears it with the error, and no caller wires an id by hand.
+  assert.match(field, /after\?: Snippet;/);
+  assert.match(
+    field,
+    /\{#if after\}\s*<div id="\{id\}-error" class="flex flex-col gap-2">\s*<p class=\{ERROR\}>\{error\}<\/p>\s*\{@render after\(\)\}\s*<\/div>/,
+  );
+  // Without it the error is the one paragraph it always was, under the same id.
+  assert.match(field, /\{:else\}\s*<p id="\{id\}-error" class=\{ERROR\}>\{error\}<\/p>/);
+  // And nothing of it is drawn while there is no error: both stand inside the error's own branch.
+  const branch = /\{#if error !== ''\}([\s\S]*?)\n  \{\/if\}\n<\/div>/.exec(field)?.[1] ?? '';
+  assert.match(branch, /\{@render after\(\)\}/);
+  assert.equal(field.match(/\{@render after\(\)\}/g)?.length, 1);
+});
+
+test('the footer starts closer to the screen on a phone', () => {
+  // A footer nearly as tall as a small phone's screen pushes the end of the screen's content up
+  // under the PRACTICE banner when the page is scrolled to its end. Measured at 320 by 568 in
+  // Spanish (a two-line banner): with 96 px above the footer the last button of Settings was 35 px
+  // under the banner there, and with 48 px it stands clear of it.
+  assert.match(code('components/Footer.svelte'), /<footer class="mt-12 border-t border-ink-100 bg-ink-50 md:mt-24">/);
+});
+
+test('the shell\'s table holds no text that nothing shows', () => {
+  for (const lang of LANGS) {
+    const table: Record<string, string> = strings.common[lang];
+    // The placeholder's line went with the last placeholder, and Home's heading is the app's name.
+    for (const key of ['notBuiltYet', 'screen_home']) assert.equal(table[key], undefined, `${lang}.${key}`);
+    for (const key of ['screen_new', 'screen_restore', 'screen_tx']) assert.ok(table[key], `${lang}.${key}`);
+  }
+});
+
+// -- taps that must not count -----------------------------------------------------------
+
+test('isRepeatTap: the second click of a double tap, and any later one, by the count the browser gives', () => {
+  assert.equal(isRepeatTap({ detail: 1 }), false);
+  assert.equal(isRepeatTap({ detail: 0 }), false, 'a press from the keyboard');
+  assert.equal(isRepeatTap({ detail: 2 }), true);
+  assert.equal(isRepeatTap({ detail: 3 }), true);
+});
+
+test('answerCounts: a question that cannot be taken back takes no answer in its first moment, and never a double tap', () => {
+  assert.equal(answerCounts(0, { detail: 1 }), false);
+  assert.equal(answerCounts(ANSWER_SETTLE_MS - 1, { detail: 1 }), false);
+  assert.equal(answerCounts(ANSWER_SETTLE_MS, { detail: 1 }), true);
+  assert.equal(answerCounts(ANSWER_SETTLE_MS, { detail: 0 }), true, 'the keyboard, once the moment is over');
+  assert.equal(answerCounts(60_000, { detail: 2 }), false, 'the second click of a double tap, however late');
+  // Longer than a double tap (browsers count clicks up to about half a second apart), far shorter than reading.
+  assert.ok(ANSWER_SETTLE_MS >= 500 && ANSWER_SETTLE_MS <= 1000, String(ANSWER_SETTLE_MS));
+});
+
+test('the Backup and Settings screens keep the app\'s tap rules, under their own names', () => {
+  assert.equal(keysTaps.isRepeatTap, isRepeatTap);
+  assert.equal(keysTaps.answerCounts, answerCounts);
+  assert.equal(keysTaps.REMOVE_SETTLE_MS, ANSWER_SETTLE_MS);
 });
 
 // -- copying ------------------------------------------------------------------------

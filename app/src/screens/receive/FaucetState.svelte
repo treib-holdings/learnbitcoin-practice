@@ -109,7 +109,7 @@
   {:else if view.phase === 'asking'}
     <div class={BOX}><p>{t.stateAsking}</p></div>
   {:else if view.phase === 'waiting'}
-    <Notice kind="problem" class="break-words" text={waitingText(view.failure, lang)} />
+    <Notice kind="problem" text={waitingText(view.failure, lang)} />
     <!-- Under the box, not in it. The box is an alert, which a screen reader reads out whole: a line
          that changes every second must not be part of it. -->
     {#if view.retryAt !== null}
@@ -157,13 +157,13 @@
       <!-- The bot check's box stood on screen and nobody ticked it. The wallet calls that "no-token"
            like every check without an answer, and the sentence for it names a content blocker:
            not what happened here. So this one cause has the screen's own sentence. -->
-      <Notice kind="problem" class="break-words" text={t.failedBoxWaited} data-testid="faucet-box-waited" />
+      <Notice kind="problem" text={t.failedBoxWaited} data-testid="faucet-box-waited" />
     {:else if failed.adds === 'nothing'}
       <!-- The sentence ends with the way out, and the button that asks again
            is right above. What follows is only what the sentence cannot say or do. -->
-      <Notice kind="problem" class="break-words" text={e[failed.sentence]} />
+      <Notice kind="problem" text={e[failed.sentence]} />
     {:else}
-      <Notice kind="problem" class="break-words" text={e[failed.sentence]}>
+      <Notice kind="problem" text={e[failed.sentence]}>
         {#if failed.adds === 'other-cause'}
           <p class="text-sm">{t.failedOtherCause}</p>
         {:else if failed.adds === 'reload'}

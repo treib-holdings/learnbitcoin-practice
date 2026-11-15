@@ -18,6 +18,7 @@
   import Prose from '../components/Prose.svelte';
   import Section from '../components/Section.svelte';
   import CoinList from '../components/wallet/CoinList.svelte';
+  import { faucetLink } from '../components/wallet/frame.ts';
   import Total from '../components/wallet/Total.svelte';
   import WalletFrame from '../components/wallet/WalletFrame.svelte';
   import { fill } from '../lib/format.ts';
@@ -49,7 +50,7 @@
         </div>
       {:else}
         <Empty text={t.coinsEmpty} data-testid="coins-empty">
-          <Button variant="primary" small href={router.link({ name: 'receive' })}>{t.getCoins}</Button>
+          <Button variant="primary" small href={faucetLink(router.link({ name: 'receive' }))}>{t.getCoins}</Button>
         </Empty>
       {/if}
     {/if}
@@ -60,9 +61,7 @@
         <!-- Small enough to stay one line at 320 px in both languages: a link
              that wraps can leave its arrow alone at the start of the next line. -->
         <p class="text-sm">
-          <OutLink href={glossaryUrl(wallet.config.siteUrl, lang, 'utxo')} data-testid="coins-glossary">
-            {t.coinsGlossary}
-          </OutLink>
+          <OutLink href={glossaryUrl(wallet.config.siteUrl, lang, 'utxo')} text={t.coinsGlossary} data-testid="coins-glossary" />
         </p>
       </Prose>
     </Section>

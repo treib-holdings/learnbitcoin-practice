@@ -338,15 +338,21 @@
           <div class="space-y-6 text-sm">
             {#if replaceable !== 'no'}
               <p>
-                <OutLink class={ALONE} href={glossaryUrl(wallet.config.siteUrl, lang, 'rbf')} data-testid="tx-replace-glossary">
-                  {t.txReplaceGlossary}
-                </OutLink>
+                <OutLink
+                  class={ALONE}
+                  href={glossaryUrl(wallet.config.siteUrl, lang, 'rbf')}
+                  text={t.txReplaceGlossary}
+                  data-testid="tx-replace-glossary"
+                />
               </p>
             {/if}
             <p>
-              <OutLink class={ALONE} href={explorerTxUrl(wallet.config.explorerUrl, shows.view.txid)} data-testid="tx-explorer">
-                {t.txExplorer}
-              </OutLink>
+              <OutLink
+                class={ALONE}
+                href={explorerTxUrl(wallet.config.explorerUrl, shows.view.txid)}
+                text={t.txExplorer}
+                data-testid="tx-explorer"
+              />
             </p>
           </div>
         </Section>

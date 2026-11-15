@@ -45,28 +45,15 @@ export function linkText(url: string): string {
 }
 
 /**
- * Whether the settings a screen is looking at are the ones this visit will
- * keep. The wallet draws a page at once with its built-in settings, and
- * swaps in the server's when they arrive; it has no field that says which
- * of the two a screen is looking at. The built-in ones say that nothing is
- * counted and that the faucet is closed, so a line that reads those two
- * would say "off" for the first moment of every visit and then, when the
- * answer comes, the opposite.
- *
- * The one sign the wallet gives is whether passkeys are offered. That is
- * null until the settings have been loaded (or given up on) and the browser
- * has then been asked about passkeys, in that order (lib/wallet.svelte.ts).
- * So it is null for exactly as long as the settings may still change, and
- * the lines that would say "off" wait for it.
- */
-export function settingsArrived(passkeyOffered: boolean | null): boolean {
-  return passkeyOffered !== null;
-}
-
-/**
  * True when the settings name no bot check. The server then pays nobody,
  * whatever the faucet's amount is (the contract: an empty site key closes
  * the faucet), and the page says so beside the amount.
+ *
+ * The built-in settings, which every page is drawn with first, name none
+ * either. So the page says "closed" only of settings the server sent
+ * (wallet.settings is "loaded"): said of the built-in ones, the line would
+ * show for the first moment of every visit and then, when the answer
+ * comes, be gone again.
  */
 export function faucetClosed(config: AppConfig): boolean {
   return config.turnstileSiteKey === '';

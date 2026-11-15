@@ -15,8 +15,13 @@
   //   - the list of what is counted is the contract's list of events, and
   //     the line above it says whether counting is switched on.
   //
-  // The two lines that can say "off" (counting, the faucet) are drawn only
-  // once the server's settings have arrived: info/facts.ts says why.
+  // The two lines that can say "off" (counting, the faucet) wait for the
+  // wallet's word on the server's settings (wallet.settings). The page is
+  // first drawn with the built-in ones, which say "off" to both, and the
+  // server's may say the opposite a moment later. Whether this page counts
+  // is settled once that request has ended, either way: with no settings
+  // from the server nothing is counted. That the faucet is closed is the
+  // server's to say, so that line is drawn only from settings that arrived.
   //
   // Nobody needs a wallet to read it.
 
@@ -42,7 +47,6 @@
     faucetText,
     keptNow,
     linkText,
-    settingsArrived,
   } from './info/facts.ts';
 
   const wallet = useWallet();
@@ -56,8 +60,10 @@
   /** Whether the settings say that events are wanted. While they do not, the app sends none. */
   let counting = $derived(wallet.config.events);
 
-  /** False while the settings on screen are still the built-in ones and the server's may yet replace them. */
-  let settled = $derived(settingsArrived(wallet.passkeyOffered));
+  /** False while the request for the server's settings is still out: what the page counts may yet change. */
+  let settled = $derived(wallet.settings !== 'loading');
+  /** True when the settings on screen are the server's own. Only those can say that the faucet is closed. */
+  let fromServer = $derived(wallet.settings === 'loaded');
 
   /** A page that exists in English only says so to a browser, as its link's words say so to a Spanish reader. */
   let english = $derived(router.lang === 'en' ? undefined : 'en');
@@ -77,7 +83,7 @@
       <p>{t.whatWho}</p>
       <p>{t.whatHot}</p>
       <p>
-        <OutLink href={siteHome(wallet.config.siteUrl, router.lang)} data-testid="about-site">{t.whatSiteLink}</OutLink>
+        <OutLink href={siteHome(wallet.config.siteUrl, router.lang)} text={t.whatSiteLink} data-testid="about-site" />
       </p>
     </Prose>
   </Section>
@@ -90,7 +96,7 @@
       <Row name={t.netBlocks} data-testid="about-blocks">{blocksText(wallet.config, router.lang)}</Row>
       <Row name={t.netFaucet} data-testid="about-faucet">
         {faucetText(wallet.config, router.lang)}
-        {#if settled && faucetClosed(wallet.config)}
+        {#if fromServer && faucetClosed(wallet.config)}
           <span class="mt-1 block font-semibold" data-testid="about-faucet-off">{t.netFaucetOff}</span>
         {/if}
       </Row>
@@ -169,7 +175,9 @@
     <Prose>
       <p>{t.botBody}</p>
       <p>{t.botSees}</p>
-      <p>{t.botPasskey}</p>
+      <p data-testid="about-bot-reads">{t.botReads}</p>
+      <p data-testid="about-bot-passkey">{t.botPasskey}</p>
+      <p data-testid="about-bot-still">{t.botPasskeyStill}</p>
       <p>{t.botWords}</p>
     </Prose>
   </Section>
@@ -178,7 +186,7 @@
     <Prose>
       <p>{t.codeBody}</p>
       <p>
-        <OutLink href={wallet.config.sourceUrl} hreflang={english} data-testid="about-source">{t.codeLink}</OutLink>
+        <OutLink href={wallet.config.sourceUrl} hreflang={english} text={t.codeLink} data-testid="about-source" />
       </p>
     </Prose>
   </Section>

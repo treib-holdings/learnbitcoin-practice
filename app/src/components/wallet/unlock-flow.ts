@@ -28,6 +28,12 @@ export type UnlockProblem =
   | { kind: 'words-invalid' }
   /** The words typed are valid, and another wallet's. */
   | { kind: 'other-wallet' }
+  /**
+   * The words typed showed that what this browser had saved about the wallet
+   * was altered, and the browser would not store the right details. Nothing
+   * was opened.
+   */
+  | { kind: 'words-no-storage' }
   /** The reader asked to switch wallets and the browser would not store the change. */
   | { kind: 'no-storage' };
 
@@ -40,13 +46,18 @@ export function problemOfUnlock(result: UnlockRefusal): UnlockProblem {
   return { kind: 'passkey', failure: result };
 }
 
+/** The answers of unlockWithWords() that open nothing. */
+export type WordsRefusal = Exclude<UnlockWordsResult, 'unlocked' | 'tampered'>;
+
 /** The problem to show for an unlockWithWords() that opened nothing. */
-export function problemOfWords(result: Exclude<UnlockWordsResult, 'unlocked'>): UnlockProblem {
+export function problemOfWords(result: WordsRefusal): UnlockProblem {
   switch (result) {
     case 'invalid':
       return { kind: 'words-invalid' };
     case 'other-wallet':
       return { kind: 'other-wallet' };
+    case 'no-storage':
+      return { kind: 'words-no-storage' };
     case 'gone':
       return { kind: 'gone' };
     // The same two dead ends a passkey step can meet, with the same sentences.

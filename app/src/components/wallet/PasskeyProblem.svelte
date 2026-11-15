@@ -14,7 +14,9 @@
   //     nowhere else;
   //   - "reload" comes with the button that reloads the page.
   // What the screen offers next (try again, another passkey, the 12 words)
-  // goes between the tags.
+  // goes between the tags. Put something there only when it draws
+  // something: whatever is passed gets a place under the sentence, and
+  // content that turns out empty leaves that place as a gap.
 
   import type { Snippet } from 'svelte';
   import { fill } from '../../lib/format.ts';

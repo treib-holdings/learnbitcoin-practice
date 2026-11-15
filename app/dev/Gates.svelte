@@ -32,7 +32,6 @@
 <Page eyebrow="Gallery" title="Gates" lede={LEDE[router.lang]}>
   <Section title="NoWallet">
     <Shown note="the gate's body, on a wallet route"><NoWallet /></Shown>
-    <Shown note="grouped, as Home shows it"><NoWallet grouped /></Shown>
     <Shown query="passkeys=no" note="this browser offers no passkeys"><NoWallet /></Shown>
     <Shown query="passkeys=unknown" note="not known yet whether it offers passkeys"><NoWallet /></Shown>
   </Section>
@@ -46,7 +45,8 @@
   <Section title="StoredTrouble">
     <Shown preset="unreadable"><StoredTrouble /></Shown>
     <Shown preset="unreadable" steps={[{ tap: 'remove-wallet' }]}><StoredTrouble /></Shown>
-    <Shown preset="unreadable" query="remove=gone" steps={[{ tap: 'remove-wallet' }, { tap: 'remove-confirm' }]}>
+    <!-- The question takes no answer in its first moment (components/taps.ts): the second tap waits that out. -->
+    <Shown preset="unreadable" query="remove=gone" steps={[{ tap: 'remove-wallet' }, { wait: 700 }, { tap: 'remove-confirm' }]}>
       <StoredTrouble />
     </Shown>
     <Shown preset="unreadable" note="titled, as Home shows it"><StoredTrouble titled /></Shown>

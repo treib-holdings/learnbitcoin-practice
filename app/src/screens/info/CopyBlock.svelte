@@ -12,7 +12,8 @@
   // different: a reader may have this page open on a phone and type the
   // command on the computer beside it, and on a small phone the end of the
   // line, where the flag is, would be out of sight. With `wrap` the line
-  // breaks at a space instead, and all of it shows.
+  // breaks at a space instead, and all of it shows (the block then takes
+  // no keyboard focus: it has nothing to scroll).
   //
   // The name, the line and the button are one group, named by the name
   // above the line. Three commands stand one after another on the Sparrow
@@ -46,15 +47,6 @@
 
   /** Ties the group to its name. */
   const id = $props.id();
-
-  /**
-   * A line that breaks where it must, at the last space that fits. The
-   * second name matters: text inside <main> is set to avoid a last line of
-   * one word, and to get two words onto the last line a browser will break
-   * "-n regtest" after its hyphen. A command is no paragraph: it breaks as
-   * late as it can, and a last line of one word is fine.
-   */
-  const WRAP = 'whitespace-pre-wrap text-wrap';
 </script>
 
 <div role="group" aria-labelledby="{id}-name" class="space-y-2">
@@ -64,7 +56,7 @@
       <p class="text-pretty text-sm text-ink-500">{note}</p>
     {/if}
   </div>
-  <CodeBlock {text} {label} class={wrap ? WRAP : ''} data-testid={`${hook}-text`} />
+  <CodeBlock {text} {label} {wrap} data-testid={`${hook}-text`} />
   <!-- A box of its own for the button: if the browser refuses to copy, the
        button's line about that is drawn under it, inside this box. -->
   <div>

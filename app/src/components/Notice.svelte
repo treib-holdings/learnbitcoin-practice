@@ -11,6 +11,11 @@
   // (role="alert") because it answers something the reader just did; pass
   // `silent` for a problem that is already there when the screen opens.
   // Anything inside the tags comes after the text: a details line, a button.
+  // Pass something between the tags only when it draws something: content
+  // that turns out empty still takes the gap that is kept for it.
+  //
+  // A word too long for the box (a host name in a sentence, on the
+  // narrowest phone) is broken where the line ends: it never sticks out.
 
   import type { Snippet } from 'svelte';
   import { EYEBROW } from './styles.ts';
@@ -32,11 +37,11 @@
   let { kind = 'info', label, text, silent = false, class: extra = '', children, ...rest }: Props = $props();
 
   const BOX = {
-    info: 'rounded-lg border border-orange-200 bg-orange-50 px-4 py-3 text-sm text-pretty text-ink-700',
+    info: 'rounded-lg border border-orange-200 bg-orange-50 px-4 py-3 text-sm text-pretty break-words text-ink-700',
     caution:
-      'rounded-lg border border-l-4 border-orange-200 border-l-orange-400 bg-orange-50 px-4 py-3 text-base text-pretty text-ink-700',
+      'rounded-lg border border-l-4 border-orange-200 border-l-orange-400 bg-orange-50 px-4 py-3 text-base text-pretty break-words text-ink-700',
     problem:
-      'rounded-lg border border-l-4 border-ink-200 border-l-ink-800 bg-ink-50 px-4 py-3 text-base text-pretty text-ink-700',
+      'rounded-lg border border-l-4 border-ink-200 border-l-ink-800 bg-ink-50 px-4 py-3 text-base text-pretty break-words text-ink-700',
   } as const;
 
   let parts = $derived(text === undefined ? null : splitLead(text));

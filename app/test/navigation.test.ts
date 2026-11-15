@@ -20,9 +20,9 @@ const ORIGIN = 'https://practice.learnbitcoin.com';
 const HERE = `${ORIGIN}/wallet`;
 const TXID = '6c0443f5'.padEnd(64, 'a');
 
-/** A plain left click, with what a test changes laid over it. */
+/** A plain single left click, with what a test changes laid over it. */
 function click(changes: Partial<ClickFacts> = {}): ClickFacts {
-  return { defaultPrevented: false, button: 0, metaKey: false, ctrlKey: false, shiftKey: false, altKey: false, ...changes };
+  return { defaultPrevented: false, button: 0, metaKey: false, ctrlKey: false, shiftKey: false, altKey: false, detail: 1, ...changes };
 }
 
 /** A plain link to `href`, with what a test changes laid over it. */
@@ -65,6 +65,36 @@ test('a click that something else already handled is left alone', () => {
 
 test('a click that is on no link is left alone', () => {
   assert.deepEqual(judgeClick(click(), null, HERE, false), { kind: 'leave' });
+  // Also the second click of a double tap: a button's own handler decides about that one.
+  assert.deepEqual(judgeClick(click({ detail: 2 }), null, HERE, false), { kind: 'leave' });
+});
+
+test('the second click of a double tap follows no link, whatever the link leads to', () => {
+  // A double tap on a button that changes the screen: the first click changes it, and the second
+  // lands on whatever the new screen has put there. Seen: "Remove it", then Home's "Restore".
+  const drop = { kind: 'drop' };
+  for (const detail of [2, 3, 7]) {
+    // A screen of the app, in either language, and a transaction.
+    for (const path of ['/restore', '/es/wallet', `/wallet/tx/${TXID}`, '/']) {
+      assert.deepEqual(judgeClick(click({ detail }), link(path), HERE, false), drop, `${detail}: ${path}`);
+    }
+    // Another part of the screen that is showing.
+    assert.deepEqual(judgeClick(click({ detail }), link('#main'), HERE, false), drop);
+    // Links the router otherwise leaves to the browser: another site in a tab of its own, a file,
+    // a fresh load. None of them is what the reader chose either.
+    assert.deepEqual(judgeClick(click({ detail }), link('https://www.learnbitcoin.com/', { target: '_blank', rel: 'noopener noreferrer' }), HERE, false), drop);
+    assert.deepEqual(judgeClick(click({ detail }), link('/logo.svg'), HERE, false), drop);
+    assert.deepEqual(judgeClick(click({ detail }), link('/about', { rel: 'external' }), HERE, false), drop);
+    // After the bot check, when every move loads a page: the same.
+    assert.deepEqual(judgeClick(click({ detail }), link('/wallet/send'), HERE, true), drop);
+    // With a key held down as well.
+    assert.deepEqual(judgeClick(click({ detail, metaKey: true }), link('/wallet/send'), HERE, false), drop);
+  }
+  // A single click, and a press of Enter on a link (the browser says 0 for that), are followed as ever.
+  assert.equal(judgeClick(click({ detail: 1 }), link('/restore'), HERE, false).kind, 'go');
+  assert.equal(judgeClick(click({ detail: 0 }), link('/restore'), HERE, false).kind, 'go');
+  // A click that the link's own handler has dealt with stays that handler's business.
+  assert.deepEqual(judgeClick(click({ detail: 2, defaultPrevented: true }), link('/restore'), HERE, false), { kind: 'leave' });
 });
 
 test('a link that asks for another tab, a download or a fresh load is left to the browser', () => {

@@ -61,6 +61,9 @@
       addressHint: 'A practice address starts with bcrt1. Compare its first and last characters with the one you were given.',
       amount: 'Amount, in practice sats',
       amountError: 'That amount has a period in it. Sats are whole: type 100000 or 100,000.',
+      addressError: 'That address is on another test network. A practice address starts with bcrt1.',
+      addressMore: 'The same keys have an address on the practice network, too.',
+      addressUse: 'Use the practice address',
       read: 'I have written the 12 words on paper, in order, and nobody else can see my screen.',
       info: 'Looking and receiving need no passkey. Sending and showing the 12 words do.',
       cautionLabel: 'Practice only',
@@ -119,6 +122,9 @@
         'Una dirección de práctica empieza con bcrt1. Compara sus primeros y sus últimos caracteres con la que te dieron.',
       amount: 'Monto, en sats de práctica',
       amountError: 'Ese monto tiene un punto. Los sats son enteros: escribe 100000 o 100,000.',
+      addressError: 'Esa dirección es de otra red de pruebas. Una dirección de práctica empieza con bcrt1.',
+      addressMore: 'Las mismas claves también tienen una dirección en la red de práctica.',
+      addressUse: 'Usar la dirección de práctica',
       read: 'Escribí las 12 palabras en papel, en orden, y nadie más puede ver mi pantalla.',
       info: 'Para mirar y recibir no hace falta la llave de acceso (passkey). Para enviar y para mostrar las 12 palabras, sí.',
       cautionLabel: 'Solo para practicar',
@@ -239,6 +245,16 @@
     <Field label={s.amount} error={s.amountError}>
       {#snippet children(field)}
         <TextInput {...field} bind:value={amount} mono inputmode="numeric" autocomplete="off" />
+      {/snippet}
+    </Field>
+    <!-- An error with more under it (`after`): the field names the sentence and the rest as its description. -->
+    <Field label={s.address} error={s.addressError}>
+      {#snippet children(field)}
+        <TextInput {...field} value="tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx" mono data-testid="piece-field-more" />
+      {/snippet}
+      {#snippet after()}
+        <p class="text-sm leading-relaxed text-ink-600">{s.addressMore}</p>
+        <div><Button variant="quiet">{s.addressUse}</Button></div>
       {/snippet}
     </Field>
     <Field label={s.address}>
@@ -390,10 +406,10 @@
     <Prose>
       <p>
         <TextLink href={router.link({ name: 'about' })} data-testid="piece-link">{s.about}</TextLink>,
-        <OutLink href={wallet.config.siteUrl} data-testid="piece-outside">{s.site}</OutLink>.
+        <OutLink href={wallet.config.siteUrl} text={s.site} data-testid="piece-outside" />.
       </p>
       <p class="text-sm text-ink-500">
-        <OutLink quiet href={wallet.config.sourceUrl}>{t.linkSource}</OutLink>
+        <OutLink quiet href={wallet.config.sourceUrl} text={t.linkSource} />
       </p>
       <p>
         <TextLink href={router.link({ name: 'about' })} download data-testid="piece-download">{s.download}</TextLink>.
@@ -420,6 +436,13 @@
           label={s.command}
           text={'/Applications/Sparrow.app/Contents/MacOS/Sparrow -n regtest'}
           data-testid="piece-code"
+        />
+        <!-- The same line with `wrap`: it breaks at its space, shows whole, and is no Tab stop. -->
+        <CodeBlock
+          wrap
+          label={s.command}
+          text={'/Applications/Sparrow.app/Contents/MacOS/Sparrow -n regtest'}
+          data-testid="piece-code-wrap"
         />
       </Prose>
     </Section>

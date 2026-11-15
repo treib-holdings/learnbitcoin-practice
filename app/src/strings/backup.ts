@@ -3,11 +3,13 @@
 // The same shape as every file in this folder (see common.ts): one table per
 // language with the same keys, plain strings, slots written {name}.
 //
-// Three things the screen shows are not in this table, because they are
-// shared: the screen's name ("Backup", in common.ts), the short form of the
-// exception paragraph that is printed on the card (wordsException, in
-// wallet.ts), and the line a Spanish screen puts under the words to say
-// that they are English on purpose (the words list adds it itself).
+// Four things the screen shows are not in this table. Three are shared: the
+// screen's name ("Backup", in common.ts), the short form of the exception
+// paragraph that is printed on the card (wordsException, in wallet.ts), and
+// the line a Spanish screen puts under the words to say that they are
+// English on purpose (the words list adds it itself). The fourth is the
+// name of a passkey this page has just made: the wallet hands it over as
+// it wrote it then, in whichever language the page had at that moment.
 //
 // The exception paragraph is here in full. Chapter 4 of the main site tells
 // its readers never to type a seed into a website, and this screen puts 12
@@ -63,19 +65,27 @@ export const en = {
   // -- the "Wallet made" step, straight after a create --
   madeTitle: 'Wallet made',
   madeLede: 'This browser now has a practice wallet. Write down its 12 words before you go on.',
-  /** A wallet made with a passkey: the tag in its passkey's name and where the passkey lives, above the words. */
+  /** A wallet made with a passkey: the name its passkey was saved under and where the passkey lives, above the words. */
   madePasskeyTitle: 'Your passkey',
   /**
-   * The row that holds the tag. The tag stands for the name: the whole name
-   * was written in the language the page had at the moment the passkey was
-   * made, and the wallet tells this screen the tag alone. A whole name
-   * built here could be the one in the other language, which the reader's
-   * password manager does not list.
+   * The row that holds the passkey's whole name. The wallet hands it over
+   * as it wrote it when it made the passkey (WalletApi.createdName): this
+   * step is the one place that can show it.
+   */
+  madePasskeyName: 'Saved as',
+  /** Under that row: whose name it is, where the reader meets it, and what the tag in it is for. */
+  madePasskeyNameIs:
+    'This page gave the passkey this name when it made it, a moment ago. A password manager lists the passkey under it. The tag of four characters in the name tells this passkey from any other you have.',
+  /**
+   * The row that holds the tag, where the wallet has no name to hand over.
+   * The tag then stands for the name: a whole name built on this screen
+   * could be the one in the other language, which the reader's password
+   * manager does not list.
    */
   madePasskeyTag: 'Tag in its name',
   /** Under the row: what the tag is, and what it is for. */
   madePasskeyTagIs:
-    'This page put this short code in the name it gave the passkey. The code tells this passkey from any other you have.',
+    'The tag is a short code that this page put in the name it gave the passkey. It tells this passkey from any other you have.',
   /**
    * Where the passkey lives. The reader chose that at the prompt: a
    * password manager, or a security key, which syncs nowhere.
@@ -134,9 +144,12 @@ export const es: Record<keyof typeof en, string> = {
   madeTitle: 'Billetera creada',
   madeLede: 'Este navegador ya tiene una billetera de práctica. Antes de seguir, escribe sus 12 palabras en papel.',
   madePasskeyTitle: 'Tu llave de acceso (passkey)',
+  madePasskeyName: 'Guardada como',
+  madePasskeyNameIs:
+    'Esta página le dio este nombre a la llave de acceso al crearla, hace un momento. Un administrador de contraseñas la muestra con ese nombre. La etiqueta de cuatro caracteres que va en el nombre la distingue de cualquier otra que tengas.',
   madePasskeyTag: 'Etiqueta en su nombre',
   madePasskeyTagIs:
-    'Esta página puso este código corto en el nombre que le dio a la llave de acceso. El código la distingue de cualquier otra que tengas.',
+    'La etiqueta es un código corto que esta página puso en el nombre que le dio a la llave de acceso. La distingue de cualquier otra que tengas.',
   madePasskeyWhere:
     'La llave de acceso la guarda tu administrador de contraseñas, o queda en la llave de seguridad que usaste. Un administrador de contraseñas puede sincronizarla con tus otros dispositivos.',
   madePasskeyBack:

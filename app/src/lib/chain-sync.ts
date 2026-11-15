@@ -217,8 +217,11 @@ export interface ChainSync extends Published<ChainSnapshot> {
 
   /** A transaction ID the network was just given: for two minutes, "not found" for it means "not yet". */
   rememberTx(txid: string): void;
-  /** Puts an outcome of the session's (the wallet was unlocked, or locked) where the screens announce outcomes. */
-  announce(kind: 'unlocked' | 'locked'): void;
+  /**
+   * Puts an outcome of the session's (the wallet was unlocked, or locked, or another tab put a
+   * different wallet in its place) where the screens announce outcomes.
+   */
+  announce(kind: 'unlocked' | 'locked' | 'replaced'): void;
   /** Resolves when nothing is on its way: no scan, no refresh, no list being read. For tests. */
   idle(): Promise<void>;
 }
@@ -357,7 +360,7 @@ interface Shown {
 /** A timer that is set, or null. */
 type Timer = { handle: unknown } | null;
 
-type NewNotice = { kind: 'coins-arrived'; sats: bigint } | { kind: 'confirmed' | 'payment-sent' | 'unlocked' | 'locked' };
+type NewNotice = { kind: 'coins-arrived'; sats: bigint } | { kind: 'confirmed' | 'payment-sent' | 'unlocked' | 'locked' | 'replaced' };
 
 // -- the engine ---------------------------------------------------------------
 
@@ -398,6 +401,8 @@ export function makeChainSync(deps: ChainDeps): ChainSync {
   let historyError: ApiFailure | null = null;
   let historyStale = false;
   let historyLoading = false;
+  /** Who is waiting for the read of the list that is under way to end (refresh). Each is called once, then dropped. */
+  let historyWaiters: (() => void)[] = [];
   /** How many reads of the list have failed in a row, and when the next try is due, in ms. */
   let historyFailures = 0;
   let historyRetryAt: number | null = null;
@@ -533,6 +538,7 @@ export function makeChainSync(deps: ChainDeps): ChainSync {
     historyError = null;
     historyStale = false;
     historyLoading = false;
+    historyEnded();
     historyFailures = 0;
     historyRetryAt = null;
     sentHere.clear();
@@ -658,6 +664,19 @@ export function makeChainSync(deps: ChainDeps): ChainSync {
     return spentHere.size > 0 && coins.some((coin) => spentHere.has(coinKey(coin)));
   }
 
+  /**
+   * A read of the coins is believed again. If reads were being dropped for
+   * being behind, Esplora has now heard of the payment they lacked, and the
+   * list of transactions can show it at last. The coins say nothing of that
+   * when they compare equal to what the page already held: after "Send all"
+   * the wallet was empty before the read and is empty after it. So the list
+   * is marked out of date here, whatever the coins say.
+   */
+  function caughtUp(): void {
+    if (behind) historyStale = true;
+    behind = false;
+  }
+
   /** The chain's height, checked: a number the rest can count with. */
   async function readTip(): Promise<number> {
     const height = await esplora.tipHeight();
@@ -736,11 +755,13 @@ export function makeChainSync(deps: ChainDeps): ChainSync {
           // Esplora has not heard of a payment this page just made. What is shown is newer than what was read.
           behind = true;
         } else {
-          behind = false;
+          caughtUp();
           // Only a scan that worked settles what the Receive screen asked for.
           if (shown !== null) shown.wantScan = false;
           if (state === null || !sameWallet(state, next)) take(next, 'read');
         }
+        // The list may have gone out of date without the coins changing: a new block, or a read that caught up.
+        wantHistory();
         publish();
         syncTimers();
       } catch (cause) {
@@ -809,7 +830,7 @@ export function makeChainSync(deps: ChainDeps): ChainSync {
             // It still lists a coin this page has just spent: dropped too, and the next poll reads the coins again.
             behind = true;
           } else {
-            behind = false;
+            caughtUp();
             if (!sameCoins(before.coins, answer.state.coins)) take(answer.state, 'read');
             rescan = answer.rescan || (shown?.wantScan ?? false);
           }
@@ -943,9 +964,28 @@ export function makeChainSync(deps: ChainDeps): ChainSync {
     await fullScan();
     // The reader asked: the list of transactions is read again too, also after an earlier failure of its own.
     if (mine === wallet && error === null) {
-      historyStale = true;
-      wantHistory('now');
+      // Unless a read of it is under way already. That one will do: either
+      // the scan itself began it, or it began before the scan and will be
+      // followed by another if the scan found the coins changed.
+      if (!historyLoading) {
+        historyStale = true;
+        wantHistory('now');
+      }
+      // The reader's wait ends when the list has been read, not before: only
+      // then do `history` and `historyError` say how the try went.
+      while (mine === wallet && historyLoading) {
+        await new Promise<void>((ended) => {
+          historyWaiters.push(ended);
+        });
+      }
     }
+  }
+
+  /** Tells whoever waits for a read of the list that it has ended, or that the wallet it was for has left. */
+  function historyEnded(): void {
+    const waiting = historyWaiters;
+    historyWaiters = [];
+    for (const ended of waiting) ended();
   }
 
   // -- the list of transactions -------------------------------------------------
@@ -986,6 +1026,8 @@ export function makeChainSync(deps: ChainDeps): ChainSync {
         syncTimers();
         // The coins changed while the list was on its way: read it again (after a failure, when its turn comes).
         if (historyStale) wantHistory();
+        // After that: a waiter that looks now sees the next read, if one has just started, and waits for it too.
+        historyEnded();
       })(),
     );
   }
@@ -1055,6 +1097,16 @@ export function makeChainSync(deps: ChainDeps): ChainSync {
     return (BROADCAST_REFUSALS as readonly string[]).includes(reason);
   }
 
+  /**
+   * True for the answers to a broadcast that a payment can also get when it
+   * did reach the node. "unavailable" is among them: the Worker says it
+   * when it has waited for the practice network as long as it will, and the
+   * node may have taken the payment in that time.
+   */
+  function mayBeOut(reason: BroadcastFailure): boolean {
+    return reason === 'already_sent' || reason === 'coin_spent' || reason === 'network' || reason === 'unavailable';
+  }
+
   /** A payment's ID, or null for something that is not a payment. */
   function txidOf(payment: SignedPayment): string | null {
     try {
@@ -1100,11 +1152,12 @@ export function makeChainSync(deps: ChainDeps): ChainSync {
       } catch (cause) {
         failure = broadcastFailure(cause);
       }
-      // "Already in a block", "its coins are spent" and no answer at all are
-      // also what a payment gets that did go out: sent twice, or sent when
-      // the answer was lost on the way back. If the network knows the
+      // "Already in a block", "its coins are spent", no answer at all, and
+      // a Worker that gave up waiting for the practice network are also
+      // what a payment gets that did go out: sent twice, or sent when the
+      // answer was lost on the way back. If the network knows the
       // transaction, it was sent.
-      if (failure !== null && (failure.reason === 'already_sent' || failure.reason === 'coin_spent' || failure.reason === 'network')) {
+      if (failure !== null && mayBeOut(failure.reason)) {
         try {
           await esplora.tx(txid);
           failure = null;

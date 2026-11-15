@@ -4,8 +4,11 @@
 // redrawn when the address changes. Links stay plain <a href="/wallet/send">
 // elements. One click listener on the document turns a click on a link to
 // one of the app's own screens into a history entry, so no page is loaded
-// and the wallet stays as it is. What the router decides is in
-// navigation.ts, where "node --test" checks every rule.
+// and the wallet stays as it is. The same listener stops the second click
+// of a double tap on any link: by then the first click may have changed
+// the screen, and the link under the reader's finger is one they never
+// chose. What the router decides is in navigation.ts, where "node --test"
+// checks every rule.
 //
 // How a screen uses it:
 //   router.lang, router.route      which language, which screen (reactive)
@@ -38,6 +41,13 @@ class Router {
   #scroll = new Map<number, number>();
   /** True once the bot check's script is in the page: every move then loads a page. */
   #fullLoads = false;
+  /**
+   * The part of the new screen that the last move asked for ("faucet" for an
+   * address that ends "#faucet"), until the piece that is that part has taken
+   * it. Set by a move to another screen and by the page's own first address,
+   * never by Back or Forward: those return to where the reader was.
+   */
+  #wantedPart = '';
 
   /** The screen the address asks for. */
   get route(): Route {
@@ -76,6 +86,7 @@ class Router {
     if (index !== null) this.#index = index;
     else history.replaceState({ index: this.#index } satisfies EntryState, '');
     document.documentElement.lang = this.lang;
+    this.#wantedPart = partOf(location.hash);
 
     // "on" and not addEventListener: it keeps this listener in step with
     // the handlers Svelte attaches, so a component's own onclick that calls
@@ -114,7 +125,23 @@ class Router {
         history.pushState({ index: this.#index } satisfies EntryState, '', move.url);
         break;
     }
+    this.#wantedPart = partOf(location.hash);
     void this.#show(0);
+  }
+
+  /**
+   * For a piece that is a named part of its screen (the faucet on Receive,
+   * "#faucet"): true, once, when the move that opened the screen asked for
+   * that part. The piece then brings itself on screen and takes focus (see
+   * FaucetCard.svelte for when). The router itself always opens a screen at
+   * its top with focus on its heading, because a part may not be drawn yet
+   * when the screen opens: the faucet waits for the wallet's first look at
+   * its coins.
+   */
+  takePart(id: string): boolean {
+    if (id === '' || this.#wantedPart !== id) return false;
+    this.#wantedPart = '';
+    return true;
   }
 
   /**
@@ -180,6 +207,8 @@ class Router {
       return;
     }
     this.#scroll.set(this.#index, window.scrollY);
+    // Back and Forward return to where the reader was, not to a part an earlier move asked for.
+    this.#wantedPart = '';
     // An entry with no place in the count has no saved scroll position
     // either: its screen opens at the top.
     if (verdict.index === null) {
@@ -213,6 +242,12 @@ class Router {
         : null;
     const verdict = judgeClick(event, link, location.href, this.#fullLoads);
     if (verdict.kind === 'leave') return;
+    if (verdict.kind === 'drop') {
+      // The second click of a double tap follows no link (navigation.ts says
+      // why): not through the router, and not through the browser either.
+      event.preventDefault();
+      return;
+    }
     if (verdict.kind === 'part') {
       // Another part of this screen, such as "Skip to content": go there
       // without adding a history entry.
@@ -225,6 +260,15 @@ class Router {
     }
     event.preventDefault();
     this.navigate(verdict.to);
+  }
+}
+
+/** The part an address names: "faucet" for "#faucet", "" for none or for one that cannot be read. */
+function partOf(hash: string): string {
+  try {
+    return decodeURIComponent(hash.replace('#', ''));
+  } catch {
+    return '';
   }
 }
 

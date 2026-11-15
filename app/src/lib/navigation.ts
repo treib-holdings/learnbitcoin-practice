@@ -20,6 +20,12 @@ export interface ClickFacts {
   ctrlKey: boolean;
   shiftKey: boolean;
   altKey: boolean;
+  /**
+   * How many clicks the browser counts at this point in quick succession:
+   * 1 for a single click, 2 for the second click of a double one, by mouse
+   * and by touch alike. A press from the keyboard says 0.
+   */
+  detail: number;
 }
 
 /** What it needs to know about the link under the click. */
@@ -37,12 +43,15 @@ export interface LinkFacts {
 export type ClickVerdict =
   /** Not the router's business: the browser does what it always does. */
   | { kind: 'leave' }
+  /** The second click of a double tap, on a link: it is stopped, and nothing happens at all. */
+  | { kind: 'drop' }
   /** A link to another part of the screen that is showing, such as "Skip to content". */
   | { kind: 'part'; id: string }
   /** A link to a screen of the app: change the screen without loading a page. */
   | { kind: 'go'; to: string };
 
 const LEAVE: ClickVerdict = { kind: 'leave' };
+const DROP: ClickVerdict = { kind: 'drop' };
 
 /**
  * What a click means. `here` is the page's own address. `fullLoads` is true
@@ -53,6 +62,16 @@ export function judgeClick(click: ClickFacts, link: LinkFacts | null, here: stri
   if (link === null) return LEAVE;
   // A handler of the link's own has already said what the click does.
   if (click.defaultPrevented) return LEAVE;
+  // The second click of a double tap. Its first click has done its work
+  // already: it followed a link, or pressed a button, and either may have
+  // changed the screen. Then this link is not one the reader chose. It is
+  // whatever the new screen put under their finger: "Remove it", and then
+  // Home's "Restore" where that button stood. Followed, it would take them
+  // somewhere they never asked to go. So it leads nowhere, whether it
+  // points at a screen of the app, at another part of this one, or at
+  // another site. (And if the screen did not change, the first click
+  // already followed this very link.)
+  if (click.detail > 1) return DROP;
   // Another mouse button, or a key held down: the reader is asking for a
   // new tab, a new window or a download, and that is the browser's to give.
   if (click.button !== 0) return LEAVE;

@@ -62,8 +62,7 @@
 {#if gate === 'open'}
   {@render children()}
 {:else if gate === 'trouble'}
-  <!-- Its buttons as one group: on a phone each takes the whole width (the piece gives them none of their own). -->
-  <StoredTrouble titled class="[&_button]:w-full sm:[&_button]:w-auto" />
+  <StoredTrouble titled />
 {:else if gate === 'here'}
   <WalletHere already arrived={stop === 'exists'}>
     {@render extra?.()}

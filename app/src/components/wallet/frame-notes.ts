@@ -15,7 +15,9 @@ import { createContext } from 'svelte';
 
 export type FrameNote =
   | { kind: 'tampered' }
-  | { kind: 'switched'; tag: string | null; fingerprint: string };
+  | { kind: 'switched'; tag: string | null; fingerprint: string }
+  /** Not from an unlock: another tab put a different wallet in this browser. The frame takes it from the wallet's own notice. */
+  | { kind: 'replaced' };
 
 /** One note at a time. The frame makes this with $state, so that setting `note` redraws it. */
 export interface FrameNotes {

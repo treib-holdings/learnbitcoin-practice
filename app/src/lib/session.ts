@@ -16,9 +16,11 @@
 //     first (keystore.ts does), and when another tab changes the record this
 //     page drops what it knows and starts again from what is stored.
 //   - The faucet's bot check is somebody else's code. Before it is let into
-//     the page, a passkey wallet's keys and every typed word are dropped,
-//     and from then on nothing here will load keys or take words until the
-//     page has been reloaded.
+//     the page, a passkey wallet's keys and every typed word are dropped
+//     and a passkey prompt that is still open is ended, and from then on
+//     nothing here will load keys or take words until the page has been
+//     reloaded. That keeps what was loaded before from that code, and no
+//     more: code in the page could still ask the passkey itself.
 //   - Words leave a trace where one would not look for it: a regular
 //     expression that has matched keeps the text it ran on, and any script
 //     in the page can read that text back. So every action here ends by
@@ -65,6 +67,7 @@ import {
   RECORD_KEY,
   canStore,
   judgeUnlock,
+  judgeWords,
   loadRecord,
   makeRecord,
   publicRecord,
@@ -72,11 +75,11 @@ import {
   removeWallet as removeStored,
   replaceRecord,
   saveRecordIfNone,
-  wordsMatchRecord,
   type WalletRecord,
 } from './keystore.ts';
 import {
   createPasskey,
+  endPrompt,
   finishCreate,
   getPasskey,
   passkeyOffered,
@@ -109,6 +112,8 @@ export interface PasskeyPort {
   finish(pending: { credentialId: string; tag: string | null; prfEnabled: boolean | null }): Promise<PasskeyOutcome>;
   get(credentialId?: string): Promise<PasskeyOutcome>;
   signalUnknown(credentialId: string): void;
+  /** Ends the prompt that is open, if one is: its call answers "cancelled", and what it gives later is never read. */
+  end(): void;
 }
 
 /** passkey.ts's functions on one set of browser objects. */
@@ -119,6 +124,7 @@ export function passkeyPort(env: PasskeyEnv): PasskeyPort {
     finish: (pending) => finishCreate(env, pending),
     get: (credentialId) => getPasskey(env, credentialId),
     signalUnknown: (credentialId) => signalUnknown(env, credentialId),
+    end: () => endPrompt(),
   };
 }
 
@@ -152,6 +158,7 @@ export interface SessionView {
   persisted: boolean | null;
   setup: { tag: string | null } | null;
   created: 'passkey' | 'words' | null;
+  createdName: string | null;
   pendingSwitch: { tag: string | null; fingerprint: string } | null;
   pendingRestore: boolean;
   openedEmpty: boolean;
@@ -289,10 +296,16 @@ export function makeSession(deps: SessionDeps): Session {
   let offered: boolean | null = null;
   let storable = true;
   let persisted: boolean | null = null;
-  /** A passkey that was made and has not given its secret yet. */
-  let unfinished: { credentialId: string; tag: string | null; prfEnabled: boolean | null } | null = null;
+  /**
+   * A passkey that was made and has not given its secret yet. `name` is
+   * what this page wrote as its name when it made it: kept for the "Wallet
+   * made" step that follows "Finish setting up".
+   */
+  let unfinished: { credentialId: string; tag: string | null; prfEnabled: boolean | null; name: string | null } | null = null;
   let setup: { tag: string | null } | null = null;
   let created: 'passkey' | 'words' | null = null;
+  /** The name this page gave the passkey of the wallet it has just made. Set and cleared with `created`. */
+  let createdName: string | null = null;
   let pendingSwitch: { tag: string | null; fingerprint: string } | null = null;
   let openedEmpty = false;
 
@@ -318,6 +331,7 @@ export function makeSession(deps: SessionDeps): Session {
     persisted: null,
     setup: null,
     created: null,
+    createdName: null,
     pendingSwitch: null,
     pendingRestore: false,
     openedEmpty: false,
@@ -333,6 +347,8 @@ export function makeSession(deps: SessionDeps): Session {
       persisted,
       setup,
       created,
+      // Only ever beside "passkey": whatever clears `created` clears the name with it.
+      createdName: created === 'passkey' ? createdName : null,
       pendingSwitch,
       pendingRestore: restoring !== null,
       openedEmpty,
@@ -349,7 +365,7 @@ export function makeSession(deps: SessionDeps): Session {
     }
   }
 
-  function announce(kind: 'unlocked' | 'locked'): void {
+  function announce(kind: 'unlocked' | 'locked' | 'replaced'): void {
     try {
       chain.announce(kind);
     } catch {
@@ -431,8 +447,13 @@ export function makeSession(deps: SessionDeps): Session {
    * Starts again from what is stored: the answer to a change made in another
    * tab, and the first thing the session does. Keys, words that were waiting
    * and everything read from the chain are dropped.
+   *
+   * When one wallet is found in another's place, the screens are told
+   * ("replaced"): an address on screen is the other wallet's from this moment,
+   * and a reader who is looking at it must not be left to find that out.
    */
   function load(): void {
+    const before = record?.xpub ?? null;
     epoch += 1;
     words = null;
     key = null;
@@ -440,6 +461,7 @@ export function makeSession(deps: SessionDeps): Session {
     pendingSwitch = null;
     restoring = null;
     created = null;
+    createdName = null;
     openedEmpty = false;
     persisted = null;
 
@@ -465,6 +487,8 @@ export function makeSession(deps: SessionDeps): Session {
       void openChain(stored.xpub);
     }
     publish();
+    // Only another tab does this: whatever this page does to its own wallet goes through adopt().
+    if (before !== null && record !== null && record.xpub !== before) announce('replaced');
   }
 
   /** True when what is stored is what this page loaded. */
@@ -493,6 +517,7 @@ export function makeSession(deps: SessionDeps): Session {
     pendingSwitch = null;
     restoring = null;
     created = null;
+    createdName = null;
     openedEmpty = false;
     persisted = null;
     // Another passkey that was still waiting to be set up is given up. If it is this wallet's own
@@ -570,8 +595,12 @@ export function makeSession(deps: SessionDeps): Session {
     return mnemonicFromEntropy(entropyFromPrf(outcome.prfOutput));
   }
 
-  /** What making a passkey (or finishing one) came to. */
-  function made(outcome: PasskeyOutcome, how: 'create' | 'finish'): CreateResult {
+  /**
+   * What making a passkey (or finishing one) came to. `name` is what this
+   * page wrote as the passkey's name when it made it, or null if the passkey
+   * call never asked for one.
+   */
+  function made(outcome: PasskeyOutcome, how: 'create' | 'finish', name: string | null): CreateResult {
     // The bot check came into the page while the prompt was open: nothing the prompt gave is used.
     if (botCheck) return { kind: 'reload' };
     switch (outcome.kind) {
@@ -600,6 +629,8 @@ export function makeSession(deps: SessionDeps): Session {
         }
         void adopt(next, mnemonic);
         created = 'passkey';
+        // The one moment the whole name is known: the "Wallet made" step shows it as it was written.
+        createdName = name;
         publish();
         count('Wallet created', 'passkey');
         return { kind: 'created' };
@@ -615,7 +646,7 @@ export function makeSession(deps: SessionDeps): Session {
           return { kind: 'exists' };
         }
         if (unfinished !== null && unfinished.credentialId !== outcome.credentialId) forgetPasskey(unfinished.credentialId);
-        unfinished = { credentialId: outcome.credentialId, tag: outcome.tag, prfEnabled: outcome.prfEnabled };
+        unfinished = { credentialId: outcome.credentialId, tag: outcome.tag, prfEnabled: outcome.prfEnabled, name };
         if (setup === null || setup.tag !== outcome.tag) setup = { tag: outcome.tag };
         publish();
         return { kind: 'unfinished' };
@@ -661,7 +692,13 @@ export function makeSession(deps: SessionDeps): Session {
     try {
       const refusal = cannotStart() ?? (prompting ? 'busy' : null);
       if (refusal !== null) return { kind: refusal };
-      return made(await prompt(() => passkeys.create(passkeyName)), 'create');
+      // The passkey call asks for the name once it has made up the tag. What it is told is kept.
+      let name: string | null = null;
+      const label = (tag: string): string => {
+        name = passkeyName(tag);
+        return name;
+      };
+      return made(await prompt(() => passkeys.create(label)), 'create', name);
     } catch (error) {
       return { kind: 'error', name: nameOf(error) };
     }
@@ -673,7 +710,8 @@ export function makeSession(deps: SessionDeps): Session {
       if (refusal !== null) return { kind: refusal };
       const pending = unfinished;
       if (pending === null) return { kind: 'error', name: 'NothingToFinish' };
-      return made(await prompt(() => passkeys.finish(pending)), 'finish');
+      const { name, ...passkey } = pending;
+      return made(await prompt(() => passkeys.finish(passkey)), 'finish', name);
     } catch (error) {
       return { kind: 'error', name: nameOf(error) };
     }
@@ -699,6 +737,7 @@ export function makeSession(deps: SessionDeps): Session {
 
   function ackCreated(): void {
     created = null;
+    createdName = null;
     publish();
   }
 
@@ -820,13 +859,39 @@ export function makeSession(deps: SessionDeps): Session {
       if (status === 'broken') return 'broken';
       if (botCheck) return 'reload';
       syncWithStorage();
-      if (record === null) return 'gone';
+      const current = record;
+      if (current === null) return 'gone';
       if (typeof input !== 'string' || !isValidMnemonic(input)) return 'invalid';
-      if (!wordsMatchRecord(record, input)) return 'other-wallet';
+      // Judged as a passkey's answer is: by the stored public key and the stored wallet fingerprint.
+      const verdict = judgeWords(current, input);
+      if (verdict === 'other') return 'other-wallet';
       // A wallet made without a passkey is unlocked already; the words were only checked.
-      if (record.kind !== 'passkey') return 'unlocked';
+      // (Its record holds its words, and is read only if they give both of the two.)
+      if (current.kind !== 'passkey') return 'unlocked';
+      const mnemonic = normalizeMnemonic(input);
+      if (verdict === 'tampered') {
+        // The words fit one of the two and not the other: the stored record had been altered. As after
+        // a passkey's answer, it is written again from the keys. It stays a passkey wallet's record,
+        // with its passkey's ID and tag: the words themselves are not stored.
+        const rebuilt = makeRecord('passkey', mnemonic, current.createdAt, {
+          credentialId: current.credentialId ?? '',
+          tag: current.tag ?? null,
+        });
+        if (!replaceRecord(local, current.fingerprint, rebuilt)) {
+          if (syncWithStorage()) return 'gone';
+          // The keys are not loaded on top of a record that is known to be wrong.
+          probeStorage();
+          publish();
+          return 'no-storage';
+        }
+        // What was read from the chain so far may have been another wallet's: adopt() has it read again from nothing.
+        void adopt(rebuilt, mnemonic);
+        count('Unlock', 'tampered');
+        announce('unlocked');
+        return 'tampered';
+      }
       // For this page only. Nothing is written: a reload locks the wallet again.
-      words = normalizeMnemonic(input);
+      words = mnemonic;
       key = null;
       dropSwitch();
       publish();
@@ -1018,6 +1083,14 @@ export function makeSession(deps: SessionDeps): Session {
 
   function beforeBotCheck(): void {
     botCheck = true;
+    // A passkey prompt that is still open is ended first. Answered later, it would hand the
+    // passkey's secret to a page that holds the script: the answer is read where the script
+    // can look on. (The call that opened it answers "reload", like every call from now on.)
+    try {
+      passkeys.end();
+    } catch {
+      // What that prompt gives is thrown away all the same.
+    }
     // Typed words and another wallet's words: gone, whatever kind of wallet is here.
     restoring = null;
     dropSwitch();

@@ -48,6 +48,7 @@
   import Checkbox from '../components/Checkbox.svelte';
   import Notice from '../components/Notice.svelte';
   import OutLink from '../components/OutLink.svelte';
+  import { leaveOutcome } from '../components/outcome.ts';
   import Page from '../components/Page.svelte';
   import { busyWhile } from '../components/status.svelte.ts';
   import { TAP } from '../components/styles.ts';
@@ -166,6 +167,8 @@
         // this screen shows nothing new in the moment before it leaves. The
         // wallet takes this screen's place in the history: Back from there
         // leads past a Restore that could only say a wallet is here already.
+        // The Overview says, for that one visit, that the wallet was restored.
+        leaveOutcome('restored');
         navigate(router.link({ name: 'wallet' }), { replace: true });
         return;
       case 'empty':
@@ -196,6 +199,7 @@
     const view = keepView(wallet.keepRestored());
     switch (view.kind) {
       case 'restored':
+        leaveOutcome('restored');
         navigate(router.link({ name: 'wallet' }), { replace: true });
         return;
       case 'stopped':
@@ -272,7 +276,7 @@
              control to control reads them where the reader says "these are practice words". -->
         <div id="{id}-rules" class="space-y-6">
           <Notice kind="caution" text={t.exception} data-testid="restore-exception">
-            <OutLink class={LONE_LINK} href={chapterFourUrl(wallet.config.siteUrl, router.lang)}>{t.chapter}</OutLink>
+            <OutLink class={LONE_LINK} href={chapterFourUrl(wallet.config.siteUrl, router.lang)} text={t.chapter} />
           </Notice>
           <Notice data-testid="restore-kept">
             <div class="space-y-2">
@@ -282,7 +286,14 @@
           </Notice>
         </div>
 
-        <WordsInput bind:this={input} data-testid="restore-words" disabled={busy} onenter={() => void go()} />
+        <!-- The group of fields names the two notices above it, so that they are said as the reader comes into the fields. -->
+        <WordsInput
+          bind:this={input}
+          data-testid="restore-words"
+          aria-describedby="{id}-rules"
+          disabled={busy}
+          onenter={() => void go()}
+        />
 
         <div class="space-y-2">
           <Checkbox

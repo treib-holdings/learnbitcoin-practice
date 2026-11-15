@@ -3,7 +3,10 @@
   //
   // Before the tap the card says what the faucet pays and what the bot
   // check is: Cloudflare's, loaded only when coins are asked for, given the
-  // address. A wallet made with a passkey is also told that asking locks it.
+  // address. A wallet opened with a passkey is also told that asking locks
+  // it, what that keeps from the check's code, and to cancel a passkey
+  // prompt or close a window that comes after the tap: this page opens
+  // neither then, and the lock cannot stop the check's code from doing so.
   // The button names those paragraphs as its description, so a reader who
   // tabs to it hears them too. Nothing of the bot check is in the page until
   // the tap.
@@ -20,12 +23,20 @@
   // whenever it shows, because then it waits for the reader. A reader who
   // cannot see the box is told through the status region.
   //
-  // With no site key in the wallet's settings there is no bot check, and
+  // With no site key in the server's settings there is no bot check, and
   // the faucet is closed: the card says so and has a Reload button in place
   // of the faucet's, because the settings are read when the page loads.
-  // Until the settings have arrived the card says only that it is loading.
+  // Until the settings have arrived the card says only that it is loading,
+  // and if they never come it says that, and not that the faucet is closed
+  // (the wallet says which of the three it is: wallet.settings).
+  //
+  // The card is a part of the Receive screen that an address can name:
+  // "#faucet". Every "Get practice coins" on the other wallet screens leads
+  // to that address, because on a phone the faucet is one to three screens
+  // below the top of Receive. When the screen was opened for the faucet,
+  // the card brings itself on screen and puts focus on its heading.
 
-  import { onDestroy, tick, untrack } from 'svelte';
+  import { onDestroy, onMount, tick, untrack } from 'svelte';
   import Actions from '../../components/Actions.svelte';
   import Button from '../../components/Button.svelte';
   import Card from '../../components/Card.svelte';
@@ -33,7 +44,7 @@
   import { announce, busyWhile } from '../../components/status.svelte.ts';
   import { splitLead } from '../../components/text.ts';
   import Waiting from '../../components/Waiting.svelte';
-  import { satsText } from '../../components/wallet/frame.ts';
+  import { FAUCET_PART, satsText } from '../../components/wallet/frame.ts';
   import ReloadButton from '../../components/wallet/ReloadButton.svelte';
   import { fill } from '../../lib/format.ts';
   import { router } from '../../lib/router.svelte.ts';
@@ -41,7 +52,7 @@
   import { useWallet } from '../../lib/wallet-context.ts';
   import { strings } from '../../strings/index.ts';
   import { makeBotCheck } from './bot-check.ts';
-  import { BOX_SAY_MS, SETTINGS_WAIT_MS, askButton, boxWasWaiting, offersMore } from './faucet.ts';
+  import { BOX_SAY_MS, askButton, boxWasWaiting, offersMore } from './faucet.ts';
   import FaucetState from './FaucetState.svelte';
   import { bringIntoView } from './view.ts';
 
@@ -64,15 +75,11 @@
   /** No site key, no bot check: the faucet is closed. */
   let open = $derived(wallet.config.turnstileSiteKey !== '');
 
-  // The site key comes with the wallet's settings, and it is empty until
-  // they have arrived: that is not yet a closed faucet. The wallet has no
-  // word of its own for "the settings are here". What it does publish is
-  // whether passkeys are offered, and that it learns only once the request
-  // for the settings has ended (it is null until then). Should that word
-  // never come, the card stops waiting by itself.
-  let waited = $state(false);
-  const patience = window.setTimeout(() => (waited = true), SETTINGS_WAIT_MS);
-  let loading = $derived(!open && wallet.passkeyOffered === null && !waited);
+  // The site key comes with the server's settings, and the built-in ones
+  // have none. So an empty key is a closed faucet only once the server's
+  // settings are here; until then the card is loading, and if they could
+  // not be read, that is what it says.
+  let settings = $derived(wallet.settings);
 
   let button = $derived(askButton(view.phase));
   let passkey = $derived(wallet.record?.kind === 'passkey');
@@ -169,9 +176,26 @@
 
   onDestroy(() => {
     gone = true;
-    window.clearTimeout(patience);
     window.clearTimeout(boxSays);
     botCheck.close();
+  });
+
+  // The screen was opened for the faucet ("#faucet"): the card comes on
+  // screen, and its heading takes focus, so that a screen reader says where
+  // the reader has landed and Tab goes on from there. One frame after the
+  // card is drawn, and not at once: the router has just put the new screen
+  // at its top with focus on the screen's own heading, and does so right
+  // after the screen is drawn. (After a page load the card is drawn later
+  // than the screen, once the wallet's first look at its coins is done.)
+  onMount(() => {
+    if (!router.takePart(FAUCET_PART)) return;
+    const frame = requestAnimationFrame(() => {
+      const card = document.getElementById(FAUCET_PART);
+      if (card === null) return;
+      bringIntoView(card);
+      card.querySelector<HTMLElement>('h2')?.focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(frame);
   });
 
   async function ask(): Promise<void> {
@@ -235,17 +259,25 @@
   });
 </script>
 
-<!-- px-5 on a phone: the grey card's own 24 px at each side would leave a boxed sentence 187 px at
-     320 px, and the error table has a host name that is 190 px wide. It also puts this card's text
-     under the address card's. -->
-<Card tone="grey" class="px-5 sm:px-6" title={t.faucetTitle} data-testid="faucet">
-  {#if loading}
+<!-- scroll-mt-4: when the page moves to show the card, it does not start flush under the banner. -->
+<Card tone="grey" title={t.faucetTitle} id={FAUCET_PART} class="scroll-mt-4" data-testid="faucet">
+  {#if settings === 'loading'}
     <!-- The settings are still on their way: whether the faucet is open is not known yet. -->
     <Waiting inline data-testid="faucet-loading" />
+  {:else if settings === 'failed'}
+    <!-- The settings never came, so whether the faucet is open is still not known. The cause is
+         the one every unanswered request has; the line under it says what follows for the faucet,
+         and the button is the one way to ask again. Not announced: it answers no tap. -->
+    <Notice kind="problem" silent text={e.network} data-testid="faucet-settings-failed">
+      <div class="space-y-3">
+        <p class="text-sm">{t.settingsFailed}</p>
+        <ReloadButton variant="quiet" class="bg-white" data-testid="faucet-settings-reload" />
+      </div>
+    </Notice>
   {:else if !open}
     <!-- Already there when the screen opens, so it is not announced as an answer to something.
-         The sentence ends "Try again later": on this page only a reload looks again, and the
-         same shows when the settings could not be read at all. The line and the button say so. -->
+         The sentence ends "Try again later": on this page only a reload looks again, which the
+         line and the button say. -->
     <Notice kind="problem" silent text={e.closed} data-testid="faucet-closed">
       <div class="space-y-3">
         <p class="text-sm">{t.closedReload}</p>
@@ -260,6 +292,7 @@
         <p class="text-sm text-ink-600">{t.faucetCheck}</p>
         {#if passkey}
           <p class="text-sm text-ink-600" data-testid="faucet-locks">{t.faucetLocks}</p>
+          <p class="text-sm text-ink-600" data-testid="faucet-no-prompt">{t.faucetNoPrompt}</p>
         {/if}
       {/if}
     </div>

@@ -8,6 +8,12 @@
   // is what "6 minutes ago" is counted from, and it has to move: TxList
   // hands every row its clock. A row that read the time once, when it was
   // drawn, would stop counting.
+  //
+  // On a phone each of the row's four things stands on a line of its own.
+  // Side by side, some would fit and some would not ("Sent" and its amount
+  // on one line, "Received" and its amount on two), and the rows of one
+  // list would differ. From a wider screen every pair fits, and they share
+  // a line.
 
   import type { TxView } from '@learnbitcoin/practice-wallet';
   import { fill, formatDate, formatElapsed, shortId } from '../../lib/format.ts';
@@ -49,12 +55,12 @@
       FOCUS,
     ]}
   >
-    <span class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+    <span class="flex flex-col gap-y-1 sm:flex-row sm:flex-wrap sm:items-baseline sm:justify-between sm:gap-x-4">
       <span class="font-semibold text-ink-800 group-hover:text-orange-600">{direction}</span>
       <!-- A transaction that is not this wallet's neither added to it nor took from it. -->
       {#if view.direction !== 'other'}<Amount sats={view.net} signed />{/if}
     </span>
-    <span class="mt-1 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 text-xs text-ink-500">
+    <span class="mt-1 flex flex-col items-start gap-y-1 text-xs text-ink-500 sm:flex-row sm:flex-wrap sm:items-baseline sm:justify-between sm:gap-x-4">
       {#if when === null}
         <Badge tone="fact">{c.unconfirmed}</Badge>
       {:else}

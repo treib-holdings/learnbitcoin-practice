@@ -4,6 +4,7 @@
 // browser holds right now, and the list of what is counted.
 
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { EVENTS, LANGS, type AppConfig, type EventName } from '@learnbitcoin/practice-contract';
 import { accountFromMnemonic } from '@learnbitcoin/practice-wallet';
@@ -19,7 +20,6 @@ import {
   faucetText,
   keptNow,
   linkText,
-  settingsArrived,
   type KeptNow,
 } from '../src/screens/info/facts.ts';
 import {
@@ -155,10 +155,12 @@ test('about: a closed faucet is said to be closed, and only once the settings on
   // The server's may say the opposite a moment later, so neither line may be drawn from the built-in ones.
   assert.equal(faucetClosed(DEFAULT_CONFIG), true);
   assert.equal(DEFAULT_CONFIG.events, false);
-  // The wallet's one sign that the settings have been loaded, or given up on: it knows about passkeys.
-  assert.equal(settingsArrived(null), false);
-  assert.equal(settingsArrived(true), true);
-  assert.equal(settingsArrived(false), true);
+  // The wallet says which settings a screen is looking at, and About asks it: the faucet line is
+  // drawn only from settings the server sent, the counting line once that request has ended.
+  const about = readFileSync(new URL('../src/screens/About.svelte', import.meta.url), 'utf8');
+  assert.match(about, /let fromServer = \$derived\(wallet\.settings === 'loaded'\);/);
+  assert.match(about, /\{#if fromServer && faucetClosed\(wallet\.config\)\}/);
+  assert.doesNotMatch(about, /passkeyOffered/);
   for (const lang of LANGS) assert.ok(strings.about[lang].netFaucetOff.endsWith('.'), lang);
   assert.equal(strings.about.en.netFaucetOff, 'The faucet is switched off right now.');
   assert.equal(strings.about.es.netFaucetOff, 'El faucet está apagado por ahora.');

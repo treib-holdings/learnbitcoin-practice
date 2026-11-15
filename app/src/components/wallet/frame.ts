@@ -17,6 +17,20 @@ export const SECTIONS = ['wallet', 'coins', 'receive', 'send', 'activity', 'back
 export type Section = (typeof SECTIONS)[number];
 
 /**
+ * The faucet's name as a part of the Receive screen: what follows "#" in
+ * the address of every "Get practice coins" that leads there. Receive is two
+ * or three screens tall on a phone, with the address and its QR code first.
+ * A link that opened it at its top would leave the reader, who asked for
+ * coins, looking for a second button with the same words.
+ */
+export const FAUCET_PART = 'faucet';
+
+/** The address of the faucet on the Receive screen, given the address of that screen in the page's language. */
+export function faucetLink(receive: string): string {
+  return `${receive}#${FAUCET_PART}`;
+}
+
+/**
  * How many days Safari keeps what a site stored when the site is not used.
  * Not a setting of ours but the browser's own rule, so it is written here
  * once and filled into every sentence that names it.
@@ -66,7 +80,9 @@ export function chainFailureText(failure: ApiFailure, lang: Lang): string {
  * or null when the note speaks for itself. A switch to another passkey's
  * wallet changes which wallet this browser holds, and its note is a quiet
  * box that a screen reader is not told about: so its first sentence is
- * said. The note about saved details that were wrong is an alert already.
+ * said. The note about saved details that were wrong is an alert already,
+ * and a wallet replaced in another tab was said when the wallet announced it
+ * (noticeText).
  */
 export function noteAnnouncement(note: FrameNote, lang: Lang): string | null {
   return note.kind === 'switched' ? splitLead(strings.wallet[lang].noteSwitched).lead : null;
@@ -81,7 +97,8 @@ export function satsText(sats: bigint, lang: Lang): string {
 /**
  * The sentence the status region says for something that just happened to
  * the wallet. Outcomes only: coins arrived, 1 confirmation, payment sent,
- * unlocked, locked.
+ * unlocked, locked, and a wallet that another tab put in this one's place
+ * (the first sentence of the note the frame then shows).
  */
 export function noticeText(notice: Notice, lang: Lang): string {
   const t = strings.wallet[lang];
@@ -97,5 +114,7 @@ export function noticeText(notice: Notice, lang: Lang): string {
       return t.noticeUnlocked;
     case 'locked':
       return t.noticeLocked;
+    case 'replaced':
+      return splitLead(t.noteReplaced).lead;
   }
 }

@@ -13,6 +13,7 @@ import { PRF_INPUT_V1, entropyFromPrf, mnemonicFromEntropy } from '@learnbitcoin
 import { judgeUnlock, makeRecord } from '../src/lib/keystore.ts';
 import {
   createPasskey,
+  endPrompt,
   finishCreate,
   getPasskey,
   passkeyOffered,
@@ -73,6 +74,9 @@ function hex(source: unknown): string {
 /** How often any fake credential was turned into JSON. It must stay 0: that text would hold the secret. */
 let toJsonCalls = 0;
 
+/** How often the part of any fake credential that holds the secret was read (getClientExtensionResults). */
+let secretReads = 0;
+
 afterEach(() => {
   assert.equal(toJsonCalls, 0, 'toJSON() was called on a credential');
 });
@@ -102,6 +106,7 @@ function credential(spec: CredentialSpec = {}): object {
     // Like the real method, this one works only when it is called on its credential.
     getClientExtensionResults(this: unknown) {
       if (typeof this !== 'object' || this === null || !('rawId' in this)) throw new TypeError('Illegal invocation');
+      secretReads += 1;
       return prf === undefined ? {} : { prf };
     },
     toJSON() {
@@ -793,6 +798,89 @@ test('a prompt that never ends is ended by the module, two seconds after the tim
     t.mock.timers.tick(600_000);
     assert.equal(signalOf(ended.calls[0]).aborted, false);
     assert.equal(signalOf(ended.calls[1]).aborted, false);
+  } finally {
+    process.off('unhandledRejection', onUnhandled);
+  }
+  assert.deepEqual(unhandled, []);
+});
+
+test('endPrompt: the open prompt is closed, its call answers "cancelled" at once, and what comes back later is never read', async () => {
+  const unhandled: unknown[] = [];
+  const onUnhandled = (reason: unknown): void => {
+    unhandled.push(reason);
+  };
+  process.on('unhandledRejection', onUnhandled);
+  const cancelled: PasskeyOutcome = { kind: 'cancelled', timedOut: false };
+  const pending = { credentialId: ID_TEXT, tag: TAG, prfEnabled: true };
+  const withSecret = (): object => credential({ prf: { first: buffer(SECRET) } });
+  const turn = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
+  try {
+    // With no prompt open it does nothing, and does not end the next one in advance.
+    endPrompt();
+    assert.equal((await getPasskey(fakeBrowser({ get: [answers(withSecret())] }).env, ID_TEXT)).kind, 'ok');
+
+    // A browser that keeps to the signal: it is told to close the prompt, and rejects with an AbortError.
+    // That is the page's own doing: a plain "cancelled", not a prompt that ran out of time and not a fault.
+    const listening = fakeBrowser({ get: [waitsForAbort] });
+    const waiting = getPasskey(listening.env, ID_TEXT);
+    assert.equal(await soFar(waiting), 'still open');
+    endPrompt();
+    assert.deepEqual(await soFar(waiting), cancelled);
+    assert.equal(signalOf(listening.calls[0]).aborted, true);
+    assert.equal((signalOf(listening.calls[0]).reason as DOMException).name, 'AbortError');
+
+    // A provider that does not listen to the signal. The call still answers at once, and whatever the
+    // provider does afterwards is never looked at: not a refusal, and above all not an answer with the secret.
+    for (const settle of ['resolve', 'reject', 'never'] as const) {
+      const late = openPrompt();
+      const stuck = getPasskey(fakeBrowser({ get: [late.step] }).env);
+      assert.equal(await soFar(stuck), 'still open');
+      const reads = secretReads;
+      endPrompt();
+      assert.deepEqual(await soFar(stuck), cancelled, settle);
+      if (settle === 'resolve') late.resolve(withSecret());
+      if (settle === 'reject') late.reject(new DOMException('too late', 'NotAllowedError'));
+      await turn();
+      await turn();
+      assert.equal(secretReads, reads, `${settle}: the answer of a prompt the page ended was read`);
+      // The way is free again.
+      assert.equal((await getPasskey(fakeBrowser({ get: [answers(withSecret())] }).env)).kind, 'ok');
+    }
+
+    // The reader answered in the very moment the page ended the prompt: the answer is there, and stays unread.
+    const same = openPrompt();
+    const racing = getPasskey(fakeBrowser({ get: [same.step] }).env);
+    assert.equal(await soFar(racing), 'still open');
+    const before = secretReads;
+    same.resolve(withSecret());
+    endPrompt();
+    assert.deepEqual(await soFar(racing), cancelled);
+    assert.equal(secretReads, before);
+
+    // create(): ended while the first prompt is open, nothing more is asked ...
+    for (const step of [neverSettles, waitsForAbort]) {
+      const creating = fakeBrowser({ create: [step] });
+      const making = createPasskey(creating.env, label);
+      assert.equal(await soFar(making), 'still open');
+      endPrompt();
+      assert.deepEqual(await soFar(making), cancelled);
+      assert.equal(creating.calls.length, 1, 'no follow-up prompt is opened');
+    }
+    // ... and ended while the follow-up get() is open, the passkey exists: its setup is unfinished.
+    for (const step of [neverSettles, waitsForAbort]) {
+      const half = fakeBrowser({ create: [answers(credential({ prf: { enabled: true } }))], get: [step] });
+      const making = createPasskey(half.env, label);
+      assert.equal(await soFar(making), 'still open');
+      assert.equal(half.calls.length, 2);
+      endPrompt();
+      assert.deepEqual(await soFar(making), { kind: 'unfinished', ...pending });
+    }
+
+    // A prompt that had ended by itself is not touched afterwards.
+    const done = fakeBrowser({ get: [answers(withSecret())] });
+    assert.equal((await getPasskey(done.env)).kind, 'ok');
+    endPrompt();
+    assert.equal(signalOf(done.calls[0]).aborted, false);
   } finally {
     process.off('unhandledRejection', onUnhandled);
   }

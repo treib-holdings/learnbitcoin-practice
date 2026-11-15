@@ -9,8 +9,10 @@
   // the frame is what tells it. To try the step by hand on a route:
   // /wallet/send?state=passkey-locked&unlock=cancelled#frame
 
+  import Button from '../src/components/Button.svelte';
   import Page from '../src/components/Page.svelte';
   import Section from '../src/components/Section.svelte';
+  import TextInput from '../src/components/TextInput.svelte';
   import Unlock from '../src/components/wallet/Unlock.svelte';
   import WalletFrame from '../src/components/wallet/WalletFrame.svelte';
   import type { Unlocked } from '../src/components/wallet/unlock-flow.ts';
@@ -27,6 +29,8 @@
       got: 'The step called onunlocked with:',
       nothing: '(Nothing is drawn: a wallet made without a passkey never shows this step.)',
       frame: 'A wallet screen',
+      back: 'Back to the form',
+      form: 'A field of the form',
     },
     es: {
       lede: 'El paso de desbloqueo después de cada respuesta que puede dar la billetera. Solo para desarrollo.',
@@ -35,6 +39,8 @@
       got: 'El paso llamó a onunlocked con:',
       nothing: '(No se dibuja nada: una billetera creada sin llave de acceso nunca muestra este paso.)',
       frame: 'Una pantalla de la billetera',
+      back: 'Volver al formulario',
+      form: 'Un campo del formulario',
     },
   } as const;
 
@@ -42,6 +48,17 @@
 
   /** What each block's step told its screen, by the block's name. */
   let told = $state<Record<string, Unlocked>>({});
+
+  // For the block whose screen lets the reader leave the step while its
+  // prompt is open: the way back takes the step away and puts focus in a
+  // field, as a reader who goes on typing would have it.
+  let left = $state(false);
+  let field = $state<ReturnType<typeof TextInput>>();
+  let typed = $state('');
+  function leave(): void {
+    left = true;
+    field?.focus();
+  }
 
   /** Every way unlock() can end with a problem. "gone" has a block of its own below. */
   const REFUSALS = ['cancelled', 'timed-out', 'no-prf', 'error', 'busy', 'reload', 'broken', 'changed'] as const;
@@ -89,6 +106,9 @@
     <Shown preset="words" note="a wallet made without a passkey">
       {@render step('words-wallet', s.whyWords, false)}
       <p class="text-sm text-ink-500">{s.nothing}</p>
+    </Shown>
+    <Shown preset="passkey-locked" note="started as after a refused try (refused): all three ways on at once">
+      <Unlock why={s.whyWords} refused onunlocked={(how) => (told['refused-start'] = how)} />
     </Shown>
   </Section>
 
@@ -149,6 +169,23 @@
           </p>
         {/if}
       {/snippet}
+    </Shown>
+    <Shown
+      preset="passkey-locked"
+      query="unlock=unlocked&delay=500"
+      steps={[{ tap: 'unlock' }, { tap: 'leave-step' }, { wait: 900 }]}
+      note="the reader leaves the step while the prompt is open: the screen is still told, and focus stays in the field they went to"
+    >
+      {#if !left}
+        <Unlock why={s.whySend} promise onunlocked={(how) => (told['left'] = how)} />
+      {/if}
+      <div class="space-y-3">
+        <div><Button data-testid="leave-step" disabled={left} onclick={leave}>{s.back}</Button></div>
+        <TextInput bind:this={field} bind:value={typed} aria-label={s.form} data-testid="left-field" />
+      </div>
+      {#if told['left'] !== undefined}
+        <p class="text-sm text-ink-500">{s.got} <code class="font-mono" data-testid="told-left">{told['left']}</code></p>
+      {/if}
     </Shown>
     <Shown preset="passkey-locked" query="unlock=tampered" steps={tapUnlock}>
       <WalletFrame title={s.frame} coins={false}>

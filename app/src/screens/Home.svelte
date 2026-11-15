@@ -12,7 +12,12 @@
   //                 then the two ways to bring it back, open with my passkey
   //                 and restore from the 12 words. A wallet opened with a
   //                 passkey is shown at once, unless the reader has left
-  //                 this screen while the passkey prompt was open
+  //                 this screen while the passkey prompt was open. A wallet
+  //                 that arrived from another tab during that prompt is
+  //                 shown as being here, and the screen says how it came.
+  //                 A reader who has just removed their wallet (Settings
+  //                 leads here) is told so above all that, for this one
+  //                 visit: the screen would otherwise read as a first visit
   //   unreadable, newer, broken
   //                 the shared StoredTrouble piece, as the gate of a wallet
   //                 screen shows it
@@ -21,12 +26,15 @@
   // the practice network a newcomer wants first (how often a block comes,
   // what the faucet gives), both read from the settings.
 
-  import { onDestroy } from 'svelte';
+  import { onDestroy, onMount, tick } from 'svelte';
   import Button from '../components/Button.svelte';
   import Card from '../components/Card.svelte';
+  import Notice from '../components/Notice.svelte';
+  import { takeOutcome } from '../components/outcome.ts';
   import Page from '../components/Page.svelte';
   import Prose from '../components/Prose.svelte';
   import Section from '../components/Section.svelte';
+  import { announce } from '../components/status.svelte.ts';
   import { TAP } from '../components/styles.ts';
   import TextLink from '../components/TextLink.svelte';
   import { SAFARI_KEEPS_DAYS } from '../components/wallet/frame.ts';
@@ -54,18 +62,23 @@
   const LONE_LINK = `inline-block ${TAP}`;
 
   /**
-   * For a shared piece that stacks its buttons on a phone and gives them no
-   * width of their own: there each button takes the whole width, so a short
-   * one is not a stub beside a long one. (The pieces take a class for their
-   * outermost element only, so the buttons are reached from there.)
+   * The width of the two buttons that bring a wallet back. They stay one
+   * under the other on every screen: the whole width on a phone, and one
+   * fixed width from there, wide enough for the longer Spanish label on
+   * one line.
    */
-  const GROUPED = '[&_button]:w-full sm:[&_button]:w-auto';
-  /**
-   * The same for two buttons that stay one under the other on every screen:
-   * the whole width on a phone, and one fixed width from there, wide enough
-   * for the longer Spanish label on one line.
-   */
-  const PAIRED = '[&_button]:w-full sm:[&_button]:w-96';
+  const PAIRED = 'w-full sm:w-96';
+
+  /** A wallet arrived from another tab while "Open with my passkey" was waiting for the prompt. */
+  let arrived = $state(false);
+
+  /** The reader removed their wallet on the screen before this one: said here, for this visit. */
+  const removed = takeOutcome('removed');
+  onMount(() => {
+    // Read out as well. A moment after the screen is drawn, and not as it is: the status region is
+    // emptied when the screen changes, and that happens after this screen has been put on the page.
+    if (removed) void tick().then(() => announce(t.removed));
+  });
 
   /** True once the screen has left the page. */
   let gone = false;
@@ -86,8 +99,11 @@
 
 <Page title={c.appName} documentTitle={c.homeTitle} lede={t.lede}>
   {#if status === 'ready'}
-    <WalletHere />
+    <WalletHere {arrived} />
   {:else if status === 'none'}
+    {#if removed}
+      <Notice kind="info" text={t.removed} data-testid="home-removed" />
+    {/if}
     <div>
       <Button variant="primary" class="w-full sm:w-auto" data-testid="home-create" href={router.link({ name: 'new' })}>
         {w.gateCreate}
@@ -95,18 +111,27 @@
     </div>
     <Card tone="grey" title={w.gateAlreadyHave} data-testid="home-have">
       <!-- The two ways in are one group, one under the other: both buttons get one width. -->
-      <div class={['space-y-4', PAIRED]}>
+      <div class="space-y-4">
         <p class="text-pretty text-sm leading-relaxed text-ink-600">{why}</p>
-        <OpenWithPasskey variant="secondary" onopened={opened} />
+        <!-- "exists": the wallet is here already, so this panel is gone the moment the answer
+             comes, and the piece's own sentence with it. What takes its place says it. -->
+        <OpenWithPasskey
+          variant="secondary"
+          buttonClass={PAIRED}
+          onopened={opened}
+          onanswer={(answer) => {
+            if (answer.kind === 'exists') arrived = true;
+          }}
+        />
         <div>
-          <Button class="w-full sm:w-96" data-testid="home-restore" href={router.link({ name: 'restore' })}>
+          <Button class={PAIRED} data-testid="home-restore" href={router.link({ name: 'restore' })}>
             {w.gateRestore}
           </Button>
         </div>
       </div>
     </Card>
   {:else if status === 'unreadable' || status === 'newer' || status === 'broken'}
-    <StoredTrouble titled class={GROUPED} />
+    <StoredTrouble titled />
   {/if}
 
   <Section title={t.canTitle}>

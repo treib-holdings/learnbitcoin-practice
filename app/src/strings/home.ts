@@ -35,6 +35,9 @@ export const en = {
   hereUnseen:
     'A practice wallet was put in this browser from another tab while this page was open, so nothing was added here. Reload the page to see it.',
 
+  // -- no wallet here, because the reader has just removed it on Settings: said once, above the ways in --
+  removed: 'The wallet was removed from this browser. Its coins stay on the practice network.',
+
   // -- no wallet here: under the heading "I already have a practice wallet" --
   /** SPEC section 3's "No record" sentences, shortened. {days} is how long Safari keeps what a site stored without the site being used. */
   haveWhy:
@@ -67,6 +70,8 @@ export const es: Record<keyof typeof en, string> = {
     'Desde otra pestaña se puso una billetera de práctica en este navegador mientras esta página estaba abierta, así que aquí no se agregó nada.',
   hereUnseen:
     'Desde otra pestaña se puso una billetera de práctica en este navegador mientras esta página estaba abierta, así que aquí no se agregó nada. Recarga la página para verla.',
+
+  removed: 'La billetera se quitó de este navegador. Sus monedas siguen en la red de práctica.',
 
   haveWhy:
     'Este navegador no tiene ninguna en este momento. Puede que haya borrado su copia (Safari lo hace después de {days} días sin uso), o que la hayas creado en otro navegador o dentro de otra app.',

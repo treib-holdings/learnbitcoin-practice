@@ -13,6 +13,17 @@
   // For "none" and "ready" it shows nothing. On a wallet screen it is the
   // body of the gate, under the gate's heading. Home passes `titled`, and
   // it comes as a panel with that heading inside.
+  //
+  // The question before Remove is the only guard Remove has, so it must be
+  // seen before it can be answered. Opening it moves the page no further
+  // than it takes to bring the whole question on screen, both answers
+  // included, and neither answer takes a press in the first moment after it
+  // opened (components/taps.ts): the second tap of a double tap on the
+  // Remove button removes nothing, and leaves the question standing.
+  //
+  // On a phone the buttons of a group stand one under the other, each as
+  // wide as the panel, so that a short label is not a narrow button under
+  // a wide one.
 
   import { tick } from 'svelte';
   import { focusHeading, router } from '../../lib/router.svelte.ts';
@@ -22,6 +33,7 @@
   import Button from '../Button.svelte';
   import Card from '../Card.svelte';
   import Notice from '../Notice.svelte';
+  import { answerCounts } from '../taps.ts';
   import ReloadButton from './ReloadButton.svelte';
 
   interface Props {
@@ -46,25 +58,46 @@
   let asking = $state(false);
   /** Remove found that what is stored had changed in another tab. */
   let changed = $state(false);
+  /** When the question opened, on the page's own clock (performance.now()), in ms. */
+  let askedAt = 0;
 
   let root = $state<HTMLElement>();
+  /** The whole question: the sentence, the warning, and the two answers. */
+  let box = $state<HTMLElement>();
   let question = $state<HTMLElement>();
 
   async function ask(): Promise<void> {
     asking = true;
     changed = false;
+    askedAt = performance.now();
     await tick();
-    // The question is read out, and Tab goes on to its two answers.
-    question?.focus();
+    // The question is read out, and Tab goes on to its two answers. Focus
+    // by itself must not move the page: a browser brings what takes focus
+    // to the middle of the screen, which can put "Remove it" under the
+    // finger that has just pressed the button and leave "Keep it" below the
+    // screen's edge. The whole question is brought on screen instead, by
+    // the shortest way, and nothing moves when it is there already.
+    question?.focus({ preventScroll: true });
+    box?.scrollIntoView({ block: 'nearest' });
   }
 
-  async function keep(): Promise<void> {
+  /** True for a press on an answer that came too soon to count: the question has only just opened. */
+  function tooSoon(event: MouseEvent): boolean {
+    return !answerCounts(performance.now() - askedAt, event);
+  }
+
+  async function keep(event: MouseEvent): Promise<void> {
+    if (tooSoon(event)) return;
     asking = false;
     await tick();
     root?.querySelector<HTMLElement>('[data-testid="remove-wallet"]')?.focus();
   }
 
-  async function remove(): Promise<void> {
+  async function remove(event: MouseEvent): Promise<void> {
+    // The question has only just opened, or this is the second click of a
+    // double tap: the reader cannot have read it yet. Nothing happens, and
+    // the question stays.
+    if (tooSoon(event)) return;
     // "removed": the status is now "none", and this piece gives way to the
     // three ways into a wallet. The button that was pressed is gone with
     // it, so focus goes to the screen's heading.
@@ -92,22 +125,30 @@
         <Notice kind="problem" text={t.unreadableGone} />
       {/if}
       <Actions>
-        <ReloadButton variant="primary" />
-        <Button data-testid="remove-wallet" aria-expanded={asking} onclick={() => void ask()}>{t.unreadableRemove}</Button>
+        <ReloadButton variant="primary" class="w-full sm:w-auto" />
+        <Button class="w-full sm:w-auto" data-testid="remove-wallet" aria-expanded={asking} onclick={() => void ask()}>
+          {t.unreadableRemove}
+        </Button>
       </Actions>
       {#if asking}
-        <Notice kind="caution">
-          <div class="space-y-3">
-            <!-- tabindex="-1": it takes focus from code only, so that the question is read out. -->
-            <p bind:this={question} tabindex="-1" class="font-semibold text-ink-800 outline-none">{t.unreadableAsk}</p>
-            <p>{t.unreadableWarn}</p>
-            <!-- Full-size buttons with room between them: one of the two cannot be undone. -->
-            <Actions>
-              <Button data-testid="remove-confirm" onclick={() => void remove()}>{t.unreadableYes}</Button>
-              <Button data-testid="remove-keep" onclick={() => void keep()}>{t.unreadableNo}</Button>
-            </Actions>
-          </div>
-        </Notice>
+        <div bind:this={box}>
+          <Notice kind="caution">
+            <div class="space-y-3">
+              <!-- tabindex="-1": it takes focus from code only, so that the question is read out. -->
+              <p bind:this={question} tabindex="-1" class="font-semibold text-ink-800 outline-none">{t.unreadableAsk}</p>
+              <p>{t.unreadableWarn}</p>
+              <!-- Full-size buttons of one width on a phone, with room between them: one of the two cannot be undone. -->
+              <Actions>
+                <Button class="w-full sm:w-auto" data-testid="remove-confirm" onclick={(event) => void remove(event)}>
+                  {t.unreadableYes}
+                </Button>
+                <Button class="w-full sm:w-auto" data-testid="remove-keep" onclick={(event) => void keep(event)}>
+                  {t.unreadableNo}
+                </Button>
+              </Actions>
+            </div>
+          </Notice>
+        </div>
       {/if}
     {:else if status === 'newer'}
       <p class="text-pretty leading-relaxed text-ink-700">{t.newerBody}</p>

@@ -99,9 +99,7 @@
       <p>{t.computerBody}</p>
       <p>{t.computerGet}</p>
       <p>
-        <OutLink href={SPARROW_DOWNLOAD_URL} hreflang={english} data-testid="sparrow-download"
-          >{t.computerGetLink}</OutLink
-        >
+        <OutLink href={SPARROW_DOWNLOAD_URL} hreflang={english} text={t.computerGetLink} data-testid="sparrow-download" />
       </p>
     </Prose>
   </Section>

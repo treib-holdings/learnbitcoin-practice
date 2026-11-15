@@ -8,7 +8,6 @@
 import type { Lang } from '@learnbitcoin/practice-contract';
 import type { TxView } from '@learnbitcoin/practice-wallet';
 import type { ApiFailure } from '../../lib/api.ts';
-import { REQUEST_MS } from '../../lib/chain-sync.ts';
 import type { CeremonyFailure, TxLookup, UnlockResult } from '../../lib/wallet-api.ts';
 
 // -- the Overview -------------------------------------------------------------------
@@ -78,38 +77,6 @@ export function activityNotice(failure: ApiFailure | null, chainError: ApiFailur
   return chainError === null ? 'list' : 'frame';
 }
 
-/**
- * How long the list's "Try again" waits for the list before it takes the
- * try as failed, in ms. The wallet says when the coins have been read again
- * (refresh() resolves then) and reads the list straight after, but it has
- * no word for "the list is being read". Every request is given up after
- * REQUEST_MS, so a read that fails has failed by then; a little is added
- * for the read to start.
- */
-export const LIST_TRY_MS = REQUEST_MS + 2000;
-
-/** What the wallet shows of the list at one moment: the list itself (the very object) and why its last read failed. */
-export interface ListSeen {
-  list: readonly unknown[] | null;
-  failure: ApiFailure | null;
-}
-
-/**
- * How the reader's "Try again" for the list has ended, or null while that
- * is not known yet. `before` is what the wallet showed when the button was
- * pressed, `now` what it shows, and `timeUp` whether LIST_TRY_MS has passed
- * since the coins were read again.
- *
- * A read that works puts another list in the old one's place and takes the
- * failure away. One that fails keeps the old list. If it fails for another
- * reason, that shows; if for the same reason, nothing a screen can see
- * changes at all, and only the time tells.
- */
-export function listTryEnded(before: ListSeen, now: ListSeen, timeUp: boolean): 'worked' | 'failed' | null {
-  if (now.list !== before.list || now.failure === null) return 'worked';
-  if (now.failure !== before.failure || timeUp) return 'failed';
-  return null;
-}
 
 // -- another passkey, from the Overview of a wallet that was opened empty -----------
 

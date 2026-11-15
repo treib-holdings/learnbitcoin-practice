@@ -16,11 +16,13 @@
   // (wallet.unlock('picker')). The wallet is left exactly as it is while
   // the reader chooses: it stays unlocked, and a prompt that is closed has
   // changed nothing, as the sentence for it says. When another passkey
-  // answers, nothing changes either until the reader says so: this piece
+  // answers, nothing changes either until the reader says so: the list
   // asks, with that passkey's name and wallet fingerprint, "Switch" or
-  // "Keep". (The shared unlock step asks the same question, but it draws
-  // only for a locked wallet, and locking this one first would take the
-  // reader's keys away for a question they may answer with "Keep".)
+  // "Keep". The question is the shared one the unlock step asks too
+  // (components/wallet/SwitchQuestion.svelte). The unlock step itself is
+  // not used here: it draws only for a locked wallet, and locking this one
+  // first would take the reader's keys away for a question they may answer
+  // with "Keep".
   //
   // Every answer the wallet can give is dealt with here (read.ts,
   // afterChoose): the same passkey again, another passkey (the question),
@@ -41,16 +43,15 @@
   import { onDestroy, tick } from 'svelte';
   import Button from '../../components/Button.svelte';
   import Mono from '../../components/Mono.svelte';
-  import Notice from '../../components/Notice.svelte';
   import Row from '../../components/Row.svelte';
   import Rows from '../../components/Rows.svelte';
   import Section from '../../components/Section.svelte';
   import { busyWhile } from '../../components/status.svelte.ts';
   import { TAP } from '../../components/styles.ts';
-  import { splitLead } from '../../components/text.ts';
   import TextLink from '../../components/TextLink.svelte';
+  import { faucetLink } from '../../components/wallet/frame.ts';
   import { useFrameNotes } from '../../components/wallet/frame-notes.ts';
-  import WalletId from '../../components/wallet/WalletId.svelte';
+  import SwitchQuestion from '../../components/wallet/SwitchQuestion.svelte';
   import { focusHeading, router } from '../../lib/router.svelte.ts';
   import { useWallet } from '../../lib/wallet-context.ts';
   import { strings } from '../../strings/index.ts';
@@ -86,8 +87,6 @@
   let outcome = $state.raw<ChooseTold | null>(null);
   /** Another passkey answered, and the reader has not yet said whether to switch to its wallet. */
   let pending = $derived(wallet.pendingSwitch);
-  /** The question about that passkey's wallet: what happened, in bold, and then that nothing has changed. */
-  let asked = $derived(splitLead(t.switchLead));
   /** The reader said "Switch", and the browser would not store the change. */
   let refused = $state(false);
 
@@ -122,7 +121,8 @@
     refused = false;
     // Read now: this list may be gone when the answer comes.
     const late = onlate;
-    const from = router.path;
+    // The screen's name, not its address: the Overview in the other language is still the Overview.
+    const from = router.route.name;
     const result = await busyWhile(wallet.unlock('picker'));
     const next = afterChoose(result);
 
@@ -132,7 +132,7 @@
       // The reader went to another screen, or this browser has no wallet
       // any more and the gate stands where the Overview was: the answer is
       // not for what is showing.
-      if (router.path !== from || wallet.status !== 'ready') return;
+      if (router.route.name !== from || wallet.status !== 'ready') return;
       // The Overview is still showing, without this list.
       if (next.show === 'tampered' && notes !== null) notes.note = { kind: 'tampered' };
       if (next.show === 'changed' || next.show === 'gone') late(next);
@@ -199,7 +199,7 @@
         <h3 class="text-balance text-base font-semibold text-ink-800">{t.emptyNewTitle}</h3>
         <p class="text-pretty text-sm leading-relaxed text-ink-700">{t.emptyNewBody}</p>
         <div>
-          <Button variant="primary" small href={router.link({ name: 'receive' })} data-testid="opened-faucet">
+          <Button variant="primary" small href={faucetLink(router.link({ name: 'receive' }))} data-testid="opened-faucet">
             {t.getCoins}
           </Button>
         </div>
@@ -217,28 +217,16 @@
         </Rows>
 
         {#if pending !== null}
-          <!-- Another passkey answered. Nothing changes until the reader says so. -->
-          <Notice kind="caution">
-            <div class="space-y-3">
-              <!-- tabindex="-1": it takes focus from code only, so that the question is read out. -->
-              <p tabindex="-1" data-testid="switch-question" class="outline-none">
-                <span class="font-semibold text-ink-800">{asked.lead}</span>
-                {asked.rest}
-              </p>
-              <WalletId tag={pending.tag} fingerprint={pending.fingerprint} />
-              <p>{t.switchAsk}</p>
-              {#if refused}
-                <p class="font-semibold text-ink-800" role="alert" data-testid="opened-problem">{t.switchNoStorage}</p>
-              {/if}
-              <!-- One group: on a phone the two stand one under the other, at one width. -->
-              <div class="flex flex-col gap-3 sm:flex-row sm:flex-wrap">
-                <Button class="w-full sm:w-auto" data-testid="switch-confirm" onclick={() => void switchWallet()}>
-                  {t.switchYes}
-                </Button>
-                <Button class="w-full sm:w-auto" data-testid="switch-cancel" onclick={keepWallet}>{t.switchNo}</Button>
-              </div>
-            </div>
-          </Notice>
+          <!-- Another passkey answered. Nothing changes until the reader says so. A switch the
+               browser would not store is said inside the question, under the hook this list's
+               other answers carry. -->
+          <SwitchQuestion
+            {pending}
+            {refused}
+            refusedHook="opened-problem"
+            onswitch={() => void switchWallet()}
+            onkeep={keepWallet}
+          />
         {:else}
           <!-- What the last try came to, right above the button that was pressed. -->
           {#if outcome !== null}

@@ -3,6 +3,8 @@
 //
 //   made-passkey         straight after "Create with a passkey": Backup opens as the
 //                        "Wallet made" step, the wallet unlocked and still empty
+//   made-passkey-unnamed the same, where the wallet was not told the name the passkey
+//                        was saved under: the step shows the tag in its place
 //   made-words           straight after "Create without a passkey": the same step,
 //                        and the browser agreed to keep this page's data
 //   made-words-not-kept  the same, and the browser did not agree
@@ -20,20 +22,12 @@
 // other time, with unlock=<answer> for the unlock step and remove=gone for
 // a Remove that found the wallet changed.
 //
-// Three of these presets change something after the stand-in is made, in
-// the next turn of the page. The factory puts the wallet in place a second
-// time once a preset has run (to apply ?kind= and ?unlocked=), and that
-// sets "the browser agreed" and the sample passkey's tag again. The real
-// wallet learns the browser's answer a moment after the wallet is made
-// too, so a screen has to follow such a change in any case.
+// With ?kind= or ?unlocked= in the address the factory puts the sample
+// wallet in place a second time, and what a preset set on the record or
+// about the browser's answer is then the sample's again.
 
 import { emptyState, fundedState, sampleHistory } from '../sample.ts';
 import type { Preset, StandIn } from '../stand-in.svelte.ts';
-
-/** Runs `change` once the factory has finished making the stand-in. */
-function afterwards(change: () => void): void {
-  queueMicrotask(change);
-}
 
 /** The sample wallet made without a passkey, with its coins and history. */
 function wordsWallet(wallet: StandIn): void {
@@ -45,48 +39,48 @@ function wordsWallet(wallet: StandIn): void {
 function justMade(wallet: StandIn, kind: 'passkey' | 'words'): void {
   wallet.haveWallet(kind, true);
   wallet.haveCoins(emptyState(), []);
-  wallet.created = kind;
+  wallet.justCreated(kind);
 }
 
 export const presets: Record<string, Preset> = {
   'made-passkey': (wallet) => justMade(wallet, 'passkey'),
 
+  'made-passkey-unnamed': (wallet) => {
+    justMade(wallet, 'passkey');
+    wallet.createdName = null;
+  },
+
   'made-words': (wallet) => justMade(wallet, 'words'),
 
   'made-words-not-kept': (wallet) => {
     justMade(wallet, 'words');
-    afterwards(() => (wallet.persisted = false));
+    wallet.persisted = false;
   },
 
   'words-not-kept': (wallet) => {
     wordsWallet(wallet);
-    afterwards(() => (wallet.persisted = false));
+    wallet.persisted = false;
   },
 
-  'words-later': (wallet) => {
-    wordsWallet(wallet);
-    afterwards(() => (wallet.persisted = null));
-  },
+  // As the base preset "words" is: on a later visit the browser is not asked again.
+  'words-later': wordsWallet,
 
   'passkey-untagged': (wallet) => {
     wallet.haveWallet('passkey');
     wallet.haveCoins(fundedState(), sampleHistory(Date.now()));
-    afterwards(() => {
-      if (wallet.record === null) return;
-      // A copy of the record without its tag: values are swapped whole, never changed in place.
-      const { tag: _tag, ...untagged } = wallet.record;
-      wallet.record = untagged;
-    });
+    if (wallet.record === null) return;
+    // A copy of the record without its tag: values are swapped whole, never changed in place.
+    const { tag: _tag, ...untagged } = wallet.record;
+    wallet.record = untagged;
   },
 
   'reveal-fails': (wallet) => {
     wordsWallet(wallet);
-    // The stand-in has no answer of this kind to script, so the one action is replaced on this wallet alone.
-    wallet.revealWords = () => null;
+    wallet.answers.reveal = 'none';
   },
 
   'no-descriptors': (wallet) => {
     wordsWallet(wallet);
-    wallet.descriptors = () => null;
+    wallet.answers.descriptors = 'none';
   },
 };

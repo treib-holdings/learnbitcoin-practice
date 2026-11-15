@@ -81,7 +81,7 @@ export const en = {
   keepBody:
     "One record, in this browser's storage for this site. Nothing else is kept: no cookies set by us, and nothing in any other kind of browser storage.",
   keepPublic:
-    "Always in the record: the wallet's public key. With it the page lists the wallet's addresses and coins, and it cannot spend them. The wallet fingerprint, the first address and the time the wallet was made are stored beside it.",
+    "Always in the record: the wallet's public key. With it the page lists the wallet's addresses and coins, and it cannot spend them. The wallet fingerprint, the first address and the time this browser began to keep the wallet are stored beside it.",
   keepPasskey:
     'For a wallet this browser opens with a passkey: which passkey to ask, and the tag in its name. Its 12 words are not stored.',
   keepWords:
@@ -114,7 +114,7 @@ export const en = {
     "The wallet asks our server which coins its addresses hold, and sends its payments through it. So the server sees the wallet's addresses and payments, and the IP address each request comes from. Any wallet that asks someone else's server shares the same.",
   serverLimit: 'It uses the IP address to slow down anyone who asks too fast.',
   serverLog:
-    "When the page asks about an address, a transaction or the height of the chain, the server writes nothing down, unless something on our side is broken. For every other request (the page's settings, the faucet, the address of the pass-it-on pot, a payment being sent, a count) it writes one line: what kind of request it was, how it ended and how long it took. The line itself holds no address, no transaction ID and no IP address.",
+    "When the page asks about an address, a transaction or the height of the chain, the server writes nothing down, unless something on our side is broken. For every other request (the page's settings, the faucet, the address of the pot, a payment being sent, a count) it writes one line: what kind of request it was, how it ended and how long it took. The line itself holds no address, no transaction ID and no IP address.",
   // What Cloudflare keeps beside a line is not known until the owner has looked at a stored
   // line (worker/wrangler.jsonc, above "observability"). Until then the page says "may".
   serverCloudflare:
@@ -141,7 +141,7 @@ export const en = {
     'A restore from the 12 words: whether practice history was found and, if not, whether the words were kept in this browser or erased.',
   count_faucet:
     'How a request for practice coins ended: paid, already paid, stopped by the bot check, given up or failed.',
-  count_payment: 'A payment was sent, and whether it went to the pass-it-on pot, or the network refused it.',
+  count_payment: 'A payment was sent, and whether it went to the pot, or the network refused it.',
   count_wordsShown:
     'The 12 words were shown, and whether this browser opens the wallet with a passkey. The words themselves are never part of a count.',
   count_walletRemoved: 'The wallet was removed from this browser, and whether this browser opened it with a passkey.',
@@ -154,8 +154,15 @@ export const en = {
     "The faucet hands out practice coins to whoever asks, and a bot check keeps scripts from emptying it. The check is Cloudflare's, and it is the only code this page loads from another site. It loads only when you ask the faucet for coins.",
   botSees:
     'It examines your browser to tell a person from a script, and it is given the address the coins are for.',
+  /** What its code could read beside that, for every kind of wallet: the record, and so the public key. */
+  botReads:
+    "Its code runs in this page, so it could also read the record this browser keeps for the wallet. The record holds the wallet's public key, and with that every address the wallet has and will have.",
+  /** What the lock does. No more is promised: see botPasskeyStill. */
   botPasskey:
-    "A wallet opened with a passkey is locked before the check loads, so the check and the wallet's keys are never in the page together. It stays locked until the page is loaded again.",
+    "A wallet opened with a passkey is locked before the check loads, and it stays locked until the page is loaded again. So the check's code cannot read keys that were in the page before it.",
+  /** What the lock does not do, and what the reader can do about it. */
+  botPasskeyStill:
+    'The lock goes no further than that. While the check is in the page, its code could ask your passkey itself, or open another window of this site and follow what is done there. After you ask for coins, the wallet itself does neither for as long as you stay on the Receive screen. So if a passkey prompt or a new window shows up there, cancel it or close it.',
   botWords:
     "A wallet whose 12 words are stored here cannot be shielded that way. The words are in this browser's storage, where the check's code could read them.",
 
@@ -202,7 +209,7 @@ export const es: Record<keyof typeof en, string> = {
   keepBody:
     'Un solo registro, en el almacenamiento de este navegador para este sitio. No se guarda nada más: ninguna cookie puesta por nosotros, y nada en ningún otro tipo de almacenamiento del navegador.',
   keepPublic:
-    'Siempre en el registro: la clave pública de la billetera. Con ella la página lista las direcciones y las monedas de la billetera, y no puede gastarlas. Junto a ella se guardan la huella de la billetera, la primera dirección y el momento en que se creó la billetera.',
+    'Siempre en el registro: la clave pública de la billetera. Con ella la página lista las direcciones y las monedas de la billetera, y no puede gastarlas. Junto a ella se guardan la huella de la billetera, la primera dirección y el momento en que este navegador empezó a guardar la billetera.',
   keepPasskey:
     'En una billetera que este navegador abre con llave de acceso (passkey): a qué llave de acceso preguntar, y la etiqueta que lleva en su nombre. Sus 12 palabras no se guardan.',
   keepWords:
@@ -263,8 +270,12 @@ export const es: Record<keyof typeof en, string> = {
     'El faucet reparte monedas de práctica a quien las pide, y una comprobación contra bots evita que un programa lo vacíe. La comprobación es de Cloudflare, y es el único código que esta página carga desde otro sitio. Se carga solo cuando le pides monedas al faucet.',
   botSees:
     'Examina tu navegador para distinguir a una persona de un programa, y recibe la dirección a la que van las monedas.',
+  botReads:
+    'Su código se ejecuta en esta página, así que también podría leer el registro que este navegador guarda de la billetera. El registro contiene la clave pública de la billetera, y con ella todas las direcciones que la billetera tiene y va a tener.',
   botPasskey:
-    'Una billetera que se abre con llave de acceso se bloquea antes de que la comprobación se cargue, así que la comprobación y las claves de la billetera nunca están juntas en la página. Sigue bloqueada hasta que la página se cargue de nuevo.',
+    'Una billetera que se abre con llave de acceso se bloquea antes de que la comprobación se cargue, y sigue bloqueada hasta que la página se cargue de nuevo. Así que el código de la comprobación no puede leer claves que estaban en la página antes que él.',
+  botPasskeyStill:
+    'El bloqueo no llega más lejos. Mientras la comprobación está en la página, su código podría pedirle él mismo el secreto a tu llave de acceso, o abrir otra ventana de este sitio y seguir lo que se hace ahí. Después de que pides monedas, la billetera misma no hace ninguna de las dos cosas mientras sigues en la pantalla Recibir. Así que, si ahí aparece una ventana de la llave de acceso o se abre una ventana nueva, cancélala o ciérrala.',
   botWords:
     'Una billetera cuyas 12 palabras están guardadas aquí no se puede proteger así. Las palabras están en el almacenamiento de este navegador, donde el código de la comprobación podría leerlas.',
 

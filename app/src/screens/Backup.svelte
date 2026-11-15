@@ -7,8 +7,9 @@
   //   made    Straight after a wallet is created the screen opens as the
   //           "Wallet made" step. The keys are still loaded, so the words
   //           are on screen at once, with no second prompt. A passkey
-  //           wallet is told the tag in its passkey's name and where the
-  //           passkey lives, and under the words that they are the way
+  //           wallet is told the name its passkey was saved under (or,
+  //           where the wallet does not have it, the tag in that name) and
+  //           where the passkey lives, and under the words that they are the way
   //           back without it. A wallet made without a passkey is told,
   //           under the words, what this browser now keeps and who can
   //           look and spend. Then the card to write the words on, and
@@ -18,7 +19,10 @@
   //           chapter 4's rule, what to know before the words are on
   //           screen, and "Show the 12 words".
   //   unlock  A passkey wallet that is locked gets the shared unlock step
-  //           first, and then its words.
+  //           first, and then its words. "Back" under the step returns to
+  //           the screen's first view: a reader who does not want to
+  //           unlock after all must not have to leave the screen to get
+  //           the warnings and the button back.
   //   shown   The words, with "Hide them".
   //
   // The words are held here only while they are on screen. They are
@@ -43,6 +47,7 @@
   import Row from '../components/Row.svelte';
   import Rows from '../components/Rows.svelte';
   import Section from '../components/Section.svelte';
+  import { working } from '../components/status.svelte.ts';
   import ReloadButton from '../components/wallet/ReloadButton.svelte';
   import Unlock from '../components/wallet/Unlock.svelte';
   import WalletFrame from '../components/wallet/WalletFrame.svelte';
@@ -71,14 +76,6 @@
    */
   const WORDS_BOX = 'border-y border-ink-100 py-4';
 
-  /**
-   * On a phone the unlock step's buttons stack, each as wide as its own
-   * label: a short one sits narrow under a wide one. This makes every
-   * button inside the step as wide as the step on a narrow screen, as the
-   * buttons of one group should be. It is laid over the shared step from
-   * outside, and can go once the step does it itself.
-   */
-  const EVEN_BUTTONS = '[&_button]:w-full sm:[&_button]:w-auto';
 
   let lang = $derived(router.lang);
   let t = $derived(strings.backup[lang]);
@@ -122,10 +119,10 @@
   // once, with no second prompt. They are taken a moment after the screen
   // is drawn, and not while this script runs. Taking them is what the
   // wallet counts as "Words shown", and the count is filed under the screen
-  // the app last named to its counter. The app names a screen once it is on
-  // the page (App.svelte, in an effect that runs after this script and
-  // after onMount). Words taken any sooner were counted under the screen
-  // before this one, which is Create. After tick() the app has spoken.
+  // the app last named to its counter, which has to be this one and not
+  // Create. The app names a screen before the screen's own script runs
+  // (App.svelte), so that holds from the first line here; taking the words
+  // after tick() keeps it true whatever order the app's effects run in.
   onMount(() => {
     if (!arriving) return;
     void tick().then(() => {
@@ -148,6 +145,12 @@
 
   /** The tag in the name of this wallet's passkey, when this browser knows one. */
   let tag = $derived(wallet.record?.tag ?? null);
+  /**
+   * The name this page gave the passkey it has just made, as the wallet
+   * wrote it then. Only the wallet has it, and only until the step ends:
+   * this screen never builds a name itself.
+   */
+  let madeName = $derived(wallet.createdName);
 
   // The words leave the screen with the keys: when the wallet is locked,
   // and when the wallet in this browser is no longer the one they belong
@@ -172,11 +175,11 @@
     void tick().then(focusHeading);
   });
 
-  // The keys can load without the unlock step telling this screen: the step
-  // says nothing when the address changed while its prompt was open, and a
-  // switch of language changes the address. The wish for the words must not
-  // outlive that. Left standing, it would bring the unlock step up unasked
-  // the next time the wallet is locked.
+  // The wallet can stop being locked without the unlock step telling this
+  // screen: another tab can put a wallet that needs no passkey in this
+  // one's place, say. The wish for the words must not outlive that. Left
+  // standing, it would bring the unlock step up unasked the next time a
+  // wallet here is locked.
   $effect(() => {
     if (!locked) unlocking = false;
   });
@@ -200,6 +203,23 @@
   function unlocked(how: Unlocked): void {
     unlocking = false;
     if (afterUnlock(how) === 'reveal' && !take()) failed = true;
+  }
+
+  /** Holds "Show the 12 words", so that focus can be put back on it. */
+  let asks = $state<HTMLElement>();
+
+  /**
+   * "Back", under the unlock step: the wish for the words is taken back, and
+   * the screen's first view returns, with focus on the button that led to
+   * the step. Not while a passkey prompt is open (the button is switched off
+   * then): the page cannot take a prompt back, and its answer would arrive
+   * at a screen that no longer asked for the words.
+   */
+  async function leaveUnlock(): Promise<void> {
+    if (working()) return;
+    unlocking = false;
+    await tick();
+    if (!left) asks?.querySelector<HTMLElement>('[data-testid="reveal-words"]')?.focus();
   }
 
   async function hide(): Promise<void> {
@@ -235,7 +255,7 @@
         <p class="font-semibold text-ink-800" data-testid="never-real-money">{t.neverRealMoney}</p>
       {/if}
       <p class="text-sm">
-        <OutLink href={chapterUrl(wallet.config.siteUrl, lang)}>{t.chapterLink}</OutLink>
+        <OutLink href={chapterUrl(wallet.config.siteUrl, lang)} text={t.chapterLink} />
       </p>
     </div>
   </Notice>
@@ -248,10 +268,21 @@
     {:else if view === 'made' && words !== null}
       {#if wallet.created === 'passkey'}
         <Section title={t.madePasskeyTitle}>
-          {#if tag !== null}
-            <!-- The tag, not the whole name: the name was written in the
-                 language the page had when the passkey was made, and this
-                 screen is told the tag alone. -->
+          {#if madeName !== null}
+            <!-- The whole name, exactly as the wallet wrote it when it made
+                 the passkey: in the language the page had at that moment,
+                 which need not be the language of this screen. It is what
+                 the reader's password manager lists, so no translating
+                 browser may touch it. -->
+            <Rows>
+              <Row name={t.madePasskeyName}>
+                <span translate="no" data-testid="passkey-name">{madeName}</span>
+              </Row>
+            </Rows>
+          {:else if tag !== null}
+            <!-- The wallet has no name to show: the tag stands for it. A
+                 whole name built here could be the one in the other
+                 language, which the password manager does not list. -->
             <Rows>
               <Row name={t.madePasskeyTag}>
                 <Mono value={tag} data-testid="passkey-tag" />
@@ -259,7 +290,9 @@
             </Rows>
           {/if}
           <Prose>
-            {#if tag !== null}
+            {#if madeName !== null}
+              <p>{t.madePasskeyNameIs}</p>
+            {:else if tag !== null}
               <p>{t.madePasskeyTagIs}</p>
             {/if}
             <p data-testid="made-passkey">{t.madePasskeyWhere}</p>
@@ -327,7 +360,15 @@
       <Prose><p>{t.after}</p></Prose>
       <Notice kind="caution" text={t.neverRealMoney} data-testid="never-real-money" />
     {:else if view === 'unlock'}
-      <Unlock why={t.unlockWhy} onunlocked={unlocked} class={EVEN_BUTTONS} />
+      <div class="space-y-6" data-testid="backup-unlock">
+        <Unlock why={t.unlockWhy} onunlocked={unlocked} />
+        <Actions>
+          <!-- As wide as the step's own buttons on a phone, and off while a passkey prompt is open (leaveUnlock). -->
+          <Button class="w-full sm:w-auto" data-testid="backup-unlock-back" disabled={working()} onclick={() => void leaveUnlock()}>
+            {c.back}
+          </Button>
+        </Actions>
+      </div>
     {:else}
       <Section title={t.wordsTitle}>
         {#if withdrawn}
@@ -344,22 +385,24 @@
             <ReloadButton />
           </Notice>
         {/if}
-        <Actions>
-          <!-- The warning about being heard is tied to the button, so that a
-               screen reader says it when Tab reaches the button. The second
-               click of a double tap never shows the words: its first click
-               was on "Hide them", which stood here. -->
-          <Button
-            variant="primary"
-            data-testid="reveal-words"
-            aria-describedby="{id}-spoken"
-            onclick={(event) => {
-              if (!isRepeatTap(event)) void show();
-            }}
-          >
-            {t.show}
-          </Button>
-        </Actions>
+        <div bind:this={asks}>
+          <Actions>
+            <!-- The warning about being heard is tied to the button, so that a
+                 screen reader says it when Tab reaches the button. The second
+                 click of a double tap never shows the words: its first click
+                 was on "Hide them", which stood here. -->
+            <Button
+              variant="primary"
+              data-testid="reveal-words"
+              aria-describedby="{id}-spoken"
+              onclick={(event) => {
+                if (!isRepeatTap(event)) void show();
+              }}
+            >
+              {t.show}
+            </Button>
+          </Actions>
+        </div>
       </Section>
     {/if}
 

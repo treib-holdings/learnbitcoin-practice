@@ -430,6 +430,24 @@ test('errors: a refused plan has a way out even when nothing at all can be sent'
   assert.doesNotMatch(strings.errors.es['plan_too-much'], /todo lo que tiene/);
 });
 
+test('errors: at a fee rate where the fee alone is more than the wallet holds, "too-much" names the way out that works: a lower fee rate', () => {
+  // The faucet's coin, and the highest fee rate the form takes. One input and two outputs are about
+  // 141 vB, so the fee is about 141,000 sats: more than the coin holds, whatever the amount.
+  const { account, state, to } = walletWithOneCoin(100_000n);
+  for (const amount of [1_000n, 300n, 50_000n]) {
+    const plan = planPayment(account, state, { to, amount, feeRate: 1000n });
+    assert.deepEqual([plan.ok, !plan.ok && plan.reason, plan.maxSendable], [false, 'too-much', 0n], String(amount));
+  }
+  // "Send all" cannot be made either: so of the sentence's ways out, a smaller amount and "send all" both fail here.
+  assert.equal(planPayment(account, state, { to, amount: 'all', feeRate: 1000n }).ok, false);
+  // A lower fee rate works, with the same coin and the same amount.
+  const lower = planPayment(account, state, { to, amount: 1_000n, feeRate: 2n });
+  assert.ok(lower.ok);
+  // So the sentence names it, between the other two, in both languages.
+  assert.match(strings.errors.en['plan_too-much'], /\. Send a smaller amount, lower the fee rate, or send all the wallet can spend\. /);
+  assert.match(strings.errors.es['plan_too-much'], /\. Envía un monto menor, baja la tasa de comisión, o envía todo lo que la billetera pueda gastar\. /);
+});
+
 test('errors: with nothing for "Send all" to deliver, a payment can still go through, and no sentence says otherwise', () => {
   // maxSendable is what "Send all" would deliver, and 0 when "Send all"
   // cannot be made. That is not the same as a wallet that can send nothing.

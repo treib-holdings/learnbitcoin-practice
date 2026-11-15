@@ -388,8 +388,16 @@ test('every wait on Create marks <main> busy, and the hooks of the spec are on i
 test('Home keeps the fixed document title, and shows the shared pieces for the states it does not own', () => {
   const text = source('Home.svelte');
   assert.match(text, /documentTitle=\{c\.homeTitle\}/);
-  assert.match(text, /<OpenWithPasskey variant="secondary" onopened=\{opened\} \/>/);
-  assert.match(text, /<StoredTrouble titled/);
+  // The shared piece is the button and its answers. Home sizes the button to match the one under
+  // it, and hears of the one answer the piece cannot say itself: a wallet that arrived from
+  // another tab during the prompt takes the piece off the screen, so Home says how it came.
+  assert.match(text, /<OpenWithPasskey\s+variant="secondary"\s+buttonClass=\{PAIRED\}\s+onopened=\{opened\}\s+onanswer=\{\(answer\) => \{\s*if \(answer\.kind === 'exists'\) arrived = true;\s*\}\}\s*\/>/);
+  assert.match(text, /<WalletHere \{arrived\} \/>/);
+  assert.match(text, /<Button class=\{PAIRED\} data-testid="home-restore"/);
+  assert.match(text, /<StoredTrouble titled \/>/);
+  // The pieces size their own buttons now: nothing is laid over them from outside.
+  assert.doesNotMatch(text, /\[&_button\]/);
+  assert.doesNotMatch(source('front/FrontGate.svelte'), /\[&_button\]/);
   // The two facts come from the settings.
   assert.match(text, /wallet\.config\.blockSeconds/);
   assert.match(text, /wallet\.config\.faucetSats/);

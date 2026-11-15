@@ -13,6 +13,7 @@
   // scripted stand-in and mounts this same component.
 
   import { onDestroy, untrack, type Component } from 'svelte';
+  import ScreenChange from './components/ScreenChange.svelte';
   import Shell from './components/Shell.svelte';
   import WalletGate from './components/wallet/WalletGate.svelte';
   import { trackPage } from './lib/events.ts';
@@ -97,7 +98,18 @@
   // the wallet's settings say that events are wanted. Until then nothing is
   // sent. The counted path is fixed per screen and language (lib/events.ts),
   // so no transaction ID and nothing the reader typed ever leaves.
-  $effect(() => {
+  //
+  // $effect.pre, not $effect: it runs before the page is redrawn, and so
+  // before the new screen's own script and its onMount. Whatever the wallet
+  // counts from then on is filed under the screen that was named last. A
+  // screen that has the wallet count something while it is being put on the
+  // page (Backup, which shows the 12 words straight after a create) would
+  // otherwise have it filed under the screen before.
+  //
+  // The other end of a change of screen is the old screen's: what it counts
+  // while it is taken off the page is still its own. ScreenChange, below,
+  // sees to that.
+  $effect.pre(() => {
     const route = router.route;
     const lang = router.lang;
     if (counting) trackPage(route, lang);
@@ -105,7 +117,14 @@
 </script>
 
 <Shell {busy}>
-  <WalletGate>
-    <Screen />
-  </WalletGate>
+  <!-- One block for each screen: the marker, the gate and the screen come and go
+       together when the address asks for another screen. (The same screen in the
+       other language, or another transaction on the transaction screen, is no
+       change of screen: nothing is taken off the page for it.) -->
+  {#key Screen}
+    <ScreenChange />
+    <WalletGate>
+      <Screen />
+    </WalletGate>
+  {/key}
 </Shell>

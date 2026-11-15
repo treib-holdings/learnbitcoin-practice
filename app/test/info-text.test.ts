@@ -524,7 +524,11 @@ test('About, "what this browser keeps": the app stores one record under one key,
 
 test('About, "what this browser keeps": a record holds what the page lists, and the words only in the kind that keeps them', () => {
   const { en } = strings.about;
-  assert.match(en.keepPublic, /the wallet's public key\..*wallet fingerprint, the first address and the time the wallet was made/);
+  // The time is when this browser's record was written: also the moment a wallet was opened here with its
+  // passkey, switched to, or restored from its words. So it is never called the time the wallet was made.
+  assert.match(en.keepPublic, /the wallet's public key\..*wallet fingerprint, the first address and the time this browser began to keep the wallet are stored beside it\.$/);
+  assert.match(strings.about.es.keepPublic, /la primera dirección y el momento en que este navegador empezó a guardar la billetera\.$/);
+  for (const lang of LANGS) assert.doesNotMatch(strings.about[lang].keepPublic, /was made|se creó/, lang);
   assert.match(en.keepPasskey, /which passkey to ask, and the tag in its name\. Its 12 words are not stored\.$/);
   assert.match(en.keepWords, /the 12 words, as plain text, not encrypted\.$/);
   // The key store is asked, not read: what it makes is what is stored.
@@ -551,7 +555,9 @@ test('About, "what our server sees": what is written down, and what is not known
   // broken; every other request writes one line. (The last scenario of e2e/scenarios/info.test.ts reads the
   // lines a real run wrote, and holds these sentences to them.)
   assert.match(en.serverLog, /^When the page asks about an address, a transaction or the height of the chain, the server writes nothing down, unless something on our side is broken\./);
-  assert.match(en.serverLog, /\(the page's settings, the faucet, the address of the pass-it-on pot, a payment being sent, a count\)/);
+  assert.match(en.serverLog, /\(the page's settings, the faucet, the address of the pot, a payment being sent, a count\)/);
+  // The pot has one name in the app, the one Send and Receive give it.
+  for (const text of Object.values(strings.about.en)) assert.doesNotMatch(text, /pass-it-on|pay-it-forward/);
   assert.match(en.serverLog, /what kind of request it was, how it ended and how long it took\. The line itself holds no address, no transaction ID and no IP address\.$/);
   // "Block height" is "altura de bloque" on the Spanish site (notes/06, section 2).
   assert.match(es.serverLog, /^Cuando la página pregunta por una dirección, una transacción o la altura de bloque actual, el servidor no anota nada/);
@@ -582,8 +588,9 @@ test('About, "what is counted": Plausible is sent the IP address and what the br
   assert.match(strings.about.en.countSent, /No ID is sent with a count\.$/);
   const screen = source('src/screens/About.svelte');
   assert.match(screen, /let counting = \$derived\(wallet\.config\.events\);/);
-  // The line that says "on" or "off" waits until the settings it reads are the ones this visit keeps.
-  assert.match(screen, /let settled = \$derived\(settingsArrived\(wallet\.passkeyOffered\)\);/);
+  // The line that says "on" or "off" waits until the request for the server's settings has ended:
+  // from then on what this page counts does not change (with no settings from the server, nothing).
+  assert.match(screen, /let settled = \$derived\(wallet\.settings !== 'loading'\);/);
   assert.match(screen, /\{#if settled\}\s*<p data-testid="about-counting"/);
 });
 

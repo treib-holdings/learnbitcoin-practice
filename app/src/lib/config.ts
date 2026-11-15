@@ -2,12 +2,18 @@
 // pays, how often a block comes.
 //
 // The app has to work the moment it loads, so it carries production's values
-// itself. It then asks its Worker once (GET /api/config) what this deployment
+// itself. It then asks its Worker (GET /api/config) what this deployment
 // really uses: a local run has its own explorer and no bot check, for
 // example. Each value the Worker gives replaces the built-in one. A value it
 // leaves out, sends empty, or sends as the wrong kind of thing, is ignored,
 // so a broken answer can never leave the app without a setting. (One value
 // may be empty: with no site key for the bot check, the faucet is closed.)
+//
+// The built-in values and the Worker's can say different things about the
+// same deployment: built in, there is no bot check and nothing is counted.
+// So loadConfig also says which of the two it is handing back, and a screen
+// never has to guess whether "the faucet is closed" is the Worker's word or
+// only the absence of one.
 
 import { API, type AppConfig } from '@learnbitcoin/practice-contract';
 import type { FetchLike } from '@learnbitcoin/practice-wallet';
@@ -61,23 +67,63 @@ function take<K extends keyof AppConfig>(config: AppConfig, key: K, value: unkno
   if (usable(key, value)) config[key] = value as AppConfig[K];
 }
 
-/**
- * The built-in values with the Worker's laid over them, key by key. One
- * request and no second try. It never throws: with no answer, or one that
- * cannot be read, the built-in values come back as they are.
- */
-export async function loadConfig(fetchFn: FetchLike = (input, init) => fetch(input, init)): Promise<AppConfig> {
-  const config: AppConfig = { ...DEFAULT_CONFIG };
+/** What loadConfig hands back. */
+export interface LoadedConfig {
+  /** The settings to run on: the Worker's laid over the built-in ones, or the built-in ones alone. */
+  config: AppConfig;
+  /**
+   * True when the Worker gave an answer that could be read. False: no
+   * answer came, or none that was settings, and `config` holds the
+   * built-in values only.
+   */
+  loaded: boolean;
+}
+
+/** How long loadConfig waits after a try that failed before its second and last one, in ms. */
+export const CONFIG_RETRY_MS = 2_000;
+
+/** One request for the Worker's settings. Null when no answer came, or none that could be read as settings. */
+async function askOnce(fetchFn: FetchLike): Promise<AppConfig | null> {
   try {
     const res = await fetchFn(API.config);
-    if (!res.ok) return config;
+    if (!res.ok) return null;
     const answer: unknown = await res.json();
-    if (typeof answer !== 'object' || answer === null) return config;
+    if (typeof answer !== 'object' || answer === null || Array.isArray(answer)) return null;
     const given = answer as Record<string, unknown>;
+    const config: AppConfig = { ...DEFAULT_CONFIG };
     // Only the keys this app knows. Anything else in the answer is left behind.
     for (const key of Object.keys(DEFAULT_CONFIG) as (keyof AppConfig)[]) take(config, key, given[key]);
+    return config;
   } catch {
-    // No answer, or one that is not JSON: the built-in values stand.
+    // No answer, or one that is not JSON.
+    return null;
   }
-  return config;
+}
+
+/**
+ * The built-in values with the Worker's laid over them, key by key, and
+ * whether the Worker's were there to lay over them.
+ *
+ * A try that fails is followed by one more, a moment later: a phone that
+ * has just woken up, or a connection that dropped one request, should not
+ * leave the page on its built-in settings until it is loaded again. After
+ * the second failure it gives up. It never throws: with no usable answer
+ * the built-in values come back as they are, marked as not loaded.
+ *
+ * `pause` waits so many ms between the two tries. Tests hand in their own.
+ */
+export async function loadConfig(
+  fetchFn: FetchLike = (input, init) => fetch(input, init),
+  pause: (ms: number) => Promise<void> = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+): Promise<LoadedConfig> {
+  let config = await askOnce(fetchFn);
+  if (config === null) {
+    try {
+      await pause(CONFIG_RETRY_MS);
+    } catch {
+      // A pause that cannot be had: the second try goes out at once.
+    }
+    config = await askOnce(fetchFn);
+  }
+  return config === null ? { config: { ...DEFAULT_CONFIG }, loaded: false } : { config, loaded: true };
 }

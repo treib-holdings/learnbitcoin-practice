@@ -19,7 +19,13 @@
 // in screens/receive/faucet.ts). test/receive-text.test.ts holds the table
 // to that, and to what the screen may say about the bot check: it is
 // Cloudflare's, it loads only when coins are asked for, it examines the
-// browser and it is given the address. Nothing here promises more.
+// browser and it is given the address. Nothing here promises more. A wallet
+// opened with a passkey is told what asking does (it locks the wallet, and
+// the next move loads the page afresh) and how far that goes: the check's
+// code cannot read keys that were loaded before it. It could still ask the
+// passkey itself or open a window, which this page never does after the
+// tap, so the reader is told to cancel a prompt and close a window that
+// comes then. The lines never say that the check is kept away from the keys.
 //
 // The Spanish here is a first draft that no native reviewer has read yet.
 
@@ -66,18 +72,25 @@ export const en = {
   /** What the bot check is, before the reader asks. About says the same and more. */
   faucetCheck:
     "First a bot check runs in this page. It is Cloudflare's: it loads only when you ask for coins, examines your browser and is given this address.",
-  /** For a wallet made with a passkey, before the tap. */
+  /** For a wallet this browser opens with a passkey, before the tap: what asking does, and what that is good for. */
   faucetLocks:
-    "Asking for coins locks this wallet, and your next move to another screen loads the page afresh. That keeps the bot check away from the wallet's keys.",
+    "Asking for coins locks this wallet, and your next move to another screen loads the page afresh. So the bot check's code cannot read keys that were loaded before it.",
+  /** Under it: what the lock does not stop, said as what the reader can do about it. */
+  faucetNoPrompt:
+    'After you ask, this screen never asks for your passkey and opens no window by itself. If a passkey prompt or a new window shows up while you are still here, cancel it or close it.',
   /** The same words as the button that leads here from a wallet with no coins (wallet.getCoins). */
   faucetAsk: 'Get practice coins',
   /** On the button while a request is under way. */
   faucetBusy: 'Asking the faucet...',
 
   // -- the faucet is closed: the settings name no bot check --
-  /** Under the sentence for "closed", with a Reload button: the other thing it can mean, and the way to look again. */
-  closedReload:
-    'This page learns whether the faucet is open when it loads. If that answer did not arrive, the faucet shows as switched off as well. Reload the page to check again.',
+  /** Under the sentence for "closed", with a Reload button: when the page learns it, and the way to look again. */
+  closedReload: 'This page learns whether the faucet is open when it loads. Reload the page to check again.',
+  /**
+   * The settings could not be read at all. Under the sentence for a request
+   * that got no answer, with a Reload button: what that leaves unknown here.
+   */
+  settingsFailed: 'So this page does not know whether the faucet is open. Reload the page to ask again.',
 
   // -- the state of a request to the faucet, one for every phase --
   /** Whose check it is and what it is given stands above the button, and stays there while the check runs. */
@@ -119,7 +132,7 @@ export const en = {
 } as const;
 
 export const es: Record<keyof typeof en, string> = {
-  lede: 'La dirección donde esta billetera recibe pagos, y el faucet, que reparte monedas de práctica a quien las pide.',
+  lede: 'La dirección donde esta billetera recibe pagos, y el faucet, que le paga monedas de práctica.',
 
   noAddressYet:
     'Todavía no hay una dirección para mostrar. Primero la billetera averigua cuáles de sus direcciones ya recibieron pagos, y después muestra una que todavía no recibió ninguno.',
@@ -147,12 +160,14 @@ export const es: Record<keyof typeof en, string> = {
   faucetCheck:
     'Primero se ejecuta en esta página una comprobación contra bots. Es de Cloudflare: se carga solo cuando pides monedas, examina tu navegador y recibe esta dirección.',
   faucetLocks:
-    'Pedir monedas bloquea esta billetera, y tu próximo paso a otra pantalla carga la página de nuevo. Así la comprobación contra bots queda lejos de las claves de la billetera.',
+    'Pedir monedas bloquea esta billetera, y tu próximo paso a otra pantalla carga la página de nuevo. Así el código de la comprobación contra bots no puede leer claves que se cargaron antes que él.',
+  faucetNoPrompt:
+    'Después de que pides monedas, esta pantalla nunca te pide tu llave de acceso ni abre ninguna ventana por sí sola. Si mientras sigues aquí aparece una ventana de la llave de acceso, o se abre una ventana nueva, cancélala o ciérrala.',
   faucetAsk: 'Pedir monedas de práctica',
   faucetBusy: 'Pidiéndole al faucet...',
 
-  closedReload:
-    'Esta página averigua si el faucet está abierto cuando se carga. Si esa respuesta no llegó, el faucet también aparece como apagado. Recarga la página para volver a comprobarlo.',
+  closedReload: 'Esta página averigua si el faucet está abierto cuando se carga. Recarga la página para volver a comprobarlo.',
+  settingsFailed: 'Así que esta página no sabe si el faucet está abierto. Recarga la página para volver a preguntar.',
 
   stateChecking: 'Comprobando que no eres un bot. Tarda un momento. Si muestra una casilla aquí abajo, márcala.',
   checkBoxShows: 'La comprobación contra bots muestra una casilla debajo del botón. Márcala para continuar.',

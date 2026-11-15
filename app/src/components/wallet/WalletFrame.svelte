@@ -14,7 +14,9 @@
   //     3): the first look still running, the first look failed, a later
   //     look failed, the network slow;
   //   - a note after an unlock that changed something (the saved details
-  //     were wrong, or the reader switched to another passkey's wallet).
+  //     were wrong, or the reader switched to another passkey's wallet),
+  //     and a note when another tab put a different wallet in this browser
+  //     while the screen was open.
   //
   // It also speaks for the wallet: each thing the wallet announces (coins
   // arrived, 1 confirmation, payment sent, unlocked, locked) is said once
@@ -119,6 +121,10 @@
     if (notice === null || notice.id === said) return;
     said = notice.id;
     announce(noticeText(notice, lang));
+    // Another tab put a different wallet in this browser. What is on screen changed under the
+    // reader's eyes (on Receive, the address), so it is not only said: the note stays on screen
+    // until the reader has read it.
+    if (notice.kind === 'replaced') untrack(() => (notes.note = { kind: 'replaced' }));
   });
 
   // A note from an unlock that does not speak for itself is said as well,
@@ -212,8 +218,15 @@
   {#snippet above()}
     <Chips label={c.sectionsLabel} items={chips} />
     {#if passkey}
+      <!-- On a phone the sentence wraps beside the Lock button where that leaves it a column of
+           192 px or more (basis-48), and the button goes under it only where it does not. Left
+           to itself the sentence took the whole row and pushed the button onto a line of its
+           own: every line saved here is a line of the screen's own content in the first view.
+           From 640 px the sentence is as wide as its words, with the button right after it. -->
       <div class="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2" data-testid="lock-state">
-        <p class="text-pretty text-sm text-ink-500">{wallet.unlocked ? c.stateUnlocked : c.stateLocked}</p>
+        <p class="min-w-0 flex-1 basis-48 text-pretty text-sm text-ink-500 sm:flex-initial">
+          {wallet.unlocked ? c.stateUnlocked : c.stateLocked}
+        </p>
         {#if wallet.unlocked}
           <Button variant="quiet" data-testid="lock" onclick={() => void lock()}>{c.lock}</Button>
         {/if}
@@ -224,6 +237,10 @@
   {#if notes.note !== null}
     {#if notes.note.kind === 'tampered'}
       <Notice kind="problem" text={t.noteTampered} data-testid="unlock-note">
+        <Button variant="quiet" onclick={() => void readNote()}>{t.noteOk}</Button>
+      </Notice>
+    {:else if notes.note.kind === 'replaced'}
+      <Notice kind="caution" text={t.noteReplaced} data-testid="replaced-note">
         <Button variant="quiet" onclick={() => void readNote()}>{t.noteOk}</Button>
       </Notice>
     {:else}

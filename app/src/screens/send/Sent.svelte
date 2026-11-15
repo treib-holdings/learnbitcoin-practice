@@ -44,7 +44,6 @@
   const wallet = useWallet();
 
   let t = $derived(strings.send[router.lang]);
-  let c = $derived(strings.common[router.lang]);
   let w = $derived(strings.wallet[router.lang]);
 
   // -- following the payment ----------------------------------------------------------
@@ -110,7 +109,8 @@
       <Row name={t.planAmount} data-testid="sent-amount"><Amount sats={facts.amount} /></Row>
       <Row name={w.txFee} data-testid="sent-fee"><Amount sats={facts.fee} /></Row>
     {/if}
-    <Row name={c.screen_tx} data-testid="sent-txid"><Mono value={txid} size="small" /></Row>
+    <!-- The ID by the name it has on Receive and on the transaction's own screen ("Transaction" is a screen's name). -->
+    <Row name={w.txId} data-testid="sent-txid"><Mono value={txid} size="small" /></Row>
   </Rows>
 
   <Actions>

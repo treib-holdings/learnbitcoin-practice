@@ -1,12 +1,14 @@
 // What the shell promises about the page around every screen: the document
 // title carries the PRACTICE marker, Home keeps the title index.html has,
-// the wallet's bot check is joined to the router in one place, and <main>
-// is marked busy while a passkey prompt is open or a payment is being sent.
+// the wallet's bot check is joined to the router in one place, <main> is
+// marked busy while a passkey prompt is open or a payment is being sent,
+// and a screen is named to the counter before its own work begins.
 
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import { test } from 'node:test';
 import { LANGS } from '@learnbitcoin/practice-contract';
+import { screenNumber, screenPutOnPage } from '../src/components/screen-count.ts';
 import { fill } from '../src/lib/format.ts';
 import { strings } from '../src/strings/index.ts';
 
@@ -30,10 +32,71 @@ test('every document title starts with the PRACTICE word, in both languages', ()
   }
 });
 
-test('index.html leaves room for the sticky banner when a link jumps to a part of the page', () => {
+test('index.html leaves room for the sticky banner when a link jumps to a part of the page, and room at the foot', () => {
   // "Skip to content" and a focused field must land below the banner, which
   // is two lines tall on a narrow Spanish screen: 56 px of scroll padding.
-  assert.match(indexHtml, /<html lang="en" class="scroll-pt-14">/);
+  // And a link brought on screen from below must show its whole focus
+  // outline (2 px, 2 px away from the link): 8 px at the foot.
+  assert.match(indexHtml, /<html lang="en" class="scroll-pt-14 scroll-pb-2">/);
+  // The gallery's page is the app's page in this.
+  const gallery = readFileSync(new URL('../dev/index.html', import.meta.url), 'utf8');
+  assert.match(gallery, /<html lang="en" class="scroll-pt-14 scroll-pb-2">/);
+});
+
+test('index.html tells a browser without JavaScript what is missing, in both of the app\'s languages', () => {
+  // One file is served for every address, /es included, and without JavaScript nothing can pick a
+  // language: so the line stands there in both, the Spanish one marked as Spanish.
+  const line = /<noscript>([\s\S]*?)<\/noscript>/.exec(indexHtml)?.[1] ?? '';
+  assert.match(line, /<p>The practice wallet needs JavaScript\.<\/p>/);
+  assert.match(line, /<p lang="es">La billetera de práctica necesita JavaScript\.<\/p>/);
+  // Nothing in it that the page's security policy would refuse.
+  assert.doesNotMatch(line, /style=|<style|<script|\son[a-z]+=/);
+});
+
+// -- screen views ---------------------------------------------------------------------
+
+test('a screen is named to the counter before its own script runs', () => {
+  // What the wallet counts is filed under the screen that was named last (lib/events.ts). A screen
+  // can have the wallet count something while it is being put on the page: Backup shows the 12
+  // words straight after a create, and that is "Words shown". Named in a plain effect, which runs
+  // after the page is redrawn, the new screen would come too late and the count would be filed
+  // under the screen before it. $effect.pre runs before the redraw.
+  const app = readFileSync(new URL('../src/App.svelte', import.meta.url), 'utf8');
+  assert.match(app, /\$effect\.pre\(\(\) => \{\s*const route = router\.route;\s*const lang = router\.lang;\s*if \(counting\) trackPage\(route, lang\);\s*\}\);/);
+  // One place names screens, and it is that one.
+  assert.equal(app.match(/trackPage\(/g)?.length, 1);
+});
+
+test('what a screen counts as it leaves is still filed under it', () => {
+  // The other end of a change of screen. The old screen is taken off the page after the new one has
+  // been named (and, as Svelte does it, after the new one has been put there). What it counts in
+  // that moment is its own: Restore lets go of typed words, and "erased" belongs to Restore. A marker
+  // stands first in the block that holds each screen, so that its parting word comes before the
+  // screen's own and the next marker's "arrived" before the next screen's first work.
+  const app = readFileSync(new URL('../src/App.svelte', import.meta.url), 'utf8');
+  assert.match(app, /\{#key Screen\}\s*<ScreenChange \/>\s*<WalletGate>\s*<Screen \/>\s*<\/WalletGate>\s*\{\/key\}/);
+  const marker = readFileSync(new URL('../src/components/ScreenChange.svelte', import.meta.url), 'utf8');
+  assert.match(marker, /onDestroy\(screenLeaving\);/);
+  // It also counts the screens, for the pieces whose work can outlive their screen (the unlock step).
+  assert.match(marker, /\n  screenPutOnPage\(\);\n/);
+  assert.match(marker, /\$effect\(\(\) => \{\s*screenArrived\(\);\s*\}\);/);
+  // It draws nothing: the file ends with its script.
+  assert.match(marker.trimEnd(), /<\/script>$/);
+  // Only the marker says when a screen leaves and arrives, and only the marker counts.
+  for (const { name, text } of [...sources('src/components'), ...sources('src/screens')]) {
+    if (name.endsWith('ScreenChange.svelte')) continue;
+    assert.doesNotMatch(text, /screenLeaving|screenArrived/, name);
+    if (!name.endsWith('screen-count.ts')) assert.doesNotMatch(text, /screenPutOnPage/, name);
+  }
+});
+
+test('the count of screens goes up by one for each screen put on the page', () => {
+  const before = screenNumber();
+  assert.equal(screenNumber(), before, 'reading it changes nothing');
+  screenPutOnPage();
+  assert.equal(screenNumber(), before + 1);
+  screenPutOnPage();
+  assert.equal(screenNumber(), before + 2);
 });
 
 // -- the bot check and the router ---------------------------------------------------

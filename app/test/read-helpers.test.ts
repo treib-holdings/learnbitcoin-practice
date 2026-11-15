@@ -12,12 +12,10 @@ import { LANGS } from '@learnbitcoin/practice-contract';
 import type { TxView } from '@learnbitcoin/practice-wallet';
 import { splitLead } from '../src/components/text.ts';
 import type { ApiFailure } from '../src/lib/api.ts';
-import { REQUEST_MS } from '../src/lib/chain-sync.ts';
 import { DEFAULT_CONFIG } from '../src/lib/config.ts';
 import { fill, slotNames } from '../src/lib/format.ts';
 import type { TxLookup, UnlockResult } from '../src/lib/wallet-api.ts';
 import {
-  LIST_TRY_MS,
   OVERVIEW_COINS,
   OVERVIEW_TXS,
   WAIT_LIMIT_MS,
@@ -31,12 +29,10 @@ import {
   firstFew,
   glossaryUrl,
   keepShown,
-  listTryEnded,
   overviewBody,
   txReplaceable,
   txStatus,
   txSummary,
-  type ListSeen,
   type TxShows,
   type TxStep,
 } from '../src/screens/read/read.ts';
@@ -112,26 +108,17 @@ test('activity: one notice at a time. The list says why it could not be read onl
 });
 
 test('activity: "Try again" is answered by the list itself, not by the coins that are read before it', () => {
-  // A request is given up after REQUEST_MS, so a read that fails has failed by then.
-  assert.ok(LIST_TRY_MS > REQUEST_MS && LIST_TRY_MS <= REQUEST_MS + 5000);
-
-  const old = [view()];
-  const before: ListSeen = { list: old, failure: 'limit' };
-  // The coins have been read again and the list is on its way: nothing is known yet.
-  // (This is the moment wallet.refresh() resolves at. The old failure still stands, and it is not the answer.)
-  assert.equal(listTryEnded(before, { list: old, failure: 'limit' }, false), null);
-  // Another list in the old one's place: the read worked.
-  assert.equal(listTryEnded(before, { list: [view()], failure: null }, false), 'worked');
-  // The same list and another reason: it failed, and the new cause is read out.
-  assert.equal(listTryEnded(before, { list: old, failure: 'network' }, false), 'failed');
-  // The same list and the same reason: only the time tells that it failed again.
-  assert.equal(listTryEnded(before, { list: old, failure: 'limit' }, true), 'failed');
-  // Never read before, and now read: an empty list is a list.
-  assert.equal(listTryEnded({ list: null, failure: 'limit' }, { list: [], failure: null }, false), 'worked');
-  // Never read, and still not read when the time is up.
-  assert.equal(listTryEnded({ list: null, failure: 'limit' }, { list: null, failure: 'limit' }, true), 'failed');
-  // The wallet was replaced meanwhile: no list and no failure. Nothing failed that is this reader's to hear.
-  assert.equal(listTryEnded({ list: null, failure: 'limit' }, { list: null, failure: null }, true), 'worked');
+  // The wallet's refresh() reads the coins and then the list, and resolves when the read of the list
+  // has ended (test/chain-sync.test.ts holds the wallet to that). So what the wallet shows at that
+  // moment is how the try went, and the list has no clock of its own to guess by.
+  const list = readFileSync(new URL('../src/screens/read/ActivityList.svelte', import.meta.url), 'utf8');
+  const script = list.slice(0, list.indexOf('</script>'));
+  assert.match(script, /await wallet\.refresh\(\);\s*if \(gone\) return;\s*trying = false;/);
+  // The coins could not be read: the frame says so, and the line under it is the answer to the try.
+  assert.match(script, /if \(wallet\.chain\.error !== null\) \{[\s\S]*?answered = true;\s*return;\s*\}/);
+  // The list could not be read: its cause is drawn afresh, also when it is the same cause as before.
+  assert.match(script, /if \(wallet\.historyError !== null\) tries \+= 1;/);
+  assert.doesNotMatch(script, /setTimeout|setInterval/);
 });
 
 // -- "Choose another passkey" ---------------------------------------------------------
@@ -413,7 +400,15 @@ test('text: the sentences the spec gives, and facts as slots', () => {
   const { en } = strings.wallet;
   assert.equal(en.txWaiting, 'Waiting for the practice network to list this transaction...');
   assert.equal(en.txExplorer, 'See it on the practice explorer');
-  assert.equal(strings.wallet.es.txExplorer, 'Verlo en el explorador de práctica');
+  // "La transacción" is feminine, and the same screen calls it "Confirmada": so "Verla".
+  assert.equal(strings.wallet.es.txExplorer, 'Verla en el explorador de práctica');
+  // Bitcoin's own network has one name in the Spanish, the one Send and the Sparrow page give it.
+  assert.match(strings.wallet.es.txNotFound, /Un txid de la red real de Bitcoin nunca aparece aquí\.$/);
+  for (const area of ['wallet', 'send', 'sparrow', 'receive', 'about'] as const) {
+    for (const [key, text] of Object.entries(strings[area].es as Readonly<Record<string, string>>)) {
+      assert.doesNotMatch(text, /red principal/, `${area}.es.${key}`);
+    }
+  }
   assert.match(en.coinsLede, /holds coins, not a balance/);
   assert.match(en.coinsWhat, /spends whole coins and makes new ones/);
   assert.match(en.coinsWhat, /UTXO/);
@@ -483,10 +478,15 @@ test('choosing another passkey leaves the wallet as it is: nothing here locks it
     assert.doesNotMatch(text, /components\/wallet\/Unlock\.svelte/, name);
   }
   const empty = readFileSync(new URL('../src/screens/read/OpenedEmpty.svelte', import.meta.url), 'utf8');
-  // The question is asked here, with the hooks it has wherever it is asked, and answered through the wallet.
-  for (const hook of ['switch-question', 'switch-confirm', 'switch-cancel', 'opened-choose']) {
-    assert.match(empty, new RegExp(`data-testid="${hook}"`), hook);
+  // The question is asked here, and answered through the wallet. It is the shared piece, with the
+  // hooks it has wherever it is asked (test/wallet-pieces.test.ts holds the piece itself to them);
+  // a switch the browser would not store is said inside it, under this list's own hook.
+  assert.match(empty, /<SwitchQuestion\s+\{pending\}\s+\{refused\}\s+refusedHook="opened-problem"/);
+  const question = readFileSync(new URL('../src/components/wallet/SwitchQuestion.svelte', import.meta.url), 'utf8');
+  for (const hook of ['switch-question', 'switch-confirm', 'switch-cancel']) {
+    assert.match(question, new RegExp(`data-testid="${hook}"`), hook);
   }
+  assert.match(empty, /data-testid="opened-choose"/);
   assert.match(empty, /wallet\.confirmSwitch\(\)/);
   assert.match(empty, /wallet\.cancelSwitch\(\)/);
   // An answer that finds the list gone is still delivered: the frame's note, and the Overview's own notice.

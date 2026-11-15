@@ -13,6 +13,7 @@ import {
   RECORD_KEY,
   canStore,
   judgeUnlock,
+  judgeWords,
   loadRecord,
   makeRecord,
   publicRecord,
@@ -1058,5 +1059,46 @@ test('wordsMatchRecord: true only when the words give exactly the record\'s publ
   ];
   for (const typed of notPhrases) {
     assert.equal(wordsMatchRecord(passkey, typed), false, typed);
+  }
+});
+
+// -- judgeWords -------------------------------------------------------------------
+
+test('judgeWords: typed words are judged by the pair, the public key and the wallet fingerprint, as a passkey\'s answer is', () => {
+  const passkey = passkeyRecord(A);
+  // Both fit: this wallet's words, also as a reader types them, and for a wallet kept with its words.
+  assert.equal(judgeWords(passkey, A.mnemonic), 'same');
+  assert.equal(judgeWords(passkey, `${A.mnemonic.toUpperCase().replaceAll(' ', '   ')}\n`), 'same');
+  assert.equal(judgeWords(wordsRecord(A), A.mnemonic), 'same');
+  // Neither fits: another wallet's words.
+  assert.equal(judgeWords(passkey, B.mnemonic), 'other');
+  assert.equal(judgeWords(passkeyRecord(B, PASSKEY_B), A.mnemonic), 'other');
+
+  // Exactly one fits: the record was altered. The public key swapped, and the reader's own words ...
+  const keySwapped: WalletRecord = { ...passkey, xpub: B.xpub, firstAddress: B.receive[0] ?? '' };
+  assert.equal(judgeWords(keySwapped, A.mnemonic), 'tampered');
+  // ... and the words of the key that was put there, which wordsMatchRecord alone would take for this wallet's.
+  assert.equal(wordsMatchRecord(keySwapped, B.mnemonic), true);
+  assert.equal(judgeWords(keySwapped, B.mnemonic), 'tampered');
+  // The wallet fingerprint altered, which wordsMatchRecord does not look at.
+  const printAltered: WalletRecord = { ...passkey, fingerprint: 'deadbeef' };
+  assert.equal(wordsMatchRecord(printAltered, A.mnemonic), true);
+  assert.equal(judgeWords(printAltered, A.mnemonic), 'tampered');
+  assert.equal(judgeWords({ ...passkey, fingerprint: B.masterFingerprint }, B.mnemonic), 'tampered');
+  // Both altered together fit nothing of the reader's words: nothing here can tell that from another wallet.
+  assert.equal(judgeWords({ ...keySwapped, fingerprint: B.masterFingerprint }, A.mnemonic), 'other');
+
+  // It agrees with judgeUnlock for the stored passkey, verdict for verdict.
+  const verdicts = { same: 'same', tampered: 'tampered', changed: 'other' } as const;
+  for (const record of [passkey, keySwapped, printAltered, { ...keySwapped, fingerprint: B.masterFingerprint }]) {
+    for (const typed of [A.mnemonic, B.mnemonic]) {
+      const byPasskey = judgeUnlock(record, record.credentialId ?? '', typed);
+      assert.equal(judgeWords(record, typed), verdicts[byPasskey as keyof typeof verdicts], `${record.fingerprint} ${typed.slice(0, 12)}`);
+    }
+  }
+
+  // Not a valid phrase: "other", never a throw.
+  for (const typed of ['', 'abandon', A.mnemonic.replace(/about$/, 'abandon'), `${A.mnemonic} about`]) {
+    assert.equal(judgeWords(passkey, typed), 'other', typed);
   }
 });

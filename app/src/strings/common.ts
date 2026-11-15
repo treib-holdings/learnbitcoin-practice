@@ -133,12 +133,10 @@ export const en = {
   timeMinutes: '{count} minutes',
 
   // -- the screens that are not wallet sections: the key is "screen_" and the route's name --
-  screen_home: 'Home',
+  // (Home has none: its heading is the app's name, to match the page title that never changes.)
   screen_new: 'Create a practice wallet',
   screen_restore: 'Restore a practice wallet',
   screen_tx: 'Transaction',
-  /** On a screen that is still a placeholder. It goes when the last screen is built. */
-  notBuiltYet: 'This screen is not built yet.',
 
   // -- a path that is no screen --
   notFoundTitle: 'Page not found',
@@ -214,11 +212,9 @@ export const es: Record<keyof typeof en, string> = {
   timeMinute: '{count} minuto',
   timeMinutes: '{count} minutos',
 
-  screen_home: 'Inicio',
   screen_new: 'Crea una billetera de práctica',
   screen_restore: 'Restaura una billetera de práctica',
   screen_tx: 'Transacción',
-  notBuiltYet: 'Esta pantalla todavía no está hecha.',
 
   notFoundTitle: 'Página no encontrada',
   notFoundBody:

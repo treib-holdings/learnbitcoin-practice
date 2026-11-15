@@ -8,6 +8,12 @@
   // "#frame", a sample screen inside the wallet frame, where the real
   // screen would be (FrameDemo.svelte). The gate stands in front of it as
   // it does in the app.
+  //
+  // Steps can be played on what shows, once it is drawn (play.ts): after
+  // "#frame:" on the sample screen, and after "#play:" on the app's own
+  // screen, on any route. So a state that only shows after a tap (a review,
+  // the unlock step after a refused passkey, an open question) can be
+  // looked at and photographed with the gallery tool.
 
   import { untrack } from 'svelte';
   import App from '../src/App.svelte';
@@ -19,7 +25,7 @@
   import FrameDemo from './FrameDemo.svelte';
   import Gates from './Gates.svelte';
   import Index from './Index.svelte';
-  import { frameDemo, galleryPage } from './pages.ts';
+  import { frameDemo, galleryPage, playSteps } from './pages.ts';
   import Pieces from './Pieces.svelte';
   import { parseSteps, play } from './play.ts';
   import type { StandIn } from './stand-in.svelte.ts';
@@ -38,9 +44,18 @@
   // reader moves between the wallet's sections.
   const demo = frameDemo(location.hash);
 
+  /** The steps to play on the app's own screen, read once as well. */
+  const onApp = playSteps(location.hash);
+
   /** Plays the taps the address asks for, on whatever shows: the sample screen, or the gate in front of it. */
   function played(node: HTMLElement): void {
     const steps = parseSteps(demo ?? '');
+    if (steps.length > 0) void play(node, steps);
+  }
+
+  /** The same, on the app itself. */
+  function playedOnApp(node: HTMLElement): void {
+    const steps = parseSteps(onApp ?? '');
     if (steps.length > 0) void play(node, steps);
   }
 </script>
@@ -63,6 +78,11 @@
         <FrameDemo />
       </WalletGate>
     </Shell>
+  </div>
+{:else if onApp !== null}
+  <!-- The app, with the steps the address asks for played on it once it is drawn. -->
+  <div {@attach playedOnApp}>
+    <App {wallet} />
   </div>
 {:else}
   <App {wallet} />

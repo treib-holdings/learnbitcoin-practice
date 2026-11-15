@@ -304,6 +304,10 @@ export class VirtualAuthenticator {
   /** The next create() prompts, and the next get() prompts, fail with these error names: one name each. */
   readonly refuseCreate: string[] = [];
   readonly refuseGet: string[] = [];
+  /** How many times the page read the part of an answer that holds the secret (getClientExtensionResults). */
+  secretReads = 0;
+  /** The signal each prompt was handed, in order. This manager does not listen to it: a prompt it holds stays open. */
+  readonly signals: (AbortSignal | undefined)[] = [];
   private gate: Promise<void> | null = null;
   private random = 0;
 
@@ -355,7 +359,10 @@ export class VirtualAuthenticator {
       rawId: buffer(passkey.id),
       // A browser hands the user.id back when the passkey was picked, and may keep it to itself when asked by ID.
       response: { userHandle: picked ? buffer(passkey.userId) : null },
-      getClientExtensionResults: () => ({ prf }),
+      getClientExtensionResults: () => {
+        this.secretReads += 1;
+        return { prf };
+      },
       toJSON() {
         throw new Error('toJSON() was called on a credential: its JSON holds the secret');
       },
@@ -367,6 +374,7 @@ export class VirtualAuthenticator {
     const credentials: NonNullable<PasskeyEnv['credentials']> = {
       create: async (options) => {
         this.calls.push('create');
+        this.signals.push(options?.signal);
         await this.prompt(this.refuseCreate);
         const user = options?.publicKey?.user;
         assert.ok(user, 'create() names a user');
@@ -379,6 +387,7 @@ export class VirtualAuthenticator {
         const allowed = options?.publicKey?.allowCredentials;
         const only = allowed?.[0] ? base64url(bytesOf(allowed[0].id)) : null;
         this.calls.push(only === null ? 'get (picker)' : `get ${only}`);
+        this.signals.push(options?.signal);
         await this.prompt(this.refuseGet);
         const passkey = only === null ? this.passkeys[this.pick] : this.passkeys.find((one) => one.idText === only);
         // No such passkey here (it never was, or the manager was told to forget it): the browser's one answer for that, and for a cancel.
@@ -440,12 +449,49 @@ const json = (body: unknown): Response =>
   new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
 const text = (body: string): Response => new Response(body, { status: 200, headers: { 'Content-Type': 'text/plain' } });
 
+/** How many transactions the first answer about an address lists at most (GET /address/<a>/txs), as on the practice network. */
+export const FIRST_PAGE = 50;
+/** How many confirmed ones each further answer lists (GET /address/<a>/txs/chain/<txid>). */
+export const CHAIN_PAGE = 25;
+
+/**
+ * An address's transactions in the order Esplora lists them: the
+ * unconfirmed ones first, then the confirmed ones, newest block first.
+ * Within a block, and among the unconfirmed, the order they were made in.
+ */
+function asListed(txs: EsploraTx[]): EsploraTx[] {
+  return [...txs].sort(
+    (a, b) => Number(a.status.confirmed) - Number(b.status.confirmed) || (b.status.block_height ?? 0) - (a.status.block_height ?? 0),
+  );
+}
+
+/** The first answer: 50 at most in all, the unconfirmed ones before the confirmed ones. */
+function firstPage(listed: EsploraTx[]): EsploraTx[] {
+  const unconfirmed = listed.filter((tx) => !tx.status.confirmed).slice(0, FIRST_PAGE);
+  const confirmed = listed.filter((tx) => tx.status.confirmed).slice(0, FIRST_PAGE - unconfirmed.length);
+  return [...unconfirmed, ...confirmed];
+}
+
+/**
+ * A further answer: the confirmed ones that come after the transaction
+ * `after`, 25 at most, or the newest 25 when no ID is given. An ID that is
+ * not among the confirmed ones (an unknown one, or one still unconfirmed)
+ * gives an empty list, and so does the ID of the oldest: that is the end.
+ */
+function chainPage(listed: EsploraTx[], after: string | undefined): EsploraTx[] {
+  const confirmed = listed.filter((tx) => tx.status.confirmed);
+  if (after === undefined) return confirmed.slice(0, CHAIN_PAGE);
+  const at = confirmed.findIndex((tx) => tx.txid === after);
+  return at === -1 ? [] : confirmed.slice(at + 1, at + 1 + CHAIN_PAGE);
+}
+
 /**
  * The Worker with the practice chain behind it, as the app's client sees it:
- * the six Esplora shapes the wallet reads, the broadcast, the faucet and the
- * pot. It knows transactions only as lists of addresses and amounts. The
- * real rules (signatures, fees, dust) are the stand-in network's business in
- * e2e/, where the whole stack runs.
+ * the Esplora shapes the wallet reads (an address's list of transactions
+ * comes in pages, as the practice network hands it out), the broadcast, the
+ * faucet and the pot. It knows transactions only as lists of addresses and
+ * amounts. The real rules (signatures, fees, dust) are the stand-in
+ * network's business in e2e/, where the whole stack runs.
  */
 export class FakeNetwork {
   tip = 100;
@@ -598,13 +644,13 @@ export class FakeNetwork {
   private esplora(method: string, path: string, body: string): Response {
     if (method === 'GET' && path === '/blocks/tip/height') return text(String(this.tip));
 
-    const address = /^\/address\/([^/]+)(\/utxo|\/txs)?$/.exec(path);
+    const address = /^\/address\/([^/]+)(\/utxo|\/txs|\/txs\/chain(?:\/([0-9a-f]{64}))?)?$/.exec(path);
     if (method === 'GET' && address) {
-      const [, asked = '', list] = address;
+      const [, asked = '', list, after] = address;
       const txs = this.touching(asked);
-      if (list === '/txs') {
-        return json([...txs].sort((a, b) => Number(a.status.confirmed) - Number(b.status.confirmed) || (b.status.block_height ?? 0) - (a.status.block_height ?? 0)));
-      }
+      // The list comes in pages, as from the practice network: 50 at most, then the older confirmed ones 25 at a time.
+      if (list === '/txs') return json(firstPage(asListed(txs)));
+      if (list?.startsWith('/txs/chain')) return json(chainPage(asListed(txs), after));
       if (list === '/utxo') {
         return json(
           txs.flatMap((tx) =>
@@ -775,7 +821,7 @@ export class FakeChain {
 
   state = (): WalletState | null => this.coins;
 
-  announce = (kind: 'unlocked' | 'locked'): void => {
+  announce = (kind: 'unlocked' | 'locked' | 'replaced'): void => {
     this.announced.push(kind);
   };
 

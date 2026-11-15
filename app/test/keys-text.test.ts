@@ -157,6 +157,8 @@ test('"Wallet made" with a passkey: where the passkey lives, and the words as th
   const to = backup.indexOf("{:else if view === 'shown' && words !== null}");
   assert.ok(from > 0 && to > from, 'the "Wallet made" step is in the screen');
   const step = backup.slice(from, to);
+  assert.ok(step.indexOf('data-testid="passkey-name"') > 0);
+  assert.ok(step.indexOf('data-testid="passkey-name"') < step.indexOf('<WordsList'));
   assert.ok(step.indexOf('data-testid="passkey-tag"') < step.indexOf('<WordsList'));
   assert.ok(step.indexOf('<WordsList') < step.indexOf('{t.madePasskeyBack}'));
   assert.ok(step.indexOf('<WordsList') < step.indexOf('{t.madeKeepsWords}'));
@@ -479,7 +481,7 @@ test('Spanish: the first mention of a passkey in a screen\'s own text carries th
   const backup: Table = strings.backup.es;
   const card = ['cardTitle', 'cardLead', 'cardName', 'cardRestores', 'cardPrint'];
   const madePasskey = [
-    'madeTitle', 'madeLede', 'madePasskeyTitle', 'madePasskeyTag', 'madePasskeyTagIs', 'madePasskeyWhere',
+    'madeTitle', 'madeLede', 'madePasskeyTitle', 'madePasskeyName', 'madePasskeyNameIs', 'madePasskeyTag', 'madePasskeyTagIs', 'madePasskeyWhere',
     'shownTitle', 'spokenAloud', 'after', 'madePasskeyBack', 'exception', 'neverRealMoney', 'chapterLink', ...card, 'written',
   ];
   const madeWords = [
@@ -556,26 +558,58 @@ test('the 12 words meet no regular expression, no copy control and no download i
   assert.match(css, /body:has\(\[data-print="only"\]\) :not\(:has\(\[data-print="only"\]\), \[data-print="only"\], \[data-print="only"\] \*\) \{\s*display: none !important;/);
 });
 
-test('the passkey\'s whole name is built nowhere in these screens: the tag stands for it', () => {
-  // The name was written in the language the page had at the moment the passkey was made, and the
-  // wallet tells a screen the tag alone. A whole name built here, in the language this screen happens
-  // to be in, could be one the reader's password manager does not list.
+test('the passkey\'s whole name is built nowhere in these screens: the wallet hands it over, or the tag stands for it', () => {
+  // The name was written in the language the page had at the moment the passkey was made. Only the
+  // wallet has it, as it wrote it (WalletApi.createdName), and only until the "Wallet made" step
+  // ends. A whole name built here, in the language this screen happens to be in, could be one the
+  // reader's password manager does not list.
   for (const { name, text } of files) {
     assert.doesNotMatch(code(text), /passkeyName\b|passkeyFullName/, name);
   }
-  // The "Wallet made" step shows the tag, inside the part that follows a create with a passkey, and
-  // says what the tag is.
   const backup = source('Backup.svelte');
+  assert.match(backup, /let madeName = \$derived\(wallet\.createdName\);/);
+  assert.equal(backup.match(/wallet\.createdName/g)?.length, 1, 'read in one place, and nowhere changed or rebuilt');
   const made = backup.slice(backup.indexOf("{#if wallet.created === 'passkey'}"), backup.indexOf('<Section title={t.shownTitle}>'));
-  assert.match(made, /<Row name=\{t\.madePasskeyTag\}>\s*<Mono value=\{tag\} data-testid="passkey-tag" \/>/);
-  assert.match(made, /<p>\{t\.madePasskeyTagIs\}<\/p>/);
+  // Where the wallet has the name: the name itself, marked so that no translating browser touches
+  // it, and what it is.
+  assert.match(
+    made,
+    /\{#if madeName !== null\}[\s\S]*?<Row name=\{t\.madePasskeyName\}>\s*<span translate="no" data-testid="passkey-name">\{madeName\}<\/span>/,
+  );
+  assert.match(made, /\{#if madeName !== null\}\s*<p>\{t\.madePasskeyNameIs\}<\/p>/);
+  // Where it has none: the tag, and what the tag is.
+  assert.match(made, /\{:else if tag !== null\}[\s\S]*?<Row name=\{t\.madePasskeyTag\}>\s*<Mono value=\{tag\} data-testid="passkey-tag" \/>/);
+  assert.match(made, /\{:else if tag !== null\}\s*<p>\{t\.madePasskeyTagIs\}<\/p>/);
   for (const lang of LANGS) {
     const t = strings.backup[lang];
-    // No slot for a name, and none of the name's own words.
-    assert.deepEqual(slotNames(t.madePasskeyTag), [], lang);
-    assert.deepEqual(slotNames(t.madePasskeyTagIs), [], lang);
-    assert.doesNotMatch(`${t.madePasskeyTag} ${t.madePasskeyTagIs}`, /no real money|sin dinero de verdad|Practice wallet|Billetera de práctica/, lang);
+    // No slot for a name in any of them, and none of the name's own words.
+    for (const key of ['madePasskeyName', 'madePasskeyNameIs', 'madePasskeyTag', 'madePasskeyTagIs'] as const) {
+      assert.deepEqual(slotNames(t[key]), [], `${lang}.${key}`);
+      assert.doesNotMatch(t[key], /no real money|sin dinero de verdad|Practice wallet|Billetera de práctica/, `${lang}.${key}`);
+    }
   }
+  // The line under the name: whose name it is, where the reader meets it, and what the code in it is for.
+  assert.match(strings.backup.en.madePasskeyNameIs, /^This page gave the passkey this name when it made it/);
+  assert.match(strings.backup.en.madePasskeyNameIs, /A password manager lists the passkey under it\./);
+  assert.match(strings.backup.es.madePasskeyNameIs, /^Esta página le dio este nombre a la llave de acceso/);
+  // The four characters have one name on every screen: the tag ("etiqueta"). Create says so before the
+  // passkey is made, "Wallet made" as it shows the name, and the Overview and the list of causes label
+  // the value with the very words Settings does. "Short code" only ever says what a tag is.
+  for (const lang of LANGS) {
+    const noun = lang === 'en' ? /\btag\b/ : /\betiqueta\b/;
+    const gloss = lang === 'en' ? /short code/ : /código corto/;
+    assert.match(strings.create[lang].passkeyAsk, noun, `${lang}.passkeyAsk`);
+    assert.match(strings.backup[lang].madePasskeyNameIs, noun, `${lang}.madePasskeyNameIs`);
+    assert.match(strings.backup[lang].madePasskeyTagIs, noun, `${lang}.madePasskeyTagIs`);
+    assert.equal(strings.wallet[lang].walletPasskeyHas, strings.settings[lang].passkeyTag, lang);
+    for (const area of ['create', 'backup', 'settings', 'wallet', 'home', 'about'] as const) {
+      for (const [key, text] of Object.entries(strings[area][lang] as Readonly<Record<string, string>>)) {
+        if (gloss.test(text)) assert.match(text, noun, `${area}.${lang}.${key} says "short code" and not what it is the name of`);
+      }
+    }
+  }
+  assert.equal(strings.wallet.en.walletPasskeyHas, "Tag in the passkey's name");
+  assert.equal(strings.wallet.es.walletPasskeyHas, 'Etiqueta en el nombre de la llave de acceso');
   // Settings shows the tag, beside the wallet fingerprint, each under its own hook.
   const settings = source('Settings.svelte');
   assert.match(settings, /<Mono value=\{record\.tag\} data-testid="passkey-tag" \/>/);
@@ -592,8 +626,9 @@ test('"Wallet made" is acknowledged by its button, and by leaving the screen any
 
 test('the words of "Wallet made" are taken once the screen is on the page, never while its script runs', () => {
   // Taking the words is what the wallet counts as "Words shown", filed under the screen the app last
-  // named to its counter. App.svelte names a screen in an effect, which runs after the screen's script
-  // and after its onMount. Words taken any sooner are counted under the screen before: Create.
+  // named to its counter: this one, not Create. App.svelte names a screen before the screen's own
+  // script runs (test/shell.test.ts holds it to that), and the screen takes the words only once it
+  // is on the page, so the count does not rest on that order alone.
   const backup = code(source('Backup.svelte'));
   const script = backup.slice(0, backup.indexOf('</script>'));
   const calls = script.split('\n').filter((line) => /\btake\(\)/.test(line) && !/function take\(\)/.test(line));
@@ -608,9 +643,10 @@ test('the words of "Wallet made" are taken once the screen is on the page, never
 });
 
 test('a wish for the words does not outlive the lock it was waiting on', () => {
-  // The unlock step does not call back when the address changed while its prompt was open (a switch of
-  // language does that). The keys are loaded all the same. Were the wish left standing, the next lock
-  // would bring the unlock step up unasked.
+  // The wallet can stop being locked without the unlock step calling back: another tab can put a
+  // wallet that needs no passkey in this one's place. Were the wish left standing, the next lock
+  // would bring the unlock step up unasked. (A switch of language while the prompt is open no
+  // longer ends that way: the step goes by the screen's name, and calls back.)
   const backup = code(source('Backup.svelte'));
   assert.match(backup, /\$effect\(\(\) => \{\s*if \(!locked\) unlocking = false;\s*\}\);/);
 });

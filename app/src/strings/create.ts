@@ -21,7 +21,7 @@ export const en = {
     "The wallet's 12 words are made from a passkey that your password manager keeps. The same passkey always gives the same 12 words, so the wallet can open on your other devices.",
   /** {name} is how the name of every practice passkey starts (passkeyName in common.ts, up to its tag). */
   passkeyAsk:
-    'Your device will ask to save a passkey named "{name}" and four characters, and to confirm it is you. It may call this signing in. There is no account behind it.',
+    'Your device will ask to save a passkey named "{name}" with a tag of four characters, and to confirm it is you. It may call this signing in. There is no account behind it.',
   passkeySent: 'Neither the passkey nor the 12 words are sent to us.',
   passkeyGo: 'Create with a passkey',
   /** On the button while the device's passkey prompt is open. */
@@ -95,7 +95,7 @@ export const es: Record<keyof typeof en, string> = {
   passkeyMakes:
     'Las 12 palabras de la billetera salen de una llave de acceso que guarda tu administrador de contraseñas. La misma llave de acceso da siempre las mismas 12 palabras, así que la billetera se puede abrir en tus otros dispositivos.',
   passkeyAsk:
-    'Tu dispositivo te va a pedir que guardes una llave de acceso llamada "{name}" y cuatro caracteres, y que confirmes que eres tú. Puede que lo llame "iniciar sesión". Detrás no hay ninguna cuenta.',
+    'Tu dispositivo te va a pedir que guardes una llave de acceso llamada "{name}" con una etiqueta de cuatro caracteres, y que confirmes que eres tú. Puede que lo llame "iniciar sesión". Detrás no hay ninguna cuenta.',
   passkeySent: 'Ni la llave de acceso ni las 12 palabras se nos envían.',
   passkeyGo: 'Crear con llave de acceso',
   passkeyBusy: 'Esperando tu llave de acceso...',

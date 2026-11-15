@@ -10,6 +10,15 @@
 // wanted, then trackPage for the screen already showing and again on every
 // change of screen. track() files its event under the screen trackPage was
 // last told about. Until initEvents(true), nothing is sent at all.
+//
+// A change of screen has a moment in which two screens are at work: the new
+// one is being put on the page, and the old one is being taken off it and
+// may still count something as it goes (Restore lets go of typed words, and
+// that is counted). The new screen is named first, so that what it counts
+// while it starts is its own. The old screen's parting counts are then put
+// right by two more calls, screenLeaving() and screenArrived(), which
+// whoever draws the screens makes around the old screen's last moment
+// (App.svelte, through components/ScreenChange.svelte).
 
 import {
   API,
@@ -38,6 +47,12 @@ let post: (body: string) => void = postToWorker;
 
 /** The counted path of the screen the reader is on. Null until the first trackPage. */
 let screenPath: string | null = null;
+
+/** The counted path of the screen before that one. */
+let leftPath: string | null = null;
+
+/** True while the screen before is being taken off the page: what is counted then is still that screen's. */
+let leaving = false;
 
 /**
  * Hands one event to the Worker. "keepalive" lets the request finish even if
@@ -79,11 +94,28 @@ function send(body: { name: string; path: string | null; value?: string }): void
 
 /** Counts one view of a screen, and remembers the screen for the events that follow. */
 export function trackPage(route: Route, lang: Lang): void {
+  leftPath = screenPath;
   screenPath = eventPath(route, lang);
+  // Whatever was leaving before has left: this is the screen now.
+  leaving = false;
   send({ name: 'pageview', path: screenPath });
+}
+
+/**
+ * The screen that was showing before the last trackPage is being taken off
+ * the page. Until screenArrived(), what is counted is filed under that
+ * screen: it is the one that is counting.
+ */
+export function screenLeaving(): void {
+  leaving = true;
+}
+
+/** The screen trackPage was last told about has the page to itself: what is counted is filed under it again. */
+export function screenArrived(): void {
+  leaving = false;
 }
 
 /** Counts one thing that happened on the current screen: track('Wallet created', 'passkey'). */
 export function track<N extends CountedEvent>(name: N, value: ValueOf<N>): void {
-  send({ name, path: screenPath, value });
+  send({ name, path: leaving ? leftPath : screenPath, value });
 }

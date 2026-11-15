@@ -127,6 +127,11 @@
     wallet.haveCoins({ ...funded, coins, ...coinTotals(coins) }, history);
   }
 
+  /** A wallet that has spent every coin: nothing left, and addresses that have been paid before. */
+  function spentAll(wallet: StandIn): void {
+    wallet.haveCoins({ ...funded, coins: [], ...coinTotals([]) }, history);
+  }
+
   /** Twelve words with the seventh misspelled. */
   const BAD_WORD = 'abandon abandon abandon abandon abandon abandon abandn abandon abandon abandon abandon about';
   /** Twelve words on the list that do not pass their checksum. */
@@ -177,6 +182,7 @@
 
   <Section title="NoCoins">
     <Shown preset="no-coins"><NoCoins /></Shown>
+    <Shown preset="no-coins" setup={spentAll} note="a wallet that has spent every coin"><NoCoins /></Shown>
   </Section>
 
   <Section title="CoinList, CoinRow">

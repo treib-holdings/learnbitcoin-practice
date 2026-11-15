@@ -44,3 +44,18 @@ export function frameDemo(hash: string): string | null {
   if (hash === FRAME_HASH) return '';
   return hash.startsWith(`${FRAME_HASH}:`) ? decodeURIComponent(hash.slice(FRAME_HASH.length + 1)) : null;
 }
+
+/**
+ * What is written after an address to have steps played on the screen
+ * itself, as the app draws it, on any route: a state that only shows after
+ * the reader has done something can then be looked at, and photographed.
+ * "/wallet/send?state=passkey-locked&unlock=cancelled#play:send-continue,unlock"
+ * taps "Continue" and then the unlock step's button (play.ts says how
+ * steps are written).
+ */
+export const PLAY_HASH = '#play';
+
+/** The steps to play on the screen the address names, or null when the address asks for none. */
+export function playSteps(hash: string): string | null {
+  return hash.startsWith(`${PLAY_HASH}:`) ? decodeURIComponent(hash.slice(PLAY_HASH.length + 1)) : null;
+}

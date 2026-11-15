@@ -11,8 +11,9 @@
   // words, or with its passkey if it was made with one, which this browser
   // cannot know; without either its practice coins are out of reach.
   //
-  // "Remove it" removes the wallet and goes Home. "Keep it" closes the
-  // question. If another tab removed or replaced the wallet while the
+  // "Remove it" removes the wallet and goes Home, which says for that one
+  // visit that the wallet was removed (components/outcome.ts): Home would
+  // otherwise read as a first visit. "Keep it" closes the question. If another tab removed or replaced the wallet while the
   // question was open, nothing is removed and the screen says so: the
   // reader said yes to one wallet, never to whichever is here now.
   //
@@ -27,6 +28,7 @@
   import Actions from '../../components/Actions.svelte';
   import Button from '../../components/Button.svelte';
   import Notice from '../../components/Notice.svelte';
+  import { leaveOutcome } from '../../components/outcome.ts';
   import Prose from '../../components/Prose.svelte';
   import Section from '../../components/Section.svelte';
   import TextLink from '../../components/TextLink.svelte';
@@ -108,8 +110,10 @@
       return;
     }
     if (afterRemove(wallet.removeWallet()) === 'home') {
-      // The wallet is out of this browser. Home has the ways to open, restore or make one.
+      // The wallet is out of this browser. Home has the ways to open, restore or make one,
+      // and says what has just happened.
       asking = false;
+      leaveOutcome('removed');
       navigate(router.link({ name: 'home' }));
       return;
     }

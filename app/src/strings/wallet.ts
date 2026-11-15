@@ -93,6 +93,8 @@ export const en = {
   chainStale: 'What is shown here is from the last check that worked, {when}.',
   chainSlow: "The practice network is slow right now. That is our fault, not your wallet's.",
   noCoins: 'No coins yet.',
+  /** The same place, for a wallet that has held coins and holds none now. */
+  noCoinsLeft: 'No coins left.',
   getCoins: 'Get practice coins',
 
   // -- what the status region says: outcomes only --
@@ -110,6 +112,8 @@ export const en = {
   /** The reader chose to switch this browser to the wallet of another passkey. */
   noteSwitched:
     'This browser now holds a different practice wallet, the one named below. The wallet that was here before is still on the practice network, and its own passkey or its 12 words open it again.',
+  /** Another tab put a different wallet in this browser while a wallet screen was open here. Its first sentence is also said by the status region. */
+  noteReplaced: 'The wallet in this browser was replaced in another tab. This screen now shows the other wallet.',
   noteOk: 'OK',
 
   // -- the unlock step: wherever keys are needed --
@@ -219,19 +223,25 @@ export const en = {
   txFeeRate: 'Fee rate',
 
   // -- the Overview --
+  /** At the top, for the one visit that follows a restore: the Overview would otherwise simply appear. */
+  restoredHere: 'This wallet was restored from its 12 words. This browser now keeps them.',
   overviewAllCoins: 'See all coins',
   overviewActivity: 'Recent activity',
   overviewAllActivity: 'See all activity',
   /** The small line over what tells this browser's wallet from another. */
   overviewWallet: "This browser's wallet",
-  /** In front of the four characters this browser knows of its passkey's name. */
-  walletPasskeyHas: 'Passkey name includes',
+  /**
+   * In front of the four characters this browser knows of its passkey's
+   * name: the tag. The label is the one Settings gives the same value
+   * (settings.passkeyTag), so the thing has one name on every screen.
+   */
+  walletPasskeyHas: "Tag in the passkey's name",
   /**
    * The same label where it is the first thing on the screen to name a
    * passkey. In Spanish the first mention on a screen carries "(passkey)"
    * beside the Spanish term; in English the two are alike.
    */
-  walletPasskeyHasFirst: 'Passkey name includes',
+  walletPasskeyHasFirst: "Tag in the passkey's name",
 
   // -- the Overview of a wallet just opened with a passkey, when nothing was found (SPEC section 6) --
   emptyOpenedTitle: 'This passkey opened a wallet with no history',
@@ -373,6 +383,7 @@ export const es: Record<keyof typeof en, string> = {
   chainStale: 'Lo que se muestra aquí es de la última comprobación que funcionó, {when}.',
   chainSlow: 'La red de práctica está lenta en este momento. La falla es nuestra, no de tu billetera.',
   noCoins: 'Todavía no hay monedas.',
+  noCoinsLeft: 'No quedan monedas.',
   getCoins: 'Pedir monedas de práctica',
 
   noticeArrived: 'Llegaron {amount} sats de práctica.',
@@ -386,6 +397,7 @@ export const es: Record<keyof typeof en, string> = {
     'Los datos que este navegador tenía guardados sobre esta billetera estaban mal, y se reemplazaron por los que dan tus claves. Las monedas se están buscando de nuevo. Una dirección que se mostró aquí antes de este desbloqueo pudo ser de otra billetera, así que no uses ninguna que hayas copiado antes de esta página.',
   noteSwitched:
     'Este navegador ahora tiene otra billetera de práctica, la que se nombra abajo. La billetera que estaba aquí sigue en la red de práctica, y su propia llave de acceso o sus 12 palabras la vuelven a abrir.',
+  noteReplaced: 'La billetera de este navegador fue reemplazada en otra pestaña. Esta pantalla ahora muestra la otra billetera.',
   noteOk: 'De acuerdo',
 
   unlockTitle: 'Desbloquea esta billetera',
@@ -464,12 +476,13 @@ export const es: Record<keyof typeof en, string> = {
   txSize: 'Tamaño',
   txFeeRate: 'Tasa de comisión',
 
+  restoredHere: 'Esta billetera se restauró con sus 12 palabras. Este navegador ahora las guarda.',
   overviewAllCoins: 'Ver todas las monedas',
   overviewActivity: 'Actividad reciente',
   overviewAllActivity: 'Ver toda la actividad',
   overviewWallet: 'La billetera de este navegador',
-  walletPasskeyHas: 'El nombre de su llave de acceso incluye',
-  walletPasskeyHasFirst: 'El nombre de su llave de acceso (passkey) incluye',
+  walletPasskeyHas: 'Etiqueta en el nombre de la llave de acceso',
+  walletPasskeyHasFirst: 'Etiqueta en el nombre de la llave de acceso (passkey)',
 
   emptyOpenedTitle: 'Se abrió una billetera sin historial',
   emptyOpenedLead:
@@ -513,7 +526,7 @@ export const es: Record<keyof typeof en, string> = {
   txWaitingNote:
     'Se envió hace un momento, y la red tarda unos segundos en mostrar una transacción nueva. Esta página vuelve a preguntar sola.',
   txNotFound:
-    'La red de práctica no muestra ninguna transacción con este txid. Una enviada hace un momento puede tardar unos segundos en aparecer, así que vuelve a intentarlo. Un txid de la red principal de Bitcoin nunca aparece aquí.',
+    'La red de práctica no muestra ninguna transacción con este txid. Una enviada hace un momento puede tardar unos segundos en aparecer, así que vuelve a intentarlo. Un txid de la red real de Bitcoin nunca aparece aquí.',
   txNotFoundWaited:
     'Después de {minutes} minutos, la red de práctica sigue sin mostrar esta transacción. Puede que se haya descartado, o que otra versión la haya reemplazado, antes de entrar en un bloque. La actividad de esta billetera muestra qué pasó con las monedas.',
   txSumReceived: 'Esta billetera recibió {amount}.',
@@ -537,5 +550,5 @@ export const es: Record<keyof typeof en, string> = {
   txReplaceGlossary: 'RBF en el glosario de LearnBitcoin',
   txId: 'Txid',
   txIdCopied: 'Txid copiado',
-  txExplorer: 'Verlo en el explorador de práctica',
+  txExplorer: 'Verla en el explorador de práctica',
 };

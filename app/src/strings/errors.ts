@@ -38,7 +38,11 @@
 //     else can be sent then either: what the wallet can spend is too small
 //     once the fee is paid. The sentences for "too-much" and "below-dust"
 //     say what to do in that case, and say it after an "if", because it is
-//     not always the case. The wallet package names the two exceptions
+//     not always the case. "too-much" also names the fee rate: at a rate
+//     where the fee alone is more than the wallet holds (the form takes
+//     rates up to 1,000), no amount can be sent and "Send all" cannot be
+//     made, and a lower rate is the one way out that works with the coins
+//     that are there. The wallet package names the two exceptions
 //     (PaymentPlan.maxSendable in its send.ts). A wallet can hold coins
 //     that cost more to spend than they hold: "Send all" spends them all
 //     the same, and a payment that leaves them where they are still goes
@@ -154,7 +158,7 @@ export const en = {
   'plan_unconfirmed-only':
     'The coins in this wallet are still unconfirmed, and this wallet spends a coin someone sent you only once it is in a block. Wait for the next block and try again.',
   'plan_too-much':
-    'That is more than this wallet can send right now, once the fee is paid. Send a smaller amount, or send all the wallet can spend. If what is left after the fee is too small to send, get more practice coins on the Receive screen first.',
+    'That is more than this wallet can send right now, once the fee is paid. Send a smaller amount, lower the fee rate, or send all the wallet can spend. If what is left after the fee is too small to send, get more practice coins on the Receive screen first.',
   'plan_below-dust':
     'That amount is too small for the network to carry. Amounts that small are called dust. Send a larger amount. If this wallet cannot send more once the fee is paid, get more practice coins on the Receive screen first.',
   'plan_bad-address':
@@ -227,7 +231,7 @@ export const es: Record<keyof typeof en, string> = {
   'plan_unconfirmed-only':
     'Las monedas de esta billetera siguen sin confirmar, y esta billetera solo gasta una moneda que te enviaron cuando ya está en un bloque. Espera al próximo bloque y vuelve a intentarlo.',
   'plan_too-much':
-    'Eso es más de lo que esta billetera puede enviar por ahora, después de pagar la comisión. Envía un monto menor, o envía todo lo que la billetera pueda gastar. Si lo que queda después de la comisión es demasiado pequeño para enviarlo, pide primero más monedas de práctica en la pantalla Recibir.',
+    'Eso es más de lo que esta billetera puede enviar por ahora, después de pagar la comisión. Envía un monto menor, baja la tasa de comisión, o envía todo lo que la billetera pueda gastar. Si lo que queda después de la comisión es demasiado pequeño para enviarlo, pide primero más monedas de práctica en la pantalla Recibir.',
   'plan_below-dust':
     'Ese monto es demasiado pequeño para que la red lo acepte. A montos así de pequeños se les llama polvo (dust). Envía un monto mayor. Si esta billetera no puede enviar más después de pagar la comisión, pide primero más monedas de práctica en la pantalla Recibir.',
   'plan_bad-address':

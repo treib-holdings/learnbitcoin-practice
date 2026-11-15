@@ -5,15 +5,20 @@
 //
 // The record is one JSON value in localStorage, under the key "lbp_wallet_v1".
 //
-// For a wallet made with a passkey it holds nothing secret: the account's
-// public key (enough to list the wallet's addresses and coins, not enough to
-// spend them), the wallet fingerprint, and which passkey to ask. The 12 words
-// of a passkey wallet are never written to any storage. They exist in memory
-// after an unlock and are gone when the page is reloaded.
+// The two kinds of record go by how this browser keeps the wallet, not by
+// how the wallet was made.
 //
-// For a wallet made WITHOUT a passkey the record also holds the 12 words, as
-// plain text, with no encryption. Whoever reads the words owns the wallet,
-// and localStorage can be read by:
+// For a wallet this browser opens with a passkey (kind "passkey") it holds
+// nothing secret: the account's public key (enough to list the wallet's
+// addresses and coins, not enough to spend them), the wallet fingerprint,
+// and which passkey to ask. Such a record never holds the 12 words. They
+// exist in memory after an unlock and are gone when the page is reloaded.
+//
+// For a wallet kept with its 12 words (kind "words": one made WITHOUT a
+// passkey, or any wallet restored in this browser from its words, whatever
+// it was made with) the record also holds the 12 words, as plain text, with
+// no encryption. Whoever reads the words owns the wallet, and localStorage
+// can be read by:
 //   - every script that runs on this origin: this app's own code, every
 //     library built into it and every script the page loads;
 //   - browser extensions that are allowed to act on the page;
@@ -415,12 +420,40 @@ export function canStore(local: Storage): boolean {
 // -- judging ------------------------------------------------------------------
 
 /**
- * True only when the words give exactly the record's public key: they are
- * this wallet's words. Words that are not a valid phrase give false.
+ * True only when the words give exactly the record's public key. Words that
+ * are not a valid phrase give false. It says nothing about the record's
+ * wallet fingerprint: to decide whether typed words unlock the wallet that
+ * is here, the app asks judgeWords, below.
  */
 export function wordsMatchRecord(record: WalletRecord, mnemonic: string): boolean {
   const account = accountOf(mnemonic);
   return account !== null && account.xpub === record.xpub;
+}
+
+/**
+ * same      the words give the record's public key and its wallet fingerprint:
+ *           they are this wallet's words
+ * tampered  they give exactly one of the two: the record was altered
+ * other     they give neither (or are no valid phrase): another wallet's words
+ */
+export type WordsVerdict = 'same' | 'tampered' | 'other';
+
+/**
+ * Decides what typed words mean for the wallet in this browser, by the same
+ * pair judgeUnlock goes by: the stored public key and the stored wallet
+ * fingerprint. Both come from the same 12 words, so words that fit one and
+ * not the other show that the record was altered. Going by the public key
+ * alone would miss an altered fingerprint, and would turn the reader's own
+ * words away as "another wallet's" when it was the public key that had been
+ * swapped.
+ */
+export function judgeWords(record: WalletRecord, mnemonic: string): WordsVerdict {
+  const account = accountOf(mnemonic);
+  if (account === null) return 'other';
+  const sameKey = account.xpub === record.xpub;
+  const sameFingerprint = account.masterFingerprint === record.fingerprint;
+  if (sameKey && sameFingerprint) return 'same';
+  return sameKey || sameFingerprint ? 'tampered' : 'other';
 }
 
 /**
