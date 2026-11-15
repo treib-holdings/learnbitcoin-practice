@@ -124,34 +124,43 @@
   // the owner, so none of it is kept. This covers what follows the
   // question mark and nothing before it: the path of a chain read still
   // holds its address or transaction ID, which is what the next paragraph
-  // is about.
+  // is about. (Whether a stored URL really ends before the question mark
+  // is still to look at: see the last paragraph.)
   //
-  // That may not be all. Workers Logs can store the Worker's own line
-  // together with the request it was written in: a stored line has fields
-  // for that ($metadata.url, $metadata.trigger, $workers.event.request),
-  // and it is not known here whether invocation_logs empties them. So the
-  // Worker does not rely on it. A request for chain data that ends without
-  // a fault writes no line at all (src/handler.ts): a line that is never
-  // written is stored beside nothing. That is every request under
-  // /api/esplora/ but a broadcast: the chain reads, and any other path
-  // there, which gets a 404. Those are all the requests the app sends the
-  // Worker whose URL holds an address or a transaction ID, and one that
-  // ends without a fault has nothing to tell the owner. One that ends in a
-  // fault still writes its line: something is broken then, and the owner
-  // has to see it.
+  // That is not all that is kept. Workers Logs stores the Worker's own
+  // line together with the request it was written in, and it does so with
+  // invocation logs off too. After the first deploy, one line that the
+  // deployed Worker wrote was looked at as Workers Logs stored it. Beside
+  // the Worker's own fields it held: the request's method, URL and path
+  // ($workers.event.request, and again as $metadata.trigger), the time,
+  // the Worker's name and version, and IDs of the request (request, ray,
+  // trace and span). The rest was about the Worker and the stored line
+  // itself: the kind of event, the account, the line's own ID and size.
+  // It held no IP address, no header of the request and nothing about
+  // where the reader was.
   //
-  // After the first deploy, look: ask the deployed Worker for /api/config,
-  // open the line that request wrote as Workers Logs stored it, and read
-  // every field beside the Worker's own five. Does it carry the request's
-  // URL? Does it carry the reader's IP address, as a field or as a header
-  // of the request? If neither, nothing more is needed. If the URL is
-  // there, then a line written for a chain read that ended in a fault
-  // keeps an address or a transaction ID for as long as lines are kept,
-  // and so does the line for an unknown path outside /api/esplora/ into
-  // which a visitor typed one. If the IP address is there, every line says
-  // who asked. Either has to change, or be said on the app's About screen.
-  // Then ask once for /api/nothing?probe=1 and open that line too: a URL
-  // stored beside it should end before the question mark.
+  // That was one line: of a count that went well, with invocation logs
+  // off. What a stored line holds with them on has not been looked at
+  // here, so the About screen's "no IP address" stands on that setting. A
+  // line written for a fault has not been looked at either.
+  //
+  // So the URL is kept, and the Worker is built for that. A request for
+  // chain data that ends without a fault writes no line at all
+  // (src/handler.ts): a line that is never written is stored beside
+  // nothing. That is every request under /api/esplora/ but a broadcast:
+  // the chain reads, and any other path there, which gets a 404. Those are
+  // all the requests the app sends the Worker whose URL holds an address
+  // or a transaction ID, and one that ends without a fault has nothing to
+  // tell the owner. One that ends in a fault still writes its line:
+  // something is broken then, and the owner has to see it. The URL beside
+  // that line keeps the address or the transaction ID for as long as lines
+  // are kept, and so does the URL beside the line for an unknown path
+  // outside /api/esplora/ into which a visitor typed one. The app's About
+  // screen says the first in so many words, and the second only by saying
+  // that the web address is kept.
+  //
+  // Still to look at: ask once for /api/nothing?probe=1 and open the line
+  // it wrote. The URL stored beside it should end before the question mark.
   "observability": {
     "enabled": true,
     "redact_query_string": true,

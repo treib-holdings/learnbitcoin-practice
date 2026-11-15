@@ -549,7 +549,7 @@ test('About, "what this browser keeps": a record holds what the page lists, and 
   assert.deepEqual(loadRecord(storage as Storage), withPasskey);
 });
 
-test('About, "what our server sees": what is written down, and what is not known of what Cloudflare keeps beside it', () => {
+test('About, "what our server sees": what is written down, and what Cloudflare keeps beside it', () => {
   const { en, es } = strings.about;
   // Nothing is written for a look at an address, a transaction or the chain's height unless something is
   // broken; every other request writes one line. (The last scenario of e2e/scenarios/info.test.ts reads the
@@ -563,18 +563,27 @@ test('About, "what our server sees": what is written down, and what is not known
   assert.match(es.serverLog, /^Cuando la página pregunta por una dirección, una transacción o la altura de bloque actual, el servidor no anota nada/);
   assert.match(es.serverLog, /\(la configuración de la página, el faucet, la dirección del fondo común, un pago que se envía, un conteo\)/);
   assert.match(es.serverLog, /La línea en sí no contiene ninguna dirección, ningún txid ni ninguna dirección IP\.$/);
-  // The Worker's line is all the page can vouch for. What the log service stores beside a line (the address
-  // that was asked for, the IP address) is not known until the owner has looked at a stored line, so the
-  // page never says flatly that what is stored holds neither: it says "the line itself" and "may keep".
+  // "The line itself" is the Worker's own line. What the log service stores beside it was read off a stored
+  // line on the live host after the first deploy (worker/wrangler.jsonc, above "observability"): the web
+  // address that was asked for, the time and the request's IDs, and no IP address. The page says that, and
+  // it still never says flatly that no line holds an address: the web address kept beside a line written
+  // for a chain read that broke holds one.
   for (const lang of LANGS) {
     for (const [key, text] of Object.entries(strings.about[lang] as Table)) {
       assert.doesNotMatch(text, /No line holds|Ninguna línea contiene/, `about.${lang}.${key}`);
     }
   }
-  assert.match(en.serverCloudflare, /Cloudflare stores those lines for a short time and may keep, beside each one, the web address that was asked for and the IP address it came from\./);
+  assert.match(en.serverCloudflare, /Cloudflare stores those lines for a short time\. Beside each one it keeps the web address that was asked for, the time and IDs that Cloudflare gives the request, and no IP address\./);
+  // What is kept is known now, so neither language says "may keep" of it.
+  assert.doesNotMatch(en.serverCloudflare, /may keep/);
+  assert.doesNotMatch(es.serverCloudflare, /puede guardar/);
   assert.match(en.serverCloudflare, /For a line written while something on our side is broken, that web address can hold a wallet address or a transaction ID\./);
-  assert.match(en.serverCloudflare, /Cloudflare also keeps short-lived logs of its own\.$/);
-  assert.match(es.serverCloudflare, /puede guardar junto a cada una la dirección web que se pidió y la dirección IP desde la que llegó\./);
+  // "No IP address" is said of what is kept beside a line. So that nobody reads it as "Cloudflare keeps no
+  // IP address", the paragraph ends by saying where one can be, in both languages.
+  assert.match(en.serverCloudflare, /Cloudflare also keeps logs of its own, and those can hold the IP address\.$/);
+  assert.match(es.serverCloudflare, /Cloudflare también lleva sus propios registros, y esos sí pueden contener la dirección IP\.$/);
+  assert.match(es.serverCloudflare, /^El servidor funciona en la red de Cloudflare\. Cloudflare guarda esas líneas por poco tiempo\. /);
+  assert.match(es.serverCloudflare, /Junto a cada una guarda la dirección web que se pidió, la hora y los identificadores que Cloudflare le da a la solicitud, y ninguna dirección IP\./);
   assert.match(es.serverCloudflare, /esa dirección web puede contener una dirección de la billetera o un txid\./);
   // The limit per reader.
   assert.match(en.serverLimit, /^It uses the IP address to slow down anyone who asks too fast\.$/);

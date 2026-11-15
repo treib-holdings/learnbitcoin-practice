@@ -563,9 +563,9 @@ scenario('About with no wallet, in English and Spanish: this run\'s facts, what 
     'A wallet restored here from its 12 words is kept with the words, whatever it was made with.',
   );
   assert.doesNotMatch(text, /made with a passkey|words are never stored/);
-  // What is not known is not promised: what Cloudflare keeps beside a log line.
+  // What Cloudflare keeps beside a log line, as it was found on the live host: the web address, and no IP address.
   assert.match(text, /The line itself holds no address, no transaction ID and no IP address\./);
-  assert.match(text, /may keep, beside each one, the web address that was asked for and the IP address it came from/);
+  assert.match(text, /Beside each one it keeps the web address that was asked for, the time and IDs that Cloudflare gives the request, and no IP address/);
   assert.doesNotMatch(text, /No line holds/);
 
   // No wallet here: the line about this browser says so.
@@ -725,7 +725,7 @@ scenario(
     // "What kind of request it was, how it ended and how long it took": five fields, and no others.
     for (const line of lines) assert.deepEqual(Object.keys(line).sort(), ['fault', 'ms', 'route', 'status', 'upstream']);
     // "The line itself holds no address, no transaction ID and no IP address." That is all a run can show:
-    // what a log service keeps beside a line is not in the line, which is why the page says "may keep".
+    // what a log service keeps beside a line is not in the line, which is why the page says that apart.
     const written = JSON.stringify(lines);
     const secrets = [record.fingerprint, record.xpub, ...addresses];
     for (const secret of secrets) assert.ok(!written.includes(secret), secret);

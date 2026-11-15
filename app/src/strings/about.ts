@@ -115,10 +115,12 @@ export const en = {
   serverLimit: 'It uses the IP address to slow down anyone who asks too fast.',
   serverLog:
     "When the page asks about an address, a transaction or the height of the chain, the server writes nothing down, unless something on our side is broken. For every other request (the page's settings, the faucet, the address of the pot, a payment being sent, a count) it writes one line: what kind of request it was, how it ended and how long it took. The line itself holds no address, no transaction ID and no IP address.",
-  // What Cloudflare keeps beside a line is not known until the owner has looked at a stored
-  // line (worker/wrangler.jsonc, above "observability"). Until then the page says "may".
+  // What Cloudflare keeps beside a line was read off a line the deployed Worker wrote, as Workers
+  // Logs stored it (worker/wrangler.jsonc, above "observability"): the web address, the time and
+  // the request's IDs, and no IP address. "No IP address" is said of that place only: the last
+  // sentence says that Cloudflare's own logs can hold it.
   serverCloudflare:
-    "The server runs on Cloudflare's network. Cloudflare stores those lines for a short time and may keep, beside each one, the web address that was asked for and the IP address it came from. For a line written while something on our side is broken, that web address can hold a wallet address or a transaction ID. Cloudflare also keeps short-lived logs of its own.",
+    "The server runs on Cloudflare's network. Cloudflare stores those lines for a short time. Beside each one it keeps the web address that was asked for, the time and IDs that Cloudflare gives the request, and no IP address. For a line written while something on our side is broken, that web address can hold a wallet address or a transaction ID. Cloudflare also keeps logs of its own, and those can hold the IP address.",
 
   // -- what is counted --
   countTitle: 'What is counted',
@@ -240,7 +242,7 @@ export const es: Record<keyof typeof en, string> = {
   serverLog:
     'Cuando la página pregunta por una dirección, una transacción o la altura de bloque actual, el servidor no anota nada, salvo que algo de nuestro lado esté fallando. Por cada una de las demás solicitudes (la configuración de la página, el faucet, la dirección del fondo común, un pago que se envía, un conteo) anota una línea: qué tipo de solicitud fue, cómo terminó y cuánto tardó. La línea en sí no contiene ninguna dirección, ningún txid ni ninguna dirección IP.',
   serverCloudflare:
-    'El servidor funciona en la red de Cloudflare. Cloudflare guarda esas líneas por poco tiempo, y puede guardar junto a cada una la dirección web que se pidió y la dirección IP desde la que llegó. En una línea anotada mientras algo de nuestro lado está fallando, esa dirección web puede contener una dirección de la billetera o un txid. Cloudflare también lleva sus propios registros, de corta duración.',
+    'El servidor funciona en la red de Cloudflare. Cloudflare guarda esas líneas por poco tiempo. Junto a cada una guarda la dirección web que se pidió, la hora y los identificadores que Cloudflare le da a la solicitud, y ninguna dirección IP. En una línea anotada mientras algo de nuestro lado está fallando, esa dirección web puede contener una dirección de la billetera o un txid. Cloudflare también lleva sus propios registros, y esos sí pueden contener la dirección IP.',
 
   countTitle: 'Qué se cuenta',
   countBody:
