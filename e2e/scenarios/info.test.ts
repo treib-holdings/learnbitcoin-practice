@@ -41,8 +41,8 @@ const RUN = {
 
 const ON_RUN: ScenarioOptions = { stack: { vars: RUN } };
 
-/** The same, with the two settings that are empty until the owner supplies them: no counting, and no bot check, so the faucet is closed. */
-const AS_SHIPPED: ScenarioOptions = { stack: { vars: { ...RUN, PLAUSIBLE_DOMAIN: '', TURNSTILE_SITE_KEY: '' } } };
+/** The same, with the two settings a deploy may leave empty: no counting, and no bot check, so the faucet is closed. */
+const BOTH_OFF: ScenarioOptions = { stack: { vars: { ...RUN, PLAUSIBLE_DOMAIN: '', TURNSTILE_SITE_KEY: '' } } };
 
 /** The three commands, typed out here a second time: what a reader must end up with on the clipboard. */
 const COMMANDS = {
@@ -633,7 +633,7 @@ scenario('About with no wallet, in English and Spanish: this run\'s facts, what 
   assert.deepEqual(await browserKeeps(spanish), { local: [], session: 0, cookie: '', databases: 0, caches: 0 });
 });
 
-scenario('About where counting and the faucet are switched off, as shipped: the page says so of each, and nothing is counted', AS_SHIPPED, async (s) => {
+scenario('About where counting and the faucet are switched off: the page says so of each, and nothing is counted', BOTH_OFF, async (s) => {
   const page = await s.open('/about');
   // The settings have arrived (the block interval is this run's), and they say that events are not wanted.
   await shows(page, 'about-blocks', 'Blocks About one every 45 seconds');

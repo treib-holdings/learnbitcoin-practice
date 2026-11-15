@@ -55,7 +55,12 @@
     // The practice network's origin: Esplora under /esplora/, the bots under /bots/.
     "ORIGIN_URL": "https://practice-origin.learnbitcoin.com",
     // The faucet's bot check. An empty site key means the faucet is closed.
-    "TURNSTILE_SITE_KEY": "",
+    // A site key is public: it is sent to every reader's browser. The secret
+    // that goes with it is one of the four secrets below, and is written
+    // nowhere here. The widget answers only on the hosts its owner has
+    // listed, so a copy of this repository run on another host needs a
+    // widget, and a site key, of its own.
+    "TURNSTILE_SITE_KEY": "0x4AAAAAAGB-u7njXBvccBZE",
     // The host a bot-check token must have been made on.
     "TURNSTILE_HOSTNAME": "practice.learnbitcoin.com",
     "EXPLORER_URL": "https://practice-explorer.learnbitcoin.com",
@@ -67,7 +72,14 @@
     // it counted and throws the event away, so the Worker's log shows
     // nothing wrong (src/events.ts). After setting this, send one event
     // from a real browser and look for it on the service's own dashboard.
-    "PLAUSIBLE_DOMAIN": "",
+    //
+    // The practice wallet is counted under the main site's name. Each event
+    // carries that name and the full address of the screen, so the service
+    // keeps the wallet's screens with the main site's and can show them
+    // apart by host name. A copy of this repository run by someone else
+    // must change this name or empty it: left as it is, that copy's readers
+    // would be counted here.
+    "PLAUSIBLE_DOMAIN": "learnbitcoin.com",
     // "on" sends an event's value as a property; "off" folds it into the
     // event's name ("Passkey: ok"), for a plan without custom properties.
     "EVENT_PROPS": "off",

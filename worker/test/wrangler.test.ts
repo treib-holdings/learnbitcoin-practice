@@ -105,15 +105,18 @@ test('five rate limiters with the per-minute limits of the spec and namespaces o
   for (const limiter of limiters) assert.deepEqual(Object.keys(limiter).sort(), ['name', 'namespace_id', 'simple']);
 });
 
-test('the settings carry their production values: faucet closed and events off until the owner fills them in', () => {
+test("the settings carry their production values: the faucet's bot check is named, and events are counted under the main site", () => {
+  // The site key is the public half of the bot check: every reader's browser is sent it.
+  // The secret half is a secret of the deployed Worker, and appears nowhere in this repository.
+  const siteKey = '0x4AAAAAAGB-u7njXBvccBZE';
   assert.deepEqual(config.vars, {
     ORIGIN_URL: 'https://practice-origin.learnbitcoin.com',
-    TURNSTILE_SITE_KEY: '',
+    TURNSTILE_SITE_KEY: siteKey,
     TURNSTILE_HOSTNAME: 'practice.learnbitcoin.com',
     EXPLORER_URL: 'https://practice-explorer.learnbitcoin.com',
     ELECTRUM_HOST: 'practice-electrum.learnbitcoin.com',
     ELECTRUM_PORT: '50002',
-    PLAUSIBLE_DOMAIN: '',
+    PLAUSIBLE_DOMAIN: 'learnbitcoin.com',
     EVENT_PROPS: 'off',
     SITE_URL: 'https://www.learnbitcoin.com',
     SOURCE_URL: 'https://github.com/treib-holdings/learnbitcoin-practice',
@@ -123,7 +126,7 @@ test('the settings carry their production values: faucet closed and events off u
   });
   // And they make a config the app can use.
   assert.deepEqual(configFromEnv(config.vars as ConfigVars), {
-    turnstileSiteKey: '',
+    turnstileSiteKey: siteKey,
     explorerUrl: 'https://practice-explorer.learnbitcoin.com',
     electrumHost: 'practice-electrum.learnbitcoin.com',
     electrumPort: 50002,
@@ -132,7 +135,7 @@ test('the settings carry their production values: faucet closed and events off u
     passkeyHost: 'practice.learnbitcoin.com',
     faucetSats: 100000,
     blockSeconds: 30,
-    events: false,
+    events: true,
   });
 });
 

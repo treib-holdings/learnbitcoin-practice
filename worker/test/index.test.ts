@@ -77,12 +77,14 @@ async function send(request: Request, env: Env): Promise<Response> {
 
 const get = (path: string): Request => new Request(`${APP}${path}`, { headers: { 'CF-Connecting-IP': READER_IP } });
 
-test('as shipped: the config says the faucet is closed and events are off', async () => {
+test("as shipped: the config names the faucet's bot check and says that events are counted", async () => {
   const { env } = bindings();
   const response = await send(get(API.config), env);
   assert.equal(response.status, 200);
+  // The site key is the one wrangler.jsonc carries (wrangler.test.ts holds its value), and it is not empty.
+  assert.notEqual(VARS.TURNSTILE_SITE_KEY, '');
   assert.deepEqual(await response.json(), {
-    turnstileSiteKey: '',
+    turnstileSiteKey: VARS.TURNSTILE_SITE_KEY,
     explorerUrl: 'https://practice-explorer.learnbitcoin.com',
     electrumHost: 'practice-electrum.learnbitcoin.com',
     electrumPort: 50002,
@@ -91,13 +93,14 @@ test('as shipped: the config says the faucet is closed and events are off', asyn
     passkeyHost: 'practice.learnbitcoin.com',
     faucetSats: 100000,
     blockSeconds: 30,
-    events: false,
+    events: true,
   });
   assert.equal(asked.length, 0);
 });
 
-test('as shipped: the faucet answers closed and asks nobody; an event gets its 202 and goes nowhere', async () => {
-  const { env, limiters } = bindings();
+test('with the site key and the events site left empty, the faucet answers closed and asks nobody; an event gets its 202 and goes nowhere', async () => {
+  // The two settings a copy of this repository may leave empty. Then nobody outside is asked anything.
+  const { env, limiters } = bindings({ TURNSTILE_SITE_KEY: '', PLAUSIBLE_DOMAIN: '' });
   const faucet = await send(post(API.faucet, { address: ADDRESS, token: 'a-token' }), env);
   assert.equal(faucet.status, 503);
   assert.deepEqual(await faucet.json(), { error: 'closed' });

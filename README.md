@@ -272,9 +272,11 @@ app's About screen, and comes to this:
 - **No secrets.** The Worker's four secrets (the bot check's secret, the two
   halves of the service token that lets it through to the origin, and the
   bots' token) are named in `worker/wrangler.jsonc` and set on the deployed
-  Worker. Their values are written nowhere here. The token and site key that
-  appear in `e2e/` belong to the stand-in and to Cloudflare's published test
-  widget, and open nothing.
+  Worker. Their values are written nowhere here. The site key in
+  `worker/wrangler.jsonc` is no secret: it is the public half of the
+  faucet's bot check, and every reader's browser is sent it. The token and
+  site key that appear in `e2e/` belong to the stand-in and to Cloudflare's
+  published test widget, and open nothing.
 - **No deployment identifiers.** No account, zone or tunnel ID and no server
   address. Host names under `learnbitcoin.com` are public and appear as they
   are.
