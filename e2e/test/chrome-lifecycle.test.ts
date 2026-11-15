@@ -107,7 +107,7 @@ test('an interrupt, a "stop" or a hangup: the profile is removed and Chrome is g
     // Ended the ordinary way, through its exit hooks, with the number a shell gives for that signal.
     assert.deepEqual(await endOf(holder, ended), { code, signal: null }, signal);
     assert.deepEqual(readdirSync(temp), [], `${signal}: nothing is left in the temporary folder`);
-    assert.equal(await until(() => !alive(chromePid), 5000), true, `${signal}: Chrome is gone`);
+    assert.equal(await until(() => !alive(chromePid), 30_000), true, `${signal}: Chrome is gone`);
     // And nothing comes back: no helper of Chrome's is still there to write into the folder.
     await new Promise((wake) => setTimeout(wake, 500));
     assert.deepEqual(readdirSync(temp), [], `${signal}: still nothing half a second later`);
@@ -121,7 +121,9 @@ test('killed outright: no hook runs, so the profile stays, but Chrome ends by it
   holder.kill('SIGKILL');
   assert.deepEqual(await endOf(holder, ended), { code: null, signal: 'SIGKILL' });
   // Chrome is reached over a pipe: when the other end is gone, it stops. Over a socket it would run on for good.
-  const gone = await until(() => !alive(chromePid), 10_000);
+  // It notices within a second or so. On a machine that is busy with other tests it has been seen to take
+  // longer than ten, so it gets thirty: the wait ends the moment Chrome is gone.
+  const gone = await until(() => !alive(chromePid), 30_000);
   if (!gone) {
     // Not left running because this test failed: Chrome leads a process group of its own.
     try {

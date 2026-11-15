@@ -31,6 +31,12 @@
 //   --dist <folder>  look at a gallery that is already built, and build nothing
 //   --keep <folder>  build the gallery into this folder and leave it there, for --dist later
 //
+// A state that only shows after a tap: write the taps after the address, as
+// "#play:<steps>" on any screen of the app (or "#frame:<steps>" on the wallet
+// frame's sample screen), and give them time with --wait. For example
+// "/wallet/send?state=passkey-locked&unlock=cancelled#play:send-continue,unlock"
+// (app/dev/play.ts says how steps are written).
+//
 // Several runs at once are fine: each has its own folders and its own port.
 // The Chrome it starts is the installed one, or the program CHROME names,
 // with a throwaway profile.
@@ -244,6 +250,10 @@ export async function look(origin: string, address: string, options: LookOptions
       violations: (window as Collected).__violations ?? [],
     }));
     const { pageHeight, ...facts } = found;
+
+    // From the top: a page that has scrolled (after a tap that brought its answer on screen, say)
+    // would show its sticky banner in the middle of a picture of the whole page.
+    await page.evaluate(() => window.scrollTo(0, 0));
 
     // The picture: whole if it fits, else in parts, top to bottom.
     const whole = resolve(options.shot);

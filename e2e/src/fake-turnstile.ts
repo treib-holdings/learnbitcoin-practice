@@ -47,12 +47,22 @@
 // says so, as the real one does: the widgets already drawn stay in its care.
 //
 // What it is not: there is no frame, no hidden form field and no real check
-// of any kind. The box it draws is always visible, also with appearance
-// "interaction-only", so a screenshot shows where the widget sits and how
-// much room it takes. The real widget waits two seconds plus the page's
+// of any kind. The real widget waits two seconds plus the page's
 // "retry-interval" (eight seconds unless the page says otherwise) before it
 // tries a failed check again; the stand-in waits as long as the scenario
 // says (retryMs), whatever the page passed.
+//
+// The box it draws takes the room the real widget takes, so a screenshot
+// shows where the widget sits. Drawn with appearance "interaction-only", as
+// the app draws it, the real widget takes no room at all while its check
+// needs nobody, and shows its box only when it wants the reader (measured
+// with Cloudflare's test keys: no height for the key that always passes,
+// 149 px for the one that forces a box). The stand-in does the same. Its
+// box takes no room in the endings that stand for a check that runs by
+// itself (pass, fail, expire), and shows in the two that stand for a box
+// waiting for the reader: "never" and "timeout". A page that tells the two
+// apart by the widget's height, as the Receive screen does, is told the
+// same here as by the real script.
 //
 // The page's security policy allows no style attribute in markup, so the box
 // is styled through its style object, which the policy does not restrict.
@@ -219,6 +229,9 @@ function standIn(settings: Settings): void {
     widget.runs += 1;
     const mode = state.mode;
     widget.box.textContent = `Stand-in bot check: ${mode}`;
+    // With "interaction-only" the box shows only while it waits for the reader (see the top of this file).
+    const needsReader = mode === 'never' || mode === 'timeout';
+    widget.box.style.display = widget.options.appearance === 'interaction-only' && !needsReader ? 'none' : '';
     if (mode === 'never') return;
     if (mode === 'timeout') {
       later(widget, state.timeoutMs, () => {
@@ -311,8 +324,13 @@ function standIn(settings: Settings): void {
       if (typeof value !== 'function') kept[name] = value;
     }
     note({ op: 'render', id, options: kept, callbacks });
-    if (given.execution === 'execute') box.textContent = 'Stand-in bot check: waiting for execute()';
-    else run(widget);
+    if (given.execution === 'execute') {
+      box.textContent = 'Stand-in bot check: waiting for execute()';
+      // No check is running, so nothing wants the reader yet.
+      if (given.appearance === 'interaction-only') box.style.display = 'none';
+    } else {
+      run(widget);
+    }
     return id;
   }
 

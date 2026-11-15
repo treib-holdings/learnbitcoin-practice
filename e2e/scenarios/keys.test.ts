@@ -722,6 +722,9 @@ scenario('a passkey wallet: the words come only after the unlock step, Lock take
   assert.doesNotMatch(await lastMatched(page), new RegExp(words.join('|')));
 
   // Lock takes them off the page at once, and the next ask goes through the unlock step again.
+  // (From the top of the page, as a reader would: where the page stands now, the sticky PRACTICE
+  // banner lies over the Lock button, and a click there would land on the banner.)
+  await page.page.evaluate(() => window.scrollTo(0, 0));
   await page.click('lock');
   await page.waitForGone('word');
   assert.deepEqual(await page.texts('word'), []);
@@ -766,7 +769,7 @@ scenario('a passkey wallet: the words come only after the unlock step, Lock take
   assert.deepEqual(await counted(s, page, 'Words shown'), [{ name: 'Words shown', path: '/wallet/backup', value: 'passkey' }]);
 });
 
-scenario('a passkey wallet: a prompt answered after the language was switched leaves no unlock step waiting for the next lock', async (s) => {
+scenario('a passkey wallet: a prompt answered after the language was switched shows the words asked for, and leaves no unlock step waiting for the next lock', async (s) => {
   const page = await s.open('/wallet/backup', { width: 375, passkey: 'prf' });
   await openPasskeyWallet(page);
   await page.click('lock');
@@ -793,16 +796,24 @@ scenario('a passkey wallet: a prompt answered after the language was switched le
   await page.page.waitForFunction(() => location.pathname === '/es/wallet/backup');
   await page.page.evaluate(() => (window as unknown as { answerPrompt: () => void }).answerPrompt());
 
-  // The keys are loaded. The unlock step is gone, and the screen asks, in Spanish.
-  await page.waitFor('lock');
-  await page.waitForGone('unlock-step');
-  await page.waitFor('reveal-words');
-  assert.equal(await page.text('reveal-words'), 'Mostrar las 12 palabras');
+  // The keys are loaded, and the same screen is showing, in the other language: the reader asked it for
+  // the words, and gets them, with no second press. (The unlock step once took the new address for
+  // another screen, and the reader had to ask again.)
+  await page.waitFor('word');
+  assert.equal(await has(page, 'unlock-step'), false);
+  assert.equal(await has(page, 'lock'), true);
+  assert.equal((await page.texts('word')).length, 12);
+  assert.equal(await heading(page), 'Tus 12 palabras');
+  assert.equal(await page.text('hide-words'), 'Ocultarlas');
+  // The step changed in place: its heading has focus, as after any unlock.
+  assert.equal(await focused(page), 'H1');
 
-  // Lock: the screen still asks. The unlock step must not come up by itself, from a wish made before.
+  // Lock: the words leave with the keys, and the screen asks. The unlock step must not come up by
+  // itself, from a wish made before.
   await page.click('lock');
   await page.waitForGone('lock');
-  assert.equal(await has(page, 'reveal-words'), true);
+  await page.waitFor('reveal-words');
+  assert.equal(await page.text('reveal-words'), 'Mostrar las 12 palabras');
   assert.equal(await has(page, 'unlock-step'), false, 'nobody asked for the words since the lock');
   assert.deepEqual(await page.texts('word'), []);
 
@@ -812,4 +823,56 @@ scenario('a passkey wallet: a prompt answered after the language was switched le
   await page.click('unlock');
   await page.waitFor('word');
   assert.equal((await page.texts('word')).length, 12);
+  // The button that was pressed went with the step (this screen shows the step only for a locked
+  // wallet), and focus with it: the heading takes it, and is not left on the page itself.
+  await page.page.waitForFunction(() => document.activeElement?.tagName === 'H1');
+});
+
+scenario('a passkey wallet: a prompt answered after the reader left the screen and came back shows no words and counts none as shown', async (s) => {
+  const page = await s.open('/wallet/backup', { width: 375, passkey: 'prf' });
+  await openPasskeyWallet(page);
+  await page.click('lock');
+  await page.waitFor('reveal-words');
+
+  // The reader asks for the words. The prompt's answer is held back, as a device holds it.
+  await page.page.evaluate(() => {
+    const real = navigator.credentials.get.bind(navigator.credentials);
+    let release = (): void => {};
+    const held = new Promise<void>((resolve) => (release = resolve));
+    (window as unknown as { answerPrompt: () => void }).answerPrompt = release;
+    navigator.credentials.get = async (options) => {
+      const answer = await real(options);
+      await held;
+      return answer;
+    };
+  });
+  await page.click('reveal-words');
+  await page.waitFor('unlock-step');
+  await page.click('unlock');
+  await page.page.waitForFunction((hook) => document.querySelector(hook)?.getAttribute('aria-busy') === 'true', {}, byTestId('unlock'));
+
+  // With the prompt open: away to Send and back to Backup, by the wallet's own links. The address is
+  // the one the reader asked at, but this is a new screen, and nobody has asked it for anything.
+  await page.page.evaluate(() => document.querySelector<HTMLAnchorElement>('a[href="/wallet/send"]')!.click());
+  await page.page.waitForFunction(() => location.pathname === '/wallet/send');
+  await page.page.evaluate(() => document.querySelector<HTMLAnchorElement>('a[href="/wallet/backup"]')!.click());
+  await page.page.waitForFunction(() => location.pathname === '/wallet/backup');
+  await page.waitFor('reveal-words');
+  assert.equal(await has(page, 'unlock-step'), false);
+  await page.page.focus(byTestId('reveal-words'));
+
+  // Now the prompt is approved. The keys are loaded, and that is all: the screen that asked is gone.
+  await page.page.evaluate(() => (window as unknown as { answerPrompt: () => void }).answerPrompt());
+  await page.waitFor('lock');
+  await page.settle();
+  assert.deepEqual(await page.texts('word'), []);
+  assert.equal(await has(page, 'reveal-words'), true);
+  assert.equal(await focused(page), 'reveal-words', 'focus stays where the reader is');
+  // The old screen was not handed the words behind the reader's back: the wallet counted nothing as shown.
+  assert.deepEqual(await counted(s, page, 'Words shown'), []);
+
+  // Asked for now, the words come at once: the keys are there.
+  await page.click('reveal-words');
+  await page.waitFor('word');
+  assert.deepEqual(await counted(s, page, 'Words shown'), [{ name: 'Words shown', path: '/wallet/backup', value: 'passkey' }]);
 });

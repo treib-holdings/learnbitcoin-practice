@@ -5,6 +5,13 @@
 // scenarios that can run anywhere run through the Worker's real way to an
 // origin (makeOrigin), and the ones that drive the stand-in are reported as
 // skipped. Nobody but the orchestrator points it at the real network.
+//
+// Here the runner is given the two small scenario files only (E2E_FILES):
+// the chain through the page's own fetch, and the Worker's own answers.
+// They are enough to show what this file is about, that scenarios reach a
+// second network through the Worker and that local-only ones are skipped.
+// With every screen's scenarios the two runs below took minutes, and grew
+// with each screen.
 
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
@@ -17,6 +24,9 @@ import { makeFakeOrigin } from '../src/fake-origin.ts';
 import { buildApp } from '../src/smoke.ts';
 
 const E2E = fileURLToPath(new URL('../', import.meta.url));
+
+/** The scenario files the runs below are given. Their scenarios are counted at the end of the second test. */
+const FILES = 'chain.test.ts,worker.test.ts';
 
 /** A folder of this test's own for everything the runs write, so that what they leave behind can be counted. */
 let temp: string;
@@ -61,6 +71,21 @@ test('live: without the two settings nothing is run, and that is not a pass', as
   assert.match(nonsense.output, /^not run: ORIGIN_URL is not a URL\./);
 });
 
+test('live: E2E_FILES chooses scenario files by name, and a name that is no scenario file stops the run', async () => {
+  const settings = { ORIGIN_URL: 'http://127.0.0.1:9', BOTS_API_TOKEN: 'x' };
+  // Nothing is started for a name that is not there: no Chrome, no server.
+  const wrong = await run({ ...settings, E2E_FILES: 'chain.test.ts,chian.test.ts' });
+  assert.equal(wrong.code, 2);
+  assert.match(wrong.output, /^not run: E2E_FILES names chian\.test\.ts, which is not in e2e\/scenarios\. There are: /);
+  assert.match(wrong.output, /\bchain\.test\.ts\b.*\bworker\.test\.ts\b/);
+  // No verdict of any kind: neither the runner's "passed" nor the reporter's "pass". As whole words:
+  // the list of files above is part of this output, and a file of scenarios may be named for passkeys.
+  assert.doesNotMatch(wrong.output, /\bpass(ed)?\b/);
+  const two = await run({ ...settings, E2E_FILES: 'nothing.ts, also-nothing.test.ts' });
+  assert.equal(two.code, 2);
+  assert.match(two.output, /^not run: E2E_FILES names nothing\.ts, also-nothing\.test\.ts, which are not in e2e\/scenarios\./);
+});
+
 test('live: pointed at a second stand-in over HTTP, the scenarios run through the Worker\'s own way to an origin', async () => {
   // Two "real" networks, each known to its run by an address and a token and by nothing else.
   // They make their own blocks, as a real network does: nobody in a run can tell them to.
@@ -73,8 +98,8 @@ test('live: pointed at a second stand-in over HTTP, the scenarios run through th
   }, 400);
   try {
     const [ran, wrongToken] = await Promise.all([
-      run({ ORIGIN_URL: listening.url, BOTS_API_TOKEN: 'the-token-of-the-second-network' }),
-      run({ ORIGIN_URL: otherListening.url, BOTS_API_TOKEN: 'not-that-token' }),
+      run({ ORIGIN_URL: listening.url, BOTS_API_TOKEN: 'the-token-of-the-second-network', E2E_FILES: FILES }),
+      run({ ORIGIN_URL: otherListening.url, BOTS_API_TOKEN: 'not-that-token', E2E_FILES: FILES }),
     ]);
 
     assert.equal(ran.code, 0, ran.output);
@@ -82,12 +107,18 @@ test('live: pointed at a second stand-in over HTTP, the scenarios run through th
     assert.ok(summary, ran.output);
     const [passed, failed, skipped] = summary.slice(1).map(Number);
     assert.equal(failed, 0);
-    assert.ok(passed! >= 7, `${passed} passed`);
-    // The scenarios that drive the stand-in are reported as skipped: the two named below, one from its first
-    // line and one by declaration, and every other local-only scenario of the screens.
-    assert.ok(skipped! >= 2, `${skipped} skipped`);
+    // The two files hold seven scenarios. Five run anywhere: the chain through the page's own
+    // fetch, and the Worker's four.
+    assert.equal(passed, 5, ran.output);
+    // The other two drive the stand-in, one from its first line and one by declaration, and are
+    // reported as skipped: never as passed, and never left out.
+    assert.equal(skipped, 2, ran.output);
     assert.match(ran.output, /a funded wallet.*# local only/);
     assert.match(ran.output, /a busy faucet.*# local only/);
+    // A run of some of the files says that it is one, beside the count.
+    assert.match(ran.output, /^only chain\.test\.ts, worker\.test\.ts: 2 of [0-9]+ scenario files \(E2E_FILES\)$/m);
+    // And no scenario of any other file was run.
+    assert.doesNotMatch(ran.output, /Home with no wallet|the faucet pays|Remove asks first/);
 
     // The second network was really asked, by the handler (the chain through the page's own fetch,
     // the pot's address with the token) and by the scenario's own second opinion.

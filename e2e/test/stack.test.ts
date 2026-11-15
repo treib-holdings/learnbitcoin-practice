@@ -376,14 +376,16 @@ async function refusedAs(s: Stack, hex: string, code: BroadcastRefusal, words: R
 
 test('config: every setting crosses from the Worker to the app, numbers as numbers', async () => {
   const s = stack();
-  const config = await loadConfig(s.page);
+  const { config, loaded } = await loadConfig(s.page);
   assert.deepEqual(config, LOCAL_CONFIG);
+  // The Worker answered: these are its settings, and the app is told so.
+  assert.equal(loaded, true);
   for (const key of Object.keys(DEFAULT_CONFIG) as (keyof AppConfig)[]) {
     assert.notEqual(config[key], DEFAULT_CONFIG[key], `${key} must differ from the built-in value, or this proves nothing`);
   }
   // The settings are the Worker's own: the origin is not asked, and they are there when it is down.
   s.network.setOrigin('down');
-  assert.deepEqual(await loadConfig(s.page), LOCAL_CONFIG);
+  assert.deepEqual(await loadConfig(s.page), { config: LOCAL_CONFIG, loaded: true });
   assert.deepEqual(s.network.requests(), []);
   assert.deepEqual(s.lines, [line('config', 200), line('config', 200)]);
 });
@@ -414,7 +416,7 @@ test('as shipped: the settings built into the app are the ones in wrangler.jsonc
   // Two settings are the owner's to fill in: the bot check's site key and the events domain. The
   // app carries them empty and off. Every other value it carries is the one the Worker answers,
   // so the app is right from its first moment, before the Worker has answered at all.
-  const shipped = await loadConfig(s.page);
+  const shipped = (await loadConfig(s.page)).config;
   assert.deepEqual({ ...shipped, turnstileSiteKey: '', events: false }, { ...DEFAULT_CONFIG });
   assert.equal(shipped.turnstileSiteKey, (vars.TURNSTILE_SITE_KEY ?? '').trim());
   assert.equal(shipped.events, (vars.PLAUSIBLE_DOMAIN ?? '').trim() !== '');
@@ -628,7 +630,7 @@ test('a chain read leaves a log line only when something is broken', async () =>
   // Every other route writes its line for every request, whatever the answer: none of their URLs
   // holds anything about a wallet. A broadcast is one of them, though it travels under /api/esplora/:
   // its URL is the same for everyone, and the transaction is in its body.
-  assert.deepEqual(await loadConfig(s.page), LOCAL_CONFIG);
+  assert.deepEqual(await loadConfig(s.page), { config: LOCAL_CONFIG, loaded: true });
   assert.equal(broadcastFailure(await thrownBy(() => s.api.esplora.broadcast('00'))).reason, 'refused');
   assert.equal((await ask('/tx')).status, 405);
   assert.equal(failureOf(await thrownBy(() => s.api.askFaucet(me, 'some-other-token'))), 'bot_check');
@@ -1673,7 +1675,7 @@ test('the ready-made client, loadConfig() and the default event sender all ride 
   try {
     assert.equal(await readyMadeApi.esplora.tipHeight(), s.network.height());
     assert.match(await readyMadeApi.potAddress(), ADDRESS_PATTERN);
-    assert.deepEqual(await loadConfig(), LOCAL_CONFIG);
+    assert.deepEqual(await loadConfig(), { config: LOCAL_CONFIG, loaded: true });
 
     initEvents(true);
     trackPage({ name: 'about' }, 'es');
@@ -1733,7 +1735,7 @@ test('a POST that does not come from one of the app\'s own pages is refused on a
   for (const sender of ['bare', 'other'] as const) {
     const fetchFn = fetchFrom(s.handler, sender);
     assert.equal(await makeApi(fetchFn).esplora.tipHeight(), s.network.height());
-    assert.deepEqual(await loadConfig(fetchFn), LOCAL_CONFIG);
+    assert.deepEqual(await loadConfig(fetchFn), { config: LOCAL_CONFIG, loaded: true });
     assert.equal((await fetchFn(API.config)).headers.get('Access-Control-Allow-Origin'), null);
   }
 
@@ -1792,7 +1794,7 @@ test('an origin that is down, redirects or forbids: every call reads as "unavail
       line('pot_address', 502, upstream, fault),
     ]);
     // The Worker's own settings do not come from the origin.
-    assert.deepEqual(await loadConfig(s.page), LOCAL_CONFIG);
+    assert.deepEqual(await loadConfig(s.page), { config: LOCAL_CONFIG, loaded: true });
 
     // A whole scan and a light refresh fail the same way, and their caller can tell why.
     assert.equal(failureOf(await thrownBy(() => scanWallet(watch, s.api.esplora))), 'unavailable');
@@ -1860,7 +1862,7 @@ test('a limiter that refuses: "limit" on its own route, before the origin, the b
   assert.deepEqual(s.botChecks, []);
   assert.deepEqual(s.forwarded, []);
   // The settings are not rate limited: the app can always start.
-  assert.deepEqual(await loadConfig(s.page), LOCAL_CONFIG);
+  assert.deepEqual(await loadConfig(s.page), { config: LOCAL_CONFIG, loaded: true });
 
   // Each route has a limiter of its own. With one of them back, its route works and the others stay shut.
   s.over.delete('broadcast');

@@ -83,6 +83,28 @@ after(async () => {
 });
 
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** The stand-in's box as the page shows it: its words, and the room it takes on screen. */
+const boxOf = (page: OpenedPage): Promise<{ text: string | null; width: number; height: number }> =>
+  page.page.$eval('#app [data-stand-in-bot-check]', (element) => {
+    const rect = element.getBoundingClientRect();
+    return { text: element.textContent, width: rect.width, height: rect.height };
+  });
+
+/**
+ * Waits until `done` holds, for ten seconds at most, and gives whether it
+ * came to hold. An error thrown in the page is reported here a moment after
+ * it happened, and on a busy machine that moment can be long: a test waits
+ * for the report itself, never for a fixed time.
+ */
+async function until(done: () => boolean): Promise<boolean> {
+  const deadline = Date.now() + 10_000;
+  while (!done()) {
+    if (Date.now() > deadline) return false;
+    await pause(20);
+  }
+  return true;
+}
 const seen = (page: OpenedPage) => page.page.evaluate(() => (window as unknown as ScratchWindow).seen);
 const start = (page: OpenedPage, src: string = TURNSTILE_SCRIPT, options: Record<string, unknown> = OPTIONS, withErrorCallback = true) =>
   page.page.evaluate((...args) => (window as unknown as ScratchWindow).start(...args), src, options, withErrorCallback);
@@ -122,12 +144,10 @@ test('pass: the page gets Cloudflare\'s dummy token, from a box drawn under the 
     assert.equal(await page.page.evaluate((widget) => (window as unknown as ScratchWindow).turnstile.getResponse(widget), id), DUMMY_TOKEN);
     assert.equal(await page.page.evaluate(() => (window as unknown as ScratchWindow).turnstile.isExpired()), false);
 
-    // The box: labelled, and the size of the real compact widget.
-    const box = await page.page.$eval('#app [data-stand-in-bot-check]', (element) => {
-      const rect = element.getBoundingClientRect();
-      return { text: element.textContent, width: rect.width, height: rect.height };
-    });
-    assert.deepEqual(box, { text: 'Stand-in bot check: pass', width: 150, height: 140 });
+    // The box is labelled. The app draws the widget so that it shows only when it needs the reader
+    // ("interaction-only"), and a check that passes by itself needs nobody: the box takes no room.
+    assert.equal(OPTIONS.appearance, 'interaction-only');
+    assert.deepEqual(await boxOf(page), { text: 'Stand-in bot check: pass', width: 0, height: 0 });
 
     // The script came from the harness, not from the network: the page asked for Turnstile's own address and was answered.
     const script = page.responses.find((response) => response.url === TURNSTILE_SCRIPT);
@@ -141,12 +161,66 @@ test('pass: the page gets Cloudflare\'s dummy token, from a box drawn under the 
   });
 });
 
+test('the box takes the real widget\'s room, and with "interaction-only" only while it waits for the reader', async () => {
+  const always = { ...OPTIONS, appearance: 'always' };
+  const unsaid: Record<string, unknown> = { ...OPTIONS };
+  delete unsaid.appearance;
+  const sizes = { compact: { width: 150, height: 140 }, normal: { width: 300, height: 65 } };
+
+  // A page that does not ask for "interaction-only" gets a box that shows in every ending, at the
+  // size of the real widget: compact as the app draws it on a phone, normal otherwise.
+  for (const options of [always, unsaid]) {
+    for (const mode of ['pass', 'never'] as const) {
+      await onPage({ turnstile: mode }, async (page) => {
+        await start(page, TURNSTILE_SCRIPT, options);
+        assert.deepEqual(await boxOf(page), { text: `Stand-in bot check: ${mode}`, ...sizes.compact }, mode);
+      });
+    }
+  }
+  await onPage({ turnstile: 'never' }, async (page) => {
+    await start(page, TURNSTILE_SCRIPT, { ...always, size: 'normal' });
+    assert.deepEqual(await boxOf(page), { text: 'Stand-in bot check: never', ...sizes.normal });
+  });
+
+  // As the app draws it: no room while the check runs by itself...
+  for (const mode of ['pass', 'fail', 'expire'] as const) {
+    await onPage({ turnstile: mode }, async (page) => {
+      await start(page);
+      assert.deepEqual(await boxOf(page), { text: `Stand-in bot check: ${mode}`, width: 0, height: 0 }, mode);
+      // It is in the page all the same, where the page put it: a scenario can find it there.
+      assert.equal(await page.page.$$eval('#app > [data-stand-in-bot-check]', (found) => found.length), 1, mode);
+    });
+  }
+  // ...and the real widget's room in the two endings that stand for a box waiting for the reader.
+  for (const mode of ['never', 'timeout'] as const) {
+    await onPage({ turnstile: mode, turnstileTiming: { timeoutMs: 60_000 } }, async (page) => {
+      await start(page);
+      assert.deepEqual(await boxOf(page), { text: `Stand-in bot check: ${mode}`, ...sizes.compact }, mode);
+    });
+  }
+
+  // The ending can change while the page runs, and the box follows at the next check: a reader who
+  // ticks the box at last (reset, now passing) sees it go, and a check that comes to need them shows it.
+  await onPage({ turnstile: 'never' }, async (page) => {
+    const id = await start(page);
+    assert.equal((await boxOf(page)).height, 140);
+    await page.setTurnstile('pass');
+    await page.page.evaluate((widget) => (window as unknown as ScratchWindow).turnstile.reset(widget), id);
+    assert.equal((await boxOf(page)).height, 0);
+    await page.setTurnstile('never');
+    await page.page.evaluate((widget) => (window as unknown as ScratchWindow).turnstile.reset(widget), id);
+    assert.equal((await boxOf(page)).height, 140);
+  });
+});
+
 test('fail: the error callback gets a code, and there is no token', async () => {
   await onPage({ turnstile: 'fail' }, async (page) => {
     await start(page);
     await page.page.waitForFunction(() => (window as unknown as ScratchWindow).seen.length > 0);
-    await pause(100);
-    assert.deepEqual(await seen(page), [['error', FAIL_CODE]]);
+    // The first thing the page hears is the error. (Two seconds later the widget tries again by
+    // itself, which the next test is about: on a busy machine that second try may be in by now.)
+    assert.deepEqual((await seen(page))[0], ['error', FAIL_CODE]);
+    assert.ok((await seen(page)).every(([name]) => name === 'error'));
     assert.equal(await page.page.evaluate(() => (window as unknown as ScratchWindow).turnstile.getResponse()), undefined);
     assert.equal(await page.page.$eval('[data-stand-in-bot-check]', (element) => element.textContent), 'Stand-in bot check: fail');
   });
@@ -176,6 +250,8 @@ test('fail: the widget tries again by itself, so the error comes more than once 
   // A page that says it will try again itself gets one error and no more.
   await onPage({ turnstile: 'fail', turnstileTiming: { delayMs: 20, retryMs: 60 } }, async (page) => {
     await start(page, TURNSTILE_SCRIPT, { ...OPTIONS, retry: 'never' });
+    // The one error is waited for itself, however long a busy machine takes; the pause is for "and no more".
+    await page.page.waitForFunction(() => (window as unknown as ScratchWindow).seen.length >= 1);
     await pause(400);
     assert.deepEqual(await seen(page), [['error', FAIL_CODE]]);
   });
@@ -205,6 +281,8 @@ test('timeout: a reader who does not tick the box; the page is told, and the wid
   // A page that asked to start over by hand is told once, and gets nothing more until it resets the widget.
   await onPage({ turnstile: 'timeout', turnstileTiming: { delayMs: 20, timeoutMs: 60 } }, async (page) => {
     await start(page, TURNSTILE_SCRIPT, { ...OPTIONS, 'refresh-timeout': 'manual' });
+    // As above: the one timeout is waited for itself, and the pause is for "and no more".
+    await page.page.waitForFunction(() => (window as unknown as ScratchWindow).seen.length >= 1);
     await pause(400);
     assert.deepEqual(await seen(page), [['timeout']]);
     await page.setTurnstile('pass');
@@ -309,7 +387,8 @@ test('what the real script refuses, the stand-in refuses: the mistake fails the 
   await onPage({ turnstile: 'fail' }, async (page) => {
     page.expectFailure(/the page gave no error-callback/);
     await start(page, TURNSTILE_SCRIPT, OPTIONS, false);
-    await pause(150);
+    // Thrown by the widget's own timer, a moment after it was drawn: waited for, not timed.
+    await until(() => page.failures.length > 0);
     assert.deepEqual(page.failures.map((failure) => failure.kind), ['pageerror']);
   });
   // Loaded the way the app must not load it: without render=explicit the real script would draw widgets by itself.

@@ -112,6 +112,67 @@ async function onPage(options: OpenOptions, run: (page: OpenedPage) => Promise<v
 
 const facts = async (page: OpenedPage) => JSON.parse(await page.text('facts')) as Record<string, unknown>;
 
+/**
+ * Waits until `done` holds, for ten seconds at most, and gives whether it
+ * came to hold. What Chrome reports about a page (a console line, a
+ * refused request) arrives here a moment after it happened, and on a busy
+ * machine that moment can be long: a test waits for the report itself,
+ * never for a fixed time, and then asserts on what has arrived.
+ */
+async function until(done: () => boolean): Promise<boolean> {
+  const deadline = Date.now() + 10_000;
+  while (!done()) {
+    if (Date.now() > deadline) return false;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  return true;
+}
+
+/**
+ * Types into a field and taps a button of a page that was opened with a
+ * short timeout, without that timeout. Such a page is there for one wait
+ * that is meant to run out. Its own fill() and click() would be held to
+ * the same few hundred ms, and on a busy machine a tap can take longer
+ * than that to land: the test would then fail before it reached the wait
+ * it is about. These two take the time they need.
+ */
+async function typeInto(page: OpenedPage, testid: string, text: string): Promise<void> {
+  await page.page.locator(`[data-testid="${testid}"]`).fill(text);
+}
+async function tap(page: OpenedPage, testid: string): Promise<void> {
+  await page.page.locator(`[data-testid="${testid}"]`).click();
+}
+
+/**
+ * Waits until the scratch page's status region holds exactly these words.
+ * The page says "Added ..." and, a moment later, "Ready for more": a test
+ * that needs both to have been said waits for the second, however long the
+ * page takes on a busy machine, and never for a fixed time.
+ */
+async function statusReads(page: OpenedPage, words: string): Promise<void> {
+  await page.page.waitForFunction(
+    (wanted) => document.querySelector('[data-testid="status"]')?.textContent === wanted,
+    {},
+    words,
+  );
+  // What the page said has to reach this process too: the log is filled from the page, a call at a time.
+  const deadline = Date.now() + 10_000;
+  while (page.statusLog().at(-1) !== words && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(page.statusLog().at(-1), words);
+}
+
+/**
+ * Waits until the scratch page has made its one late change: two seconds
+ * after it loads, a line arrives, another leaves and a button is switched
+ * on. The line that leaves stands above the page's links, so they move up
+ * when it goes. A click aimed at a link just before that would land where
+ * the link no longer is. A test that clicks them waits for this first.
+ */
+async function layoutSettled(page: OpenedPage): Promise<void> {
+  await page.waitFor('late');
+  await page.waitForGone('leaving');
+}
+
 test('the prepared wallets: a record the app itself would read, and the coins the funded one holds', () => {
   const record = testRecord();
   assert.deepEqual(record, {
@@ -220,6 +281,9 @@ test('width, language and time zone are what the test asked for, not what this m
 
 test('click, fill and read by data-testid; wait for what comes and for what goes', async () => {
   await onPage({}, async (page) => {
+    // The page adds one element two seconds after it loads. It is looked for at once, while it
+    // cannot be there yet: after the steps below, on a busy machine, it might be.
+    assert.equal(await page.page.$('[data-testid="late"]'), null);
     assert.deepEqual(await page.texts('item'), []);
     await page.fill('field', 'first');
     await page.click('add');
@@ -229,8 +293,7 @@ test('click, fill and read by data-testid; wait for what comes and for what goes
     assert.deepEqual(await page.texts('item'), ['first', 'second']);
     assert.equal(await page.text('item'), 'first');
 
-    // An element that is not there yet, one that leaves, and a button that is still disabled.
-    assert.equal(await page.page.$('[data-testid="late"]'), null);
+    // An element that was not there when the page opened, one that leaves, and a button that is still disabled.
     const ms = await page.timeTo('late');
     assert.ok(ms >= 1500 && ms < 8000, `timeTo counts from the navigation: ${ms} ms`);
     assert.equal(await page.text('late'), 'Here now');
@@ -254,8 +317,8 @@ test('the status region is remembered: a message that came and went is still hea
   await onPage({}, async (page) => {
     await page.fill('field', 'one');
     await page.click('add');
-    // Long after "Added one" was replaced.
-    await new Promise((resolve) => setTimeout(resolve, 200));
+    // After "Added one" was replaced.
+    await statusReads(page, 'Ready for more');
     assert.equal(await page.text('status'), 'Ready for more');
     assert.equal(await page.waitForStatus('Added one'), 'Added one');
     assert.equal(await page.waitForStatus(/^Ready/), 'Ready for more');
@@ -274,10 +337,13 @@ test('the status region is remembered: a message that came and went is still hea
     assert.equal(await page.waitForStatus('Added two'), 'Added two');
     assert.deepEqual(page.statusLog().slice(0, 5), ['Added one', 'Ready for more', 'Added one', 'Ready for more', 'Added two']);
 
+    // A wait that runs out says what was heard instead. Only that wait is held to the 300 ms: the
+    // typing and the tap before it are not, and what the page said has reached this process first.
     const quick = await openPage(chrome, site.url, { timeout: 300 });
     try {
-      await quick.fill('field', 'x');
-      await quick.click('add');
+      await typeInto(quick, 'field', 'x');
+      await tap(quick, 'add');
+      assert.ok(await until(() => quick.statusLog().includes('Added x')), 'the page said "Added x"');
       await assert.rejects(quick.waitForStatus('Payment sent'), /did not say Payment sent within 300 ms; it said: \["Added x"/);
     } finally {
       await quick.close();
@@ -287,11 +353,13 @@ test('the status region is remembered: a message that came and went is still hea
 
 test('forgetStatus: a message from an earlier step does not answer a wait meant for a later one', async () => {
   // Two steps that should each say "Added one". The second is broken here: it says nothing at all.
+  // (The two pages below have a short timeout for the one wait that is meant to run out. What is
+  // typed and tapped on them is not held to it: typeInto and tap, above.)
   const silentSecondStep = async (page: OpenedPage): Promise<void> => {
-    await page.fill('field', 'one');
-    await page.click('add'); // the first step: "Added one", then "Ready for more"
-    await new Promise((resolve) => setTimeout(resolve, 150));
-    await page.click('forget'); // stands for the second step, which announces nothing
+    await typeInto(page, 'field', 'one');
+    await tap(page, 'add'); // the first step: "Added one", then "Ready for more"
+    await statusReads(page, 'Ready for more');
+    await tap(page, 'forget'); // stands for the second step, which announces nothing
   };
 
   // Without it, the first step's message, which nobody asked about, passes for the second step's.
@@ -306,15 +374,16 @@ test('forgetStatus: a message from an earlier step does not answer a wait meant 
   // With it, the wait hears only what is said from then on, and the silent step is found out.
   const careful = await openPage(chrome, site.url, { timeout: 1500 });
   try {
-    await careful.fill('field', 'one');
-    await careful.click('add');
-    await new Promise((resolve) => setTimeout(resolve, 150));
+    await typeInto(careful, 'field', 'one');
+    await tap(careful, 'add');
+    await statusReads(careful, 'Ready for more');
     careful.forgetStatus();
-    await careful.click('forget');
+    await tap(careful, 'forget');
     await assert.rejects(careful.waitForStatus('Added one'), /did not say Added one within 1500 ms; it said: \[\]/);
     // Nothing is lost from the log, and a message that does come afterwards is heard.
     assert.deepEqual(careful.statusLog(), ['Added one', 'Ready for more']);
-    await careful.click('add');
+    await tap(careful, 'add');
+    assert.ok(await until(() => careful.statusLog().length > 2), 'the page spoke again');
     assert.equal(await careful.waitForStatus('Added one'), 'Added one');
   } finally {
     await careful.close();
@@ -389,7 +458,6 @@ test('what fails a run: console errors, uncaught errors, the policy at work, a r
     // Not errors: a warning, and a refusal by the Worker's side.
     await page.page.evaluate(() => console.warn('only a warning'));
     assert.equal(await page.page.evaluate(async () => (await fetch('/api/esplora/tx/unknown')).status), 404);
-    await new Promise((resolve) => setTimeout(resolve, 100));
 
     const expected: [kind: string, text: RegExp][] = [
       ['console', /^the app said something is wrong$/],
@@ -399,6 +467,10 @@ test('what fails a run: console errors, uncaught errors, the policy at work, a r
       ['csp', /^Connecting to 'https:\/\/example\.com\/' violates the following Content Security Policy directive: "connect-src 'self'"/],
       ['csp', /^Fetch API cannot load https:\/\/example\.com\/\. Refused to connect because it violates the document's Content Security Policy/],
     ];
+    // Each is reported a moment after it happened. All six are waited for, and then a little
+    // longer: a seventh, from the warning or the refusal that must not count, would show by then.
+    await until(() => page.failures.length >= expected.length);
+    await new Promise((resolve) => setTimeout(resolve, 100));
     assert.deepEqual(page.failures.map((failure) => failure.kind), expected.map(([kind]) => kind));
     expected.forEach(([, text], index) => assert.match(page.failures[index]!.text, text));
     assert.equal(page.problems().length, 6);
@@ -409,7 +481,7 @@ test('what fails a run: console errors, uncaught errors, the policy at work, a r
     await page.page.evaluate(() => {
       location.href = 'https://example.com/elsewhere';
     });
-    await new Promise((resolve) => setTimeout(resolve, 300));
+    await until(() => page.failures.some((failure) => failure.kind === 'request'));
     const refused = page.failures.filter((failure) => failure.kind === 'request');
     assert.deepEqual(refused.map((failure) => failure.text), ['a request to another host was refused: GET https://example.com/elsewhere']);
   } finally {
@@ -518,11 +590,15 @@ test('the page cannot open another window: window.open and a link to one are sto
     // window.open opens nothing and says so the way a blocked window does: null.
     assert.equal(await page.page.evaluate(() => window.open('https://challenges.cloudflare.com/popup')), null);
     assert.equal(await page.page.evaluate(() => window.open('/wallet', '_blank', 'noopener')), null);
+    // The links are clicked where they stand, so they have to stand still: the page's one late change moves them.
+    await layoutSettled(page);
     // A click on a link that asks for a window of its own goes nowhere.
     await page.click('new-window');
     await page.click('named-window');
-    // An ordinary link is followed as ever.
+    // An ordinary link is followed as ever. The page's address is read once it has changed, not after a fixed time.
     await page.click('same-window');
+    await page.page.waitForFunction(() => location.hash === '#further');
+    // The two clicks before it were dealt with before that one. A window, had one opened, has had a moment to show.
     await new Promise((resolve) => setTimeout(resolve, 300));
 
     assert.equal((await chrome.browser.pages()).length, before, 'no window was opened');

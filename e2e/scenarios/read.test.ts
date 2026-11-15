@@ -323,7 +323,8 @@ scenario('a wallet with no coins says so on each screen, and points to the fauce
   assert.equal(await page.text('total'), '0 practice sats');
   assert.deepEqual(await page.texts('total-unconfirmed'), []);
   assert.match(await page.text('no-coins'), /^No coins yet\. Get practice coins$/);
-  assert.equal(await page.page.$eval('[data-testid="no-coins"] a', (link) => link.getAttribute('href')), '/wallet/receive');
+  // The way to coins leads to the faucet itself, a part of the Receive screen below the address.
+  assert.equal(await page.page.$eval('[data-testid="no-coins"] a', (link) => link.getAttribute('href')), '/wallet/receive#faucet');
   assert.deepEqual(await page.texts('coin'), []);
   // Nothing to send, so Send is not offered here; the wallet's sections still lead to it.
   assert.deepEqual(await page.texts('overview-send'), []);
@@ -342,7 +343,7 @@ scenario('a wallet with no coins says so on each screen, and points to the fauce
   await follow(page, '/wallet/activity', 'Activity');
   await page.waitFor('activity-empty');
   assert.match(await page.text('activity-empty'), /^No transactions yet\. The first one shows here when coins arrive\. Get practice coins$/);
-  assert.equal(await attribute(page, 'activity-faucet', 'href'), '/wallet/receive');
+  assert.equal(await attribute(page, 'activity-faucet', 'href'), '/wallet/receive#faucet');
   assert.equal(await page.page.$$eval('[data-testid="activity-empty"] [data-testid="activity-faucet"]', (inside) => inside.length), 1);
   assert.deepEqual(await page.texts('tx-row'), []);
 
@@ -686,7 +687,7 @@ scenario('the Spanish routes: the same four screens under /es, in Spanish', { lo
   assert.equal(await page.text('tx-replace'), 'Todavía se puede reemplazar Sí, hasta que entre en un bloque');
   assert.equal(await page.text('tx-id'), waiting.txid);
   // The link's own words, then what a screen reader is told about it.
-  assert.match(await page.text('tx-explorer'), /^Verlo en el explorador de práctica ?\(se abre en otra pestaña\)$/);
+  assert.match(await page.text('tx-explorer'), /^Verla en el explorador de práctica \(se abre en otra pestaña\)$/);
   assert.equal(await attribute(page, 'tx-back', 'href'), '/es/wallet/activity');
 
   // An unknown ID, in Spanish.
@@ -857,7 +858,7 @@ scenario('a passkey opens a wallet with no history: the causes show, and choosin
   // Which wallet this is stands where the causes speak of it, once each: the tag in the passkey's name, and the wallet fingerprint.
   assert.deepEqual(await page.texts('passkey-tag'), [record.tag]);
   assert.deepEqual(await page.texts('wallet-fingerprint'), [record.fingerprint]);
-  assert.equal(await attribute(page, 'opened-faucet', 'href'), '/wallet/receive');
+  assert.equal(await attribute(page, 'opened-faucet', 'href'), '/wallet/receive#faucet');
   // Open leaves the keys loaded (SPEC section 4).
   assert.match(await page.text('lock-state'), UNLOCKED);
   assert.deepEqual(await page.texts('total'), ['0 practice sats']);

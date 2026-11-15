@@ -24,66 +24,12 @@
 import assert from 'node:assert/strict';
 import { isEventBody, type EventBody } from '@learnbitcoin/practice-contract';
 import { accountFromMnemonic, isValidMnemonic } from '@learnbitcoin/practice-wallet';
+import { ANSWER_SETTLE_MS } from '../../app/src/components/taps.ts';
 import { SAFARI_KEEPS_DAYS } from '../../app/src/components/wallet/frame.ts';
 import { fill, formatSats } from '../../app/src/lib/format.ts';
 import { RECORD_KEY, type WalletRecord } from '../../app/src/lib/keystore.ts';
 import { strings } from '../../app/src/strings/index.ts';
-import {
-  TEST_WORDS,
-  freshRecord,
-  fundTestWallet,
-  scenario as harnessScenario,
-  testRecord,
-  type OpenedPage,
-  type Scenario,
-  type ScenarioOptions,
-} from './helpers.ts';
-
-// -- the end of a run -----------------------------------------------------------------------
-//
-// One Chrome serves every scenario of this file, and the harness closes it when the last one is done
-// (helpers.ts). The process should then end. On a Mac it sometimes cannot. About 20 seconds after it
-// starts, Chrome runs Google's updater, whose helper processes inherit Chrome's error output and
-// outlive Chrome by about five minutes. Puppeteer reads that output through a pipe, and a pipe that is
-// still open at its other end keeps this process alive: the run stands still for those five minutes,
-// with every scenario passed. This file runs for longer than 20 seconds, so it meets this often.
-//
-// The cure belongs where Chrome is started (e2e/src/browser.ts), which is not this file's to change.
-// Until it is there, the scenarios of this file let go of Chrome's two output pipes as soon as they have
-// a page to reach Chrome through. The output is read as before. It no longer holds the process open.
-
-/** True once Chrome's output pipes have been let go of. One Chrome, so once is enough. */
-let outputLetGo = false;
-
-function letGoOfChromeOutput(page: OpenedPage): void {
-  if (outputLetGo) return;
-  outputLetGo = true;
-  const chrome = page.page.browser().process();
-  for (const pipe of [chrome?.stdout, chrome?.stderr]) (pipe as { unref?: () => void } | null | undefined)?.unref?.();
-}
-
-/** A scenario of this file: the harness's scenario(), with that one thing done when its first page opens. */
-function scenario(name: string, run: (s: Scenario) => Promise<void>): void;
-function scenario(name: string, options: ScenarioOptions, run: (s: Scenario) => Promise<void>): void;
-function scenario(
-  name: string,
-  optionsOrRun: ScenarioOptions | ((s: Scenario) => Promise<void>),
-  maybeRun?: (s: Scenario) => Promise<void>,
-): void {
-  const options = typeof optionsOrRun === 'function' ? {} : optionsOrRun;
-  const run = typeof optionsOrRun === 'function' ? optionsOrRun : maybeRun!;
-  harnessScenario(name, options, (s) => {
-    // Laid over the harness's own object, not copied from it: `standIn` is read only when a scenario
-    // asks for it (reading it ends a live run as "local only").
-    const mine = Object.create(s) as Scenario;
-    mine.open = async (path, openOptions) => {
-      const page = await s.open(path, openOptions);
-      letGoOfChromeOutput(page);
-      return page;
-    };
-    return run(mine);
-  });
-}
+import { TEST_WORDS, freshRecord, fundTestWallet, scenario, testRecord, type OpenedPage, type Scenario } from './helpers.ts';
 
 const en = {
   common: strings.common.en,
@@ -614,6 +560,15 @@ scenario('create with a passkey whose secret comes with create(): one prompt, on
   assert.deepEqual(await page.passkey!.credentials(), []);
   assert.equal(await page.stored(), null);
   const prompts = await countPrompts(page);
+  // The name the device is given for the passkey, as the page hands it over.
+  await page.page.evaluate(() => {
+    const container = navigator.credentials;
+    const create = container.create.bind(container);
+    container.create = (options?: CredentialCreationOptions) => {
+      (window as unknown as { __named?: string }).__named = options?.publicKey?.user.name;
+      return create(options);
+    };
+  });
 
   await page.click('create-passkey');
   await arrivesAt(page, '/wallet/backup');
@@ -624,6 +579,14 @@ scenario('create with a passkey whose secret comes with create(): one prompt, on
   assert.deepEqual([passkeys[0]!.uses, passkeys[0]!.rpId], [0, 'localhost']);
   const record = await storedRecord(page);
   assertPasskeyRecord(record, passkeys[0]!.id);
+
+  // "Wallet made" says what the passkey was saved as: the very name the device was given, whole,
+  // which only the wallet has (this browser keeps the tag alone). The tag row is for a name nobody knows.
+  const named = await page.page.evaluate(() => (window as unknown as { __named?: string }).__named);
+  assert.equal(named, fill(en.common.passkeyName, { tag: record.tag ?? '' }));
+  await page.waitFor('passkey-name');
+  assert.equal(await page.text('passkey-name'), named);
+  assert.equal(await countOf(page, 'passkey-tag'), 0);
 
   const events = await counted(s, page);
   assert.deepEqual(on(events, '/new'), [
@@ -896,6 +859,13 @@ scenario('the word fields carry the attributes of the spec, with no name and no 
       .map((id) => Array.from(document.getElementById(id)?.querySelectorAll('[data-testid]') ?? []).map((node) => (node as HTMLElement).dataset['testid'])),
   );
   assert.deepEqual(described, [['restore-exception', 'restore-kept']]);
+  // And so does the group of twelve fields, which is where the reader meets them first.
+  const groupDescribed = await page.page.$eval('[data-testid="restore-words"]', (group) =>
+    (group.getAttribute('aria-describedby') ?? '')
+      .split(' ')
+      .map((id) => Array.from(document.getElementById(id)?.querySelectorAll('[data-testid]') ?? []).map((node) => (node as HTMLElement).dataset['testid'])),
+  );
+  assert.deepEqual(groupDescribed, [['restore-exception', 'restore-kept']]);
 });
 
 /** How many times the page has asked the Worker about the chain. */
@@ -1569,6 +1539,42 @@ scenario('two tabs: a wallet arrives while this tab\'s passkey prompt is open. T
   assert.equal(s.stack.events.filter((recorded) => recorded.event.name === 'Wallet created').length, 1);
 });
 
+scenario('two tabs: a wallet arrives while Home\'s "Open with my passkey" prompt is open. Home shows it, and says how it came', async (s) => {
+  // A reader with a practice passkey, in a browser that has forgotten the wallet: Home offers to open it.
+  const { page: first } = await madeThenCleared(s, false);
+  const release = await holdPrompt(first, 'get');
+  await first.click('open-passkey');
+  await waitsOn(first, 'open-passkey');
+
+  // Meanwhile a wallet is made in a second tab of the same browser.
+  const second = await s.open('/new', { context: first.context });
+  await second.page.bringToFront();
+  await second.click('create-words');
+  await arrivesAt(second, '/wallet/backup');
+  const record = await storedRecord(second);
+  assertWordsRecord(record);
+
+  // The first tab has heard of it: Home shows the wallet that is here, in place of the ways to bring
+  // one back. Its own prompt is still open, and nothing is said about that yet.
+  await first.page.bringToFront();
+  await first.waitFor('wallet-here');
+  assert.equal(await first.text('wallet-here-kind'), en.home.hereWords);
+  assert.equal(await countOf(first, 'open-passkey'), 0);
+  assert.equal(await countOf(first, 'front-stop'), 0);
+
+  // The reader finishes the prompt. Their passkey's wallet cannot be put here: another one is. The
+  // button that was pressed has left the screen with its panel, so Home itself says what happened.
+  assert.equal(await release(), 1);
+  await first.waitFor('front-stop');
+  assert.equal(await first.text('front-stop'), en.home.hereArrived);
+  assert.equal(await first.page.$eval('[data-testid="front-stop"]', (notice) => notice.getAttribute('role')), 'alert');
+  assert.equal(await first.text('wallet-here-kind'), en.home.hereWords);
+  assert.equal(await pathOf(first), '/');
+  // The other tab's wallet is untouched, and so is the reader's passkey: it was theirs before, not made here.
+  assert.equal(await first.stored(), JSON.stringify(record));
+  assert.equal((await first.passkey!.credentials()).length, 1);
+});
+
 scenario('the browser stops storing while the passkey prompt is open: nothing is made, it is said as an alert, with what became of the passkey', async (s) => {
   const page = await s.open('/new', { passkey: 'prf' });
   await page.page.bringToFront();
@@ -1659,7 +1665,24 @@ scenario('the browser stops storing while Restore is looking: words that have co
 scenario('when what stands in a screen\'s place changes and the address does not, focus goes to the heading', async (s) => {
   // Something stored that cannot be read is removed on Restore: the form takes the gate's place.
   const page = await s.open('/restore', { record: 'not a record' });
-  await page.click('remove-wallet');
+  await page.waitFor('remove-wallet');
+  // The question takes no answer in its first moment: a double tap on the button that opens it
+  // must not land on "Remove it". Both presses are made in the page itself, so that the second
+  // is inside that moment however busy this machine is. It changes nothing, and the question stays.
+  const early = await page.page.evaluate(async () => {
+    const drawn = (): Promise<void> => new Promise((frame) => requestAnimationFrame(() => requestAnimationFrame(() => frame())));
+    const press = (hook: string): void => document.querySelector<HTMLElement>(`[data-testid="${hook}"]`)?.click();
+    const there = (hook: string): boolean => document.querySelector(`[data-testid="${hook}"]`) !== null;
+    press('remove-wallet');
+    await drawn();
+    const opened = there('remove-confirm');
+    press('remove-confirm');
+    await drawn();
+    return { opened, afterRemoveIt: there('remove-confirm'), stored: localStorage.getItem(Object.keys(localStorage)[0] ?? '') };
+  });
+  assert.deepEqual(early, { opened: true, afterRemoveIt: true, stored: 'not a record' });
+  // Once a reader could have read it, the answer counts.
+  await new Promise((wake) => setTimeout(wake, ANSWER_SETTLE_MS + 150));
   await page.click('remove-confirm');
   await page.waitFor('restore-go');
   await page.page.waitForFunction(() => document.activeElement?.tagName === 'H1');

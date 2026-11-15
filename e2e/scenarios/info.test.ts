@@ -344,7 +344,7 @@ scenario('the Sparrow guide with no wallet, in Spanish: the same settings and co
   await page.page.setViewport({ width: 320, height: 812 });
 
   // The page that exists in English only says so, in its words and to the browser.
-  assert.match(await page.text('sparrow-download'), /^Página de descargas de Sparrow \(en inglés\) ?\(se abre en otra pestaña\)$/);
+  assert.match(await page.text('sparrow-download'), /^Página de descargas de Sparrow \(en inglés\) \(se abre en otra pestaña\)$/);
   assert.equal(await attribute(page, 'sparrow-download', 'hreflang'), 'en');
   assert.equal(await attribute(page, 'sparrow-download', 'href'), 'https://sparrowwallet.com/download/');
   assert.equal(await attribute(page, 'sparrow-download', 'rel'), 'noopener noreferrer');
@@ -402,9 +402,9 @@ scenario('the Sparrow guide\'s copy buttons copy exactly the line beside them, b
   expected.push(RUN.ELECTRUM_HOST, RUN.ELECTRUM_PORT);
   assert.deepEqual(await copied(), expected);
 
-  // From the keyboard: Tab reaches the button of the first command, and Enter copies. (Today the
-  // command's own box is a stop on the way there, though a command that wraps never scrolls: that is
-  // the shared CodeBlock piece's, and nothing here depends on it.)
+  // From the keyboard: Tab reaches the button of the first command, and Enter copies. The command's
+  // own box is no stop on the way there: a command wraps, so its box never scrolls and has nothing
+  // for a keyboard to do.
   await page.page.reload();
   await shows(page, 'sparrow-host', RUN.ELECTRUM_HOST);
   const again = await recordCopies(page);
@@ -416,6 +416,11 @@ scenario('the Sparrow guide\'s copy buttons copy exactly the line beside them, b
     if (hook !== null) order.push(hook);
   }
   assert.equal(order.at(-1), 'sparrow-macos-copy', order.join(', '));
+  assert.ok(!order.includes('sparrow-macos-text'), order.join(', '));
+  assert.deepEqual(
+    await page.page.$eval('[data-testid="sparrow-macos-text"]', (box) => [box.getAttribute('tabindex'), box.getAttribute('role'), box.getAttribute('aria-label')]),
+    [null, null, null],
+  );
   // Nothing of the other two commands comes before it.
   assert.ok(!order.some((hook) => /windows|linux/.test(hook)), order.join(', '));
   page.forgetStatus();
@@ -534,7 +539,7 @@ scenario('About with no wallet, in English and Spanish: this run\'s facts, what 
   assert.equal(await page.text('about-electrum-port'), RUN.ELECTRUM_PORT);
   assert.equal(await attribute(page, 'about-explorer', 'href'), RUN.EXPLORER_URL);
   // The link's words are the explorer's address, and then what a screen reader is told.
-  assert.match(await page.text('about-explorer'), /^explorer\.practice\.test ?\(opens in a new tab\)$/);
+  assert.match(await page.text('about-explorer'), /^explorer\.practice\.test \(opens in a new tab\)$/);
   // The outside links: the main site and the source code, each from the settings, each in a tab of its own.
   assert.equal(await attribute(page, 'about-site', 'href'), s.stack.config.siteUrl);
   assert.equal(await attribute(page, 'about-source', 'href'), s.stack.config.sourceUrl);
@@ -600,7 +605,7 @@ scenario('About with no wallet, in English and Spanish: this run\'s facts, what 
   assert.equal(await spanish.text('about-electrum-host'), RUN.ELECTRUM_HOST);
   assert.equal(await spanish.text('about-electrum-port'), RUN.ELECTRUM_PORT);
   assert.equal(await spanish.text('about-short'), 'No hay cuenta, y no ponemos cookies. Las 12 palabras nunca salen de este navegador.');
-  assert.match(await spanish.text('about-source'), /^Leer el código fuente \(en inglés\) ?\(se abre en otra pestaña\)$/);
+  assert.match(await spanish.text('about-source'), /^Leer el código fuente \(en inglés\) \(se abre en otra pestaña\)$/);
   assert.equal(await attribute(spanish, 'about-source', 'hreflang'), 'en');
   // The main site has a Spanish edition, and a Spanish page links to it.
   assert.equal(await attribute(spanish, 'about-site', 'href'), `${s.stack.config.siteUrl}/es`);

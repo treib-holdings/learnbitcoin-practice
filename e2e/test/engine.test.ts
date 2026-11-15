@@ -249,7 +249,7 @@ test('one whole story: create with a passkey, coins from the faucet, the page lo
   const events = counting();
   try {
     // The settings, as the page loads them.
-    const config = await loadConfig(s.page);
+    const { config } = await loadConfig(s.page);
     assert.deepEqual([config.faucetSats, config.blockSeconds, config.passkeyHost], [FAUCET_SATS, 10, 'localhost']);
 
     const page = pageOn(s, { config });

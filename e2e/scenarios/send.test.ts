@@ -706,7 +706,7 @@ scenario('a wallet with no coins: "No coins yet", and the way to the Receive scr
   const page = await s.open('/wallet/send', { record: freshRecord() });
   await page.waitFor('send-no-coins');
   assert.match(await page.text('send-no-coins'), /No coins yet\./);
-  assert.equal(await page.page.$eval(`${hook('send-no-coins')} a`, (link) => link.getAttribute('href')), '/wallet/receive');
+  assert.equal(await page.page.$eval(`${hook('send-no-coins')} a`, (link) => link.getAttribute('href')), '/wallet/receive#faucet');
   // There is no form to fill in, and no amount of 0 on the screen.
   assert.equal(await count(page, 'send-to'), 0);
   assert.equal(await count(page, 'send-spendable'), 0);
@@ -813,8 +813,8 @@ scenario('the node takes the payment and its answer is lost: the screen looks fo
   s.standIn.setOrigin('ok');
   await same.hand();
 
-  // The screen looks for the transaction, finds it, and shows the payment as sent: no "Payment not sent" over
-  // a payment that is out, and no second payment.
+  // The wallet looks for the transaction, finds it, and the screen shows the payment as sent: no "Payment not
+  // sent" over a payment that is out, and no second payment.
   const txid = await sentTxid(page);
   assert.equal(txid, same.payment.txid);
   assert.equal(await headingInFocus(page), 'Payment sent');

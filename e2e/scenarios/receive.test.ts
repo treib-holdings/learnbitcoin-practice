@@ -635,15 +635,16 @@ scenario('a promised payment that is not listed yet: the address stays until the
   assert.deepEqual(await faucetEvents(s), ['/wallet/receive ok']);
 });
 
-scenario('a closed faucet: the card says so, with the other thing that can mean and a Reload button, and has no way to ask', { stack: { vars: { TURNSTILE_SITE_KEY: '' } } }, async (s) => {
+scenario('a closed faucet: the card says so, with a Reload button, and has no way to ask', { stack: { vars: { TURNSTILE_SITE_KEY: '' } } }, async (s) => {
   const record = freshRecord();
   const page = await s.open('/wallet/receive', { record, width: 375 });
   await page.waitFor('faucet-closed');
   assert.equal(s.stack.config.turnstileSiteKey, '');
 
-  // The error table's sentence, then what it leaves out: on this page only a reload looks again,
-  // and the same shows when the settings could not be read.
+  // The error table's sentence, then what it leaves out: on this page only a reload looks again.
+  // The server's own settings say that the faucet is closed, so nothing else is offered as a cause.
   assert.equal(await page.text('faucet-closed'), `${strings.errors.en.closed} ${en.closedReload} ${strings.common.en.reload}`);
+  assert.deepEqual(await page.texts('faucet-settings-failed'), []);
   // It was there when the screen opened, so it is no alert.
   assert.equal(await page.page.$eval('[data-testid="faucet-closed"]', (notice) => notice.getAttribute('role')), null);
   await snap(page, 'closed-375-en', '[data-testid="faucet"]');
@@ -665,17 +666,19 @@ scenario('a closed faucet: the card says so, with the other thing that can mean 
   assert.equal(await page.text('receive-address'), record.firstAddress);
 });
 
-scenario('the settings come late, or not at all: the card says it is loading, and never that the faucet is closed before it knows', async (s) => {
+scenario('the settings come late, or not at all: the card says it is loading, never that the faucet is closed before it knows, and then what is true', async (s) => {
   const record = freshRecord();
   const page = await s.open('/about', { record, width: 375 });
-  // The page's one request for its settings is held until the scenario lets it through or fails
+  // Each request of the page for its settings is held until the scenario lets it through or fails
   // it: put in front of fetch before the page's script runs, then the page is loaded again.
   await page.page.evaluateOnNewDocument(() => {
     const real = window.fetch.bind(window);
-    const held = window as unknown as { __settings?: (how: string) => void };
+    const held = window as unknown as { __settings?: (how: string) => void; __asked: number };
+    held.__asked = 0;
     window.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
       if (!url.endsWith('/api/config')) return real(input, init);
+      held.__asked += 1;
       return new Promise<Response>((resolve, reject) => {
         held.__settings = (how) => {
           if (how === 'arrive') real(input, init).then(resolve, reject);
@@ -686,6 +689,9 @@ scenario('the settings come late, or not at all: the card says it is loading, an
   });
   const settings = (how: 'arrive' | 'fail'): Promise<void> =>
     page.page.evaluate((way) => (window as unknown as { __settings(how: string): void }).__settings(way), how);
+  /** Waits until the page has asked for its settings this many times since its last load. */
+  const asked = (times: number): Promise<unknown> =>
+    page.page.waitForFunction((wanted) => (window as unknown as { __asked: number }).__asked === wanted, {}, times);
 
   await page.goto('/wallet/receive');
   await page.waitFor('receive-address');
@@ -705,18 +711,46 @@ scenario('the settings come late, or not at all: the card says it is loading, an
   assert.deepEqual(await page.texts('faucet-loading'), []);
   assert.deepEqual(await page.texts('faucet-closed'), []);
 
-  // Once more, and this time the request for the settings fails. The page cannot tell that from a
-  // faucet that is switched off, so it says both, and offers the one way out that works for both.
+  // Once more, and this time the request for the settings fails. The wallet asks a second time, a
+  // moment later, and until that has ended the card goes on saying no more than it knows.
   await page.goto('/wallet/receive');
   await page.waitFor('faucet-loading');
+  await asked(1);
   await settings('fail');
-  await page.waitFor('faucet-closed');
-  const closed = await page.text('faucet-closed');
-  assert.ok(closed.includes(en.closedReload), closed);
-  assert.equal(await page.text('faucet-closed-reload'), strings.common.en.reload);
-  assert.deepEqual(await page.texts('faucet-ask'), []);
-  assert.deepEqual(await page.texts('faucet-loading'), []);
+  await asked(2);
+  assert.equal(await page.text('faucet-loading'), strings.common.en.loading);
+  assert.deepEqual(await page.texts('faucet-closed'), []);
+  assert.deepEqual(await page.texts('faucet-settings-failed'), []);
+
+  // The second try fails too. Whether the faucet is open is still not known, and the card says that:
+  // the sentence for a request that got no answer, what it leaves unknown here, and Reload. It does
+  // not say that the faucet is switched off, which nobody has told it.
+  await settings('fail');
+  await page.waitFor('faucet-settings-failed');
+  assert.equal(
+    await page.text('faucet-settings-failed'),
+    `${strings.errors.en.network} ${en.settingsFailed} ${strings.common.en.reload}`,
+  );
+  // It answers no tap, so it is no alert.
+  assert.equal(await page.page.$eval('[data-testid="faucet-settings-failed"]', (notice) => notice.getAttribute('role')), null);
+  assert.equal(await page.text('faucet-settings-reload'), strings.common.en.reload);
+  for (const hook of ['faucet-closed', 'faucet-ask', 'faucet-loading']) assert.deepEqual(await page.texts(hook), [], hook);
+  // No third try: the page has given up, and says so.
+  await new Promise((wake) => setTimeout(wake, 300));
+  assert.equal(await page.page.evaluate(() => (window as unknown as { __asked: number }).__asked), 2);
+  // The address is there all the same: being paid needs no faucet and no settings.
+  assert.equal(await page.text('receive-address'), record.firstAddress);
+  assert.equal(await page.sidewaysScroll(), 0);
   await snap(page, 'settings-failed-375-en', '[data-testid="faucet"]');
+
+  // The button loads the page afresh, which asks again. This time the settings arrive.
+  const loaded = documentsOf(page);
+  await Promise.all([page.page.waitForNavigation({ waitUntil: 'load' }), page.click('faucet-settings-reload')]);
+  assert.equal(documentsOf(page), loaded + 1, 'a full page load');
+  await asked(1);
+  await settings('arrive');
+  await page.waitFor('faucet-ask');
+  assert.deepEqual(await page.texts('faucet-settings-failed'), []);
 });
 
 scenario('a faucet that has paid this address before: it says so, offers a new address, and shows the coins when they come', { localOnly: true }, async (s) => {

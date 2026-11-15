@@ -7,6 +7,10 @@
 //   ORIGIN_URL       the practice network's origin: Esplora under /esplora/, the bots under /bots/
 //   BOTS_API_TOKEN   the bearer token the bots ask for
 //   ACCESS_CLIENT_ID, ACCESS_CLIENT_SECRET   optional: the Access service token, when the origin is behind one
+//   E2E_FILES        optional: run only these scenario files, named as they stand in e2e/scenarios/
+//                    and separated by commas ("chain.test.ts,worker.test.ts"). Without it, every file.
+//                    A name that is no scenario file there stops the run: a typing mistake must
+//                    never pass for a run of fewer scenarios.
 //
 // Everything else stays local: the app is served from this machine, the bot
 // check is the stand-in, events go to the recorder. Scenarios that drive the
@@ -45,10 +49,23 @@ process.env.E2E_LIVE = '1';
 // The files "pnpm e2e" runs: every *.test.ts, in the folders inside the folder too. (scenarios/helpers.ts
 // stops every run on a file of any other name, so the two commands cannot come to run different sets.)
 const folder = fileURLToPath(new URL('../scenarios/', import.meta.url));
-const files = readdirSync(folder, { recursive: true, encoding: 'utf8' })
+const every = readdirSync(folder, { recursive: true, encoding: 'utf8' })
   .filter((name) => name.endsWith('.test.ts'))
-  .sort()
-  .map((name) => join(folder, name));
+  .sort();
+
+// E2E_FILES names some of them: for a run that is meant to be short, such as the test of this very
+// program, which only has to see that the scenarios reach an origin through the Worker.
+const asked = (process.env.E2E_FILES ?? '')
+  .split(',')
+  .map((name) => name.trim())
+  .filter((name) => name !== '');
+const unknown = asked.filter((name) => !every.includes(name));
+if (unknown.length > 0) {
+  console.log(`not run: E2E_FILES names ${unknown.join(', ')}, which ${unknown.length === 1 ? 'is' : 'are'} not in e2e/scenarios. There are: ${every.join(', ')}.`);
+  process.exit(2);
+}
+const chosen = asked.length === 0 ? every : every.filter((name) => asked.includes(name));
+const files = chosen.map((name) => join(folder, name));
 
 let passed = 0;
 let failed = 0;
@@ -66,6 +83,8 @@ tests.compose(spec).pipe(process.stdout);
 tests.on('end', () => {
   // The reporter's last lines are still on their way out.
   setImmediate(() => {
+    // A run of some of the files says so, where the count is read: it is not the whole live run.
+    if (chosen.length < every.length) console.log(`only ${chosen.join(', ')}: ${chosen.length} of ${every.length} scenario files (E2E_FILES)`);
     console.log(`live run against ${originHost}: ${passed} passed, ${failed} failed, ${skipped} skipped (local only)`);
     if (failed > 0) process.exitCode = 1;
     else if (passed === 0) {
