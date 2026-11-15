@@ -14,6 +14,32 @@
 // file, or serves an old one, shows. The Content-Security-Policy is also
 // written out below a second time, on purpose: loosening the policy then
 // takes a change in two places, and this check fails until both agree.
+//
+// What one page must carry is worked out from that file for the page's own
+// path: the headers of every block whose path matches it. Cloudflare's rule
+// for matching a path is written out below, since this script imports
+// nothing from the rest of the repository. A header the file names for
+// other paths only must be absent.
+//
+// The file is not taken at its word for everything, since a mistake in it
+// would then pass: the site would be serving just what the file says. So
+// three more things are said outright below, whatever the file says. The
+// home page comes without X-Robots-Tag, since it is the one page a search
+// engine may list. Every other page this check asks for is marked, with
+// "X-Robots-Tag: noindex". And no page's Strict-Transport-Security has a
+// shorter max-age than the one this script holds for the Worker's own
+// answers.
+//
+// Every header is compared letter for letter, but one. A
+// Strict-Transport-Security passes with a max-age at least as long as the
+// one expected, whatever else it says. Our files send a plain
+// "max-age=31536000". On the deployed site every answer carries
+// "max-age=31536000; includeSubDomains; preload", and so does the main
+// site on the same domain, which this repository does not serve: so the
+// header is put on after the Worker has answered. (Cloudflare has a
+// setting that does this for a whole domain. Whether that is what does it
+// here has not been looked at.) The longer value is stricter, not weaker,
+// and ours stays in the files as the floor under it.
 
 import { readFileSync } from 'node:fs';
 
@@ -31,10 +57,22 @@ export const WORKER_HEADERS: Readonly<Record<string, string>> = {
   'strict-transport-security': 'max-age=31536000',
 };
 
+/**
+ * The shortest Strict-Transport-Security a page may come with, whatever the
+ * headers file says: the one this script holds for the Worker's own answers.
+ */
+const PAGE_STS_FLOOR = WORKER_HEADERS['strict-transport-security']!;
+
 const JSON_TYPE = 'application/json; charset=utf-8';
 
 /** A page of the app that is no file: the server has to answer it with the app itself. */
 const DEEP_PATH = '/wallet/receive';
+
+/** Another one, with a path of one part: the headers file names such a path in a block of its own. */
+const ONE_PART_PATH = '/about';
+
+/** Every page this check asks for. */
+const PAGES = [DEEP_PATH, ONE_PART_PATH, '/'];
 
 /** Every key of GET /api/config, and the kind of value it holds (contract/src/index.ts, AppConfig). */
 const CONFIG_KEYS: Readonly<Record<string, 'string' | 'number' | 'boolean'>> = {
@@ -57,37 +95,184 @@ export interface Check {
   detail: string;
 }
 
+/** One block of _headers. */
+export interface HeaderBlock {
+  /** The path as written: "/*", "/:part". */
+  path: string;
+  /** The path as a pattern for a whole request path. */
+  pattern: RegExp;
+  /** The headers the block adds, with lower-case names. */
+  set: [name: string, value: string][];
+}
+
 export interface Expectations {
-  /** The headers of the "/*" block of _headers: every page carries them. */
-  everyPage: [name: string, value: string][];
-  /** The headers the "/" block takes away again: the home page does not carry them. */
-  notOnHome: string[];
+  /** The blocks of _headers, in the order written. */
+  blocks: HeaderBlock[];
   /** The text of robots.txt. */
   robots: string;
 }
 
-/** Reads the two blocks of the app's _headers file. Header names come back in lower case. */
+/**
+ * A block's path as a pattern, made the way Cloudflare's file server makes
+ * it. Every character stands for itself, with two exceptions: a "*" takes
+ * any run of characters (and is named "splat"), and a ":name" takes one or
+ * more characters that are not a slash. The pattern covers the whole path.
+ */
+function pathPattern(path: string): RegExp {
+  let source = path
+    .split('*')
+    .map((part) => part.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&'))
+    .join('(?<splat>.*)');
+  // The names are found once, and each is then replaced wherever it is written.
+  for (const [written, name] of source.matchAll(/:([A-Za-z]\w*)/g)) source = source.split(written).join(`(?<${name}>[^/]+)`);
+  return new RegExp(`^${source}$`);
+}
+
+/**
+ * A block's path as Cloudflare's parser reads it, or null if it cannot be
+ * read. The parser, as it ships in wrangler, reads a path the way the path
+ * of a web address is read before a pattern is made of it, with the same
+ * call as this. Most paths come out as they went in. Some do not:
+ * "/wallet?tab=1" comes out as "/wallet", "/a/../about" as "/about", and
+ * "/{id}" as "/%7Bid%7D".
+ */
+function pathAsRead(path: string): string | null {
+  try {
+    return new URL(`//${path}`, 'relative://').pathname;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Reads the blocks of the app's _headers file. Header names come back in
+ * lower case, and the same name twice in one block is one header, joined
+ * with a comma, as Cloudflare reads it.
+ *
+ * It throws for a file that cannot say what a page must carry. One case is a
+ * "! Name" line, which takes a header away that another block added: on the
+ * deployed site the home page kept a header that such a line was to take
+ * away, so nothing can be worked out from one. Another is a path that
+ * Cloudflare would read as another path than the one written: Cloudflare
+ * applies the block to the path it read, and the pattern here would be made
+ * of the path as written.
+ */
 export function readExpectations(headersText: string, robots: string): Expectations {
-  const blocks = new Map<string, { set: [string, string][]; unset: string[] }>();
-  let block: { set: [string, string][]; unset: string[] } | null = null;
+  const blocks: HeaderBlock[] = [];
+  let block: HeaderBlock | null = null;
   for (const raw of headersText.split('\n')) {
     const line = raw.trim();
     if (line === '' || line.startsWith('#')) continue;
     if (line.startsWith('/')) {
-      block = { set: [], unset: [] };
-      blocks.set(line, block);
+      if (blocks.some((earlier) => earlier.path === line)) throw new Error(`_headers: the path ${line} twice`);
+      const read = pathAsRead(line);
+      if (read === null) throw new Error(`_headers: the path ${line} cannot be read as the path of an address`);
+      if (read !== line) throw new Error(`_headers: Cloudflare would read the path ${line} as ${read}, and what a page must carry cannot be worked out from the path as written`);
+      let pattern: RegExp;
+      try {
+        pattern = pathPattern(line);
+      } catch {
+        throw new Error(`_headers: no pattern can be made of the path ${line}`);
+      }
+      block = { path: line, pattern, set: [] };
+      blocks.push(block);
+    } else if (/^[^\s/:]+:\/\//.test(line)) {
+      // Cloudflare takes such a line as a rule for one host. Read as "Name: value" it would be a header named "https".
+      throw new Error(`_headers: the line ${JSON.stringify(raw)} is a rule for one host, and this check works out what a page must carry from its path alone`);
     } else if (block !== null && line.startsWith('! ')) {
-      block.unset.push(line.slice(2).trim().toLowerCase());
+      throw new Error(`_headers: the line ${JSON.stringify(raw)} takes a header away, and what a page must carry cannot be worked out from such a line`);
     } else if (block !== null && line.includes(':')) {
       const colon = line.indexOf(':');
-      block.set.push([line.slice(0, colon).trim().toLowerCase(), line.slice(colon + 1).trim()]);
+      const name = line.slice(0, colon).trim().toLowerCase();
+      const value = line.slice(colon + 1).trim();
+      const earlier = block.set.find(([known]) => known === name);
+      if (earlier) earlier[1] = `${earlier[1]}, ${value}`;
+      else block.set.push([name, value]);
     } else {
       throw new Error(`_headers: cannot read the line ${JSON.stringify(raw)}`);
     }
   }
-  const everyPage = blocks.get('/*');
-  if (!everyPage || everyPage.set.length === 0) throw new Error('_headers: no "/*" block');
-  return { everyPage: everyPage.set, notOnHome: blocks.get('/')?.unset ?? [], robots };
+  if (!blocks.some((each) => each.path === '/*' && each.set.length > 0)) throw new Error('_headers: no "/*" block');
+  const expect = { blocks, robots };
+  // Fails here, before anything is asked, if the file cannot say what one of the pages must carry.
+  for (const path of PAGES) expectedHeaders(expect, path);
+  return expect;
+}
+
+/**
+ * What a path must carry, worked out from the file: for every header the
+ * file names in any block, the value the blocks that match the path give
+ * it, or null where none of them names it (the path must come without it).
+ *
+ * It throws when two blocks that match the path name the same header.
+ * Cloudflare would join their values in the order it applies the blocks in,
+ * and for the deployed site that order is not known.
+ */
+export function expectedHeaders(expect: Expectations, path: string): [name: string, value: string | null][] {
+  const carried = new Map<string, string | null>();
+  for (const block of expect.blocks) for (const [name] of block.set) carried.set(name, null);
+  for (const block of expect.blocks) {
+    const match = block.pattern.exec(path);
+    if (match === null) continue;
+    for (const [name, written] of block.set) {
+      if (carried.get(name) !== null) throw new Error(`_headers: two blocks that match ${path} name ${name}, so its value would depend on the order the blocks are applied in`);
+      // A value may quote what the path's "*" or a ":name" of it stood for, as ":splat" or ":name".
+      let value = written;
+      for (const [capture, text] of Object.entries(match.groups ?? {})) value = value.replaceAll(`:${capture}`, text);
+      carried.set(name, value);
+    }
+  }
+  return [...carried];
+}
+
+/**
+ * One directive of a Strict-Transport-Security value: a name, or a name and
+ * a value. A value in quotes is not taken: see maxAgeOf.
+ */
+const DIRECTIVE = /^([A-Za-z0-9!#$%&'*+.^_`|~-]+)(?:[ \t]*=[ \t]*([A-Za-z0-9!#$%&'*+.^_`|~-]+))?$/;
+
+/**
+ * The max-age of a Strict-Transport-Security value, in seconds, or null for
+ * a value that cannot be read. A value is a list of directives with ";"
+ * between them: "max-age=31536000", and others that this check does not
+ * look into ("includeSubDomains", "preload").
+ *
+ * It is read strictly. max-age has to be there once, as plain digits, and
+ * no directive may come twice: a browser that cannot read the header sets
+ * it aside, and the protection with it. Two headers of this name also read
+ * as one value that cannot be read, since they arrive joined by a comma.
+ *
+ * In two places that is stricter than a browser, on purpose. The rule for
+ * this header (RFC 6797) lets a browser take a value in quotes
+ * (max-age="31536000"): here no value in quotes can be read, whichever
+ * directive it belongs to. And it tells a browser to use the first of two
+ * headers of this name and pass over the second: here two headers cannot
+ * be read where the first would do by itself. The two go together: a comma
+ * inside quotes would otherwise let two headers pass as one. In this check
+ * a false alarm is better than a false pass.
+ */
+export function maxAgeOf(value: string): number | null {
+  const seen = new Set<string>();
+  let seconds: number | null = null;
+  for (const part of value.split(';')) {
+    // Only a space and a tab are blanks in this header. Any other blank
+    // character (a no-break space, say) is part of the text, and a browser
+    // sets a header with such a character aside: so it is not trimmed away.
+    const piece = part.replace(/^[ \t]+|[ \t]+$/g, '');
+    // An empty place between two semicolons, or after the last one, is no fault.
+    if (piece === '') continue;
+    const directive = DIRECTIVE.exec(piece);
+    if (directive === null) return null;
+    const name = directive[1]!.toLowerCase();
+    if (seen.has(name)) return null;
+    seen.add(name);
+    // includeSubDomains takes no value. Given one, a browser sets the whole header aside.
+    if (name === 'includesubdomains' && directive[2] !== undefined) return null;
+    if (name !== 'max-age') continue;
+    if (directive[2] === undefined || !/^[0-9]+$/.test(directive[2])) return null;
+    seconds = Number(directive[2]);
+  }
+  return seconds;
 }
 
 interface Got {
@@ -133,6 +318,12 @@ export async function liveCheck(base: string, expect: Expectations): Promise<Che
   };
   const header = (label: string, got: Got, name: string, value: string | null): void => {
     const came = got.headers.get(name);
+    if (name === 'strict-transport-security' && value !== null) {
+      // The one header that may say more than is expected of it (the top of this file says why).
+      const least = maxAgeOf(value);
+      const comes = came === null ? null : maxAgeOf(came);
+      return check(`${label}: ${name}`, least !== null && comes !== null && comes >= least, `expected ${show(value)} or a longer max-age, got ${show(came)}`);
+    }
     check(`${label}: ${name}${value === null ? ' is absent' : ''}`, came === value, `expected ${show(value)}, got ${show(came)}`);
   };
   const isPage = (label: string, got: Got): void => {
@@ -141,19 +332,22 @@ export async function liveCheck(base: string, expect: Expectations): Promise<Che
   };
 
   // -- the pages --
-  await on(`GET ${DEEP_PATH}`, DEEP_PATH, undefined, (got) => {
-    const label = `GET ${DEEP_PATH}`;
-    isPage(label, got);
-    for (const [name, value] of expect.everyPage) header(label, got, name, value);
-    header(`${label} (the policy, as written in this script)`, got, 'content-security-policy', PAGE_CSP);
-  });
-  await on('GET /', '/', undefined, (got) => {
-    isPage('GET /', got);
-    for (const [name, value] of expect.everyPage) header('GET /', got, name, expect.notOnHome.includes(name) ? null : value);
-    header('GET / (the policy, as written in this script)', got, 'content-security-policy', PAGE_CSP);
-    // Said outright, whatever the file says: the home page is the one page a search engine may list.
-    header('GET / (may be listed)', got, 'x-robots-tag', null);
-  });
+  for (const path of PAGES) {
+    const label = `GET ${path}`;
+    await on(label, path, undefined, (got) => {
+      isPage(label, got);
+      // What the file gives this path, and nothing of what it gives other paths only.
+      for (const [name, value] of expectedHeaders(expect, path)) header(label, got, name, value);
+      header(`${label} (the policy, as written in this script)`, got, 'content-security-policy', PAGE_CSP);
+      // Said outright, whatever the file says: the home page is the one page a search engine may list,
+      // and every other page asked for here is marked. A file that lost a noindex block would otherwise
+      // pass, since what is served would agree with it.
+      if (path === '/') header('GET / (may be listed)', got, 'x-robots-tag', null);
+      else header(`${label} (must not be listed)`, got, 'x-robots-tag', 'noindex');
+      // The same for a max-age made shorter in the file: no page may come with a shorter one than the floor.
+      header(`${label} (the floor, as written in this script)`, got, 'strict-transport-security', PAGE_STS_FLOOR);
+    });
+  }
   await on('GET /robots.txt', '/robots.txt', undefined, (got) => {
     const type = got.headers.get('content-type') ?? '';
     check('GET /robots.txt: 200, plain text', got.status === 200 && type.startsWith('text/plain'), `status ${got.status}, type ${show(type)}`);

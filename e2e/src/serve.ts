@@ -13,8 +13,10 @@
 //   - A path with no file gets index.html with status 200, so the app's own
 //     router can show the screen (the "single-page application" setting).
 //   - The directory's _headers file is applied to every such answer, the
-//     fallback included, by the path that was asked for: rules in the order
-//     of the file, a "! Name" line taking away what an earlier rule added.
+//     fallback included, by the path that was asked for: every rule whose
+//     path matches, in the order of the file. In a rule's path a "*" is
+//     any run of characters and a ":name" is one part of the path, by the
+//     same pattern that Cloudflare's file server makes of the path.
 //   - /index.html and /index are redirects to /, and /index/ is one to
 //     /index (Cloudflare's default "auto-trailing-slash" handling of HTML
 //     files).
@@ -34,11 +36,24 @@
 // What it leaves out, so that nobody relies on it:
 //
 //   - Other HTML files than index.html get no special treatment.
-//   - A rule in _headers that names a host or uses a :placeholder, and a
-//     build that holds a _redirects or an .assetsignore file, are refused
-//     with an error instead of applied: this server could not apply them
-//     the way Cloudflare does, and would otherwise answer differently from
-//     the deployed site without a word.
+//   - A rule in _headers that names a host, a "! Name" line (it takes a
+//     header away that another rule added), and a build that holds a
+//     _redirects or an .assetsignore file, are refused with an error
+//     instead of applied: this server could not apply them the way
+//     Cloudflare does, and would otherwise answer differently from the
+//     deployed site without a word. With "! Name" that has happened: the
+//     home page kept, on the deployed site, a header that such a line took
+//     away here.
+//   - A rule's path that Cloudflare would read as another path than the
+//     one written. Its parser reads every path the way the path of a web
+//     address is read, and the rule is applied to the path it read:
+//     "/wallet?tab=1" is "/wallet" to it, and "/a/../about" is "/about".
+//     This server applies a path as it is written, so it refuses such a
+//     path, and says what Cloudflare would read it as.
+//   - The order the rules are applied in. Here it is the order of the
+//     file. Whether it is on the deployed site is not known, so a file
+//     must not lean on it: the app's own gives every path the same headers
+//     in any order, and a test holds it to that (test/serve.test.ts).
 //   - The handler's answers are passed back byte for byte, where Cloudflare
 //     would compress its JSON as well.
 //   - Three headers. This server sends "Vary: Accept-Encoding" with text
@@ -151,14 +166,15 @@ function encode(bytes: Buffer, type: string | null, accepted: string | undefined
 
 /** One block of a _headers file. */
 export interface HeaderRule {
-  /** The path as written: "/*", "/", "/assets/*". */
+  /** The path as written: "/*", "/assets/*", "/:part". */
   path: string;
-  /** The path as a pattern for a whole request path. A "*" stands for any run of characters. */
+  /**
+   * The path as a pattern for a whole request path. A "*" stands for any
+   * run of characters, a ":name" for one or more that are not a slash.
+   */
   pattern: RegExp;
   /** Headers the rule adds, with lower-case names, in the order written. */
   set: [name: string, value: string][];
-  /** Headers the rule takes away again ("! Name"). */
-  unset: string[];
 }
 
 // Cloudflare's limits for this file.
@@ -168,14 +184,69 @@ const MAX_LINE = 2000;
 const escapeRegex = (text: string) => text.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&');
 
 /**
+ * A rule's path as a pattern, made step for step as Cloudflare's file server
+ * makes it (generateRuleRegExp in its asset worker). Every character stands
+ * for itself, with two exceptions. A "*" becomes a group named "splat" that
+ * takes any run of characters, also an empty one. A ":name" (a colon, a
+ * letter, then letters, digits or "_") becomes a group of that name that
+ * takes one or more characters that are not a slash. The pattern covers the
+ * whole path, and capitals matter.
+ *
+ * It throws for a path no pattern can be made of: a name used twice, or
+ * ":splat" beside a "*", which bears that name already.
+ */
+function pathPattern(path: string): RegExp {
+  let source = path.split('*').map(escapeRegex).join('(?<splat>.*)');
+  // The names are found once, in the path as it stands here. Then each is
+  // replaced wherever it is written, also inside a longer name that comes
+  // after it ("/:a/:ab" has ":a" twice). Cloudflare's code does the same.
+  for (const [written, name] of source.matchAll(/:([A-Za-z]\w*)/g)) source = source.split(written).join(`(?<${name}>[^/]+)`);
+  return new RegExp(`^${source}$`);
+}
+
+/**
+ * A rule's path as Cloudflare's parser reads it. Before a pattern is made
+ * of a path, the parser reads it the way the path of a web address is read,
+ * and keeps what comes out (validateUrl and extractPathname in its code, as
+ * it ships in wrangler and in miniflare: they make the same call as this).
+ * Most paths come out as they went in. Some do not: what follows a "?" or a
+ * "#" is dropped, "/a/../about" comes out as "/about", and a character that
+ * a path does not hold as it is comes out as an escape, so that "/{id}" is
+ * "/%7Bid%7D".
+ *
+ * Null if the call fails. Cloudflare's code allows for that, and skips the
+ * rule.
+ */
+function pathAsRead(path: string): string | null {
+  try {
+    return new URL(`//${path}`, 'relative://').pathname;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Reads a _headers file the way Cloudflare's own parser does: lines are
  * trimmed; an empty line or one that starts with "#" is skipped; a line that
- * starts with "/" opens a block; "! Name" takes a header away; "Name: value"
- * adds one, and the same name twice in one block is joined with a comma.
+ * starts with "/" opens a block; "Name: value" adds a header, and the same
+ * name twice in one block is joined with a comma.
  *
  * Where Cloudflare would skip a bad line with a warning and deploy the rest,
  * this throws. A policy line that silently goes missing is the one mistake
- * this file must never make.
+ * this file must never make. It also throws for a "! Name" line, which
+ * Cloudflare takes: such a line takes a header away that another block
+ * added, and what became of one on the deployed site was not what this
+ * server had shown.
+ *
+ * And it throws for a path that Cloudflare would read as another path than
+ * the one written (pathAsRead). Cloudflare applies such a rule to the path
+ * it read. This server takes a path as it is written, and would not.
+ *
+ * And for a path that no request reaches this server with, because the
+ * path of a request is tidied before the rules are looked at (networkPath):
+ * two slashes in a row, an escape of a plain character, an escape written
+ * in small letters. Such a rule would never apply here, while Cloudflare's
+ * own code gives it to a request for exactly the path as written.
  */
 export function parseHeadersFile(text: string): HeaderRule[] {
   const rules: HeaderRule[] = [];
@@ -192,22 +263,35 @@ export function parseHeadersFile(text: string): HeaderRule[] {
     if (line.startsWith('/') || /^[^\s]+:\/\//.test(line)) {
       if (!line.startsWith('/')) fail(index, 'a rule for one host: the local server applies rules by path only');
       if (/\s/.test(line)) fail(index, 'a path cannot hold a space');
-      if (/:[A-Za-z]/.test(line)) fail(index, 'a :placeholder in a path is not supported by the local server');
-      const parts = line.split('*');
-      if (parts.length > 2) fail(index, 'more than one * in a path');
+      const read = pathAsRead(line);
+      if (read === null) fail(index, 'a path that cannot be read as the path of an address (Cloudflare would skip the rule)');
+      if (read !== line) {
+        fail(index, `a path that Cloudflare would read as ${JSON.stringify(read)}. It would apply the rule to that path, and this server to the path as written: write the path the way Cloudflare reads it`);
+      }
+      const tidied = networkPath(line);
+      if (tidied !== line) {
+        fail(index, `a path that no request reaches this server with: a request's path is tidied to ${JSON.stringify(tidied)} before the rules are looked at, so the rule would never apply here, while Cloudflare's own code gives it to a request for the path as written`);
+      }
+      if (line.split('*').length > 2) fail(index, 'more than one * in a path');
       if (rules.some((earlier) => earlier.path === line)) fail(index, 'the same path twice (Cloudflare would keep the last block only)');
-      rule = { path: line, pattern: new RegExp(`^${parts.map(escapeRegex).join('(?<splat>.*)')}$`), set: [], unset: [] };
+      let pattern: RegExp;
+      try {
+        pattern = pathPattern(line);
+      } catch (error) {
+        return fail(index, `no pattern can be made of this path, so Cloudflare would not apply the rule: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      rule = { path: line, pattern, set: [] };
       rules.push(rule);
       return;
     }
     if (rule === null) return fail(index, 'a header before any path');
 
     if (!line.includes(':')) {
-      if (!line.startsWith('! ')) fail(index, 'not a path, a "Name: value" pair or a "! Name"');
-      const name = line.slice(2).trim().toLowerCase();
-      if (name === '' || /\s/.test(name)) fail(index, 'not a header name after "!"');
-      rule.unset.push(name);
-      return;
+      if (!line.startsWith('! ')) fail(index, 'not a path or a "Name: value" pair');
+      return fail(
+        index,
+        'a "! Name" line. What such a line does on the deployed site cannot be shown here: one took a header off the home page on this server, and the deployed site still sent it. Write blocks that only add, each for the paths that carry its headers',
+      );
     }
     const colon = line.indexOf(':');
     const name = line.slice(0, colon).trim().toLowerCase();
@@ -220,7 +304,7 @@ export function parseHeadersFile(text: string): HeaderRule[] {
   });
 
   for (const each of rules) {
-    if (each.set.length === 0 && each.unset.length === 0) throw new Error(`_headers: the block for ${each.path} has no header`);
+    if (each.set.length === 0) throw new Error(`_headers: the block for ${each.path} has no header`);
   }
   if (rules.length > MAX_RULES) throw new Error(`_headers: ${rules.length} rules, and Cloudflare takes ${MAX_RULES}`);
   return rules;
@@ -228,20 +312,22 @@ export function parseHeadersFile(text: string): HeaderRule[] {
 
 /**
  * Lays the rules that match a request path over an answer's headers, as
- * Cloudflare does: every matching rule in file order; a rule first takes
- * away what it unsets and then adds its own. The first rule to name a header
- * replaces what the server sent by itself (so a rule can change
- * Cache-Control); a later rule's value for the same header is appended.
+ * Cloudflare's file server does: every matching rule, here in file order.
+ * The first rule to name a header replaces what the server sent by itself
+ * (so a rule can change Cache-Control); a later rule's value for the same
+ * header is appended.
  */
 export function applyHeaderRules(rules: readonly HeaderRule[], pathname: string, headers: Headers): void {
   const added = new Set<string>();
   for (const rule of rules) {
     const match = rule.pattern.exec(pathname);
     if (!match) continue;
-    for (const name of rule.unset) headers.delete(name);
     for (const [name, written] of rule.set) {
-      // A value may quote the part of the path its "*" stood for.
-      const value = match.groups?.splat === undefined ? written : written.replaceAll(':splat', match.groups.splat);
+      // A value may quote what the path's "*" or a ":name" of it stood for,
+      // as ":splat" or ":name". Each is put in wherever it is written, one
+      // name after the other in the order of the path, as Cloudflare does.
+      let value = written;
+      for (const [capture, text] of Object.entries(match.groups ?? {})) value = value.replaceAll(`:${capture}`, text);
       if (added.has(name)) headers.append(name, value);
       else headers.set(name, value);
       added.add(name);

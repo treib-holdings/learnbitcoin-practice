@@ -32,7 +32,7 @@ const CSP = [
   "frame-ancestors 'none'",
 ].join('; ');
 
-/** The headers of every path, in the order the file lists them. */
+/** The policy: the headers of every path, in the order the file lists them. */
 const EVERY_PATH: [name: string, value: string][] = [
   ['Content-Security-Policy', CSP],
   ['Referrer-Policy', 'no-referrer'],
@@ -43,14 +43,15 @@ const EVERY_PATH: [name: string, value: string][] = [
     'publickey-credentials-create=(self), publickey-credentials-get=(self), camera=(), microphone=(), geolocation=(), payment=(), usb=(), serial=()',
   ],
   ['Strict-Transport-Security', 'max-age=31536000'],
-  ['X-Robots-Tag', 'noindex'],
 ];
 
-/** One block of the file: a path, the headers it adds and the headers it takes away again. */
+/** What keeps a page out of a search engine's list. Every path carries it but "/" and a path that begins with two slashes. */
+const NOT_LISTED: [name: string, value: string][] = [['X-Robots-Tag', 'noindex']];
+
+/** One block of the file: a path and the headers it adds. */
 interface Rule {
   path: string;
   add: [name: string, value: string][];
-  remove: string[];
 }
 
 // Cloudflare's limits for this file.
@@ -59,36 +60,36 @@ const MAX_LINE = 2000;
 
 /**
  * Reads a _headers file. A line is a path at the left edge, or under a path
- * and indented a "Name: value" pair or a "! Name" (which removes a header an
- * earlier block added). Empty lines separate blocks. Anything else fails,
- * comments included: this file holds the policy and nothing more.
+ * and indented a "Name: value" pair. Empty lines separate blocks, and a line
+ * that starts with "#" at the left edge is a comment. Anything else fails:
+ * this file holds the policy, the reason for its shape, and nothing more.
+ *
+ * A "! Name" line fails too. Cloudflare takes one: it removes a header that
+ * another block added. But on the deployed site the home page kept a header
+ * that such a line was there to remove, so a block may only add.
  */
 function parseHeaders(text: string): Rule[] {
   const rules: Rule[] = [];
   text.split('\n').forEach((line, index) => {
-    if (line === '') return;
+    if (line === '' || line.startsWith('#')) return;
     const where = `line ${index + 1} (${JSON.stringify(line)})`;
     assert.ok(line.length <= MAX_LINE, `${where} is longer than ${MAX_LINE} characters`);
 
     const path = /^(\/\S*|https:\/\/\S+)$/.exec(line)?.[1];
     if (path !== undefined) {
-      rules.push({ path, add: [], remove: [] });
+      rules.push({ path, add: [] });
       return;
     }
     const rule = rules.at(-1);
     assert.ok(rule, `${where} comes before any path`);
 
-    const removed = /^[ \t]+! ([A-Za-z0-9-]+)$/.exec(line)?.[1];
-    if (removed !== undefined) {
-      rule.remove.push(removed);
-      return;
-    }
+    assert.ok(!/^[ \t]+! /.test(line), `${where} removes a header, and a block may only add`);
     const pair = /^[ \t]+([A-Za-z0-9-]+): (\S.*)$/.exec(line);
     if (pair?.[1] !== undefined && pair[2] !== undefined) {
       rule.add.push([pair[1], pair[2]]);
       return;
     }
-    assert.fail(`${where} is not a path, a "Name: value" pair or a "! Name"`);
+    assert.fail(`${where} is not a path or a "Name: value" pair`);
   });
   assert.ok(rules.length <= MAX_RULES, `${rules.length} rules, and the limit is ${MAX_RULES}`);
   return rules;
@@ -99,13 +100,19 @@ function checkHeadersFile(file: URL): void {
   assert.ok(text.endsWith('\n'), 'the file ends with a newline');
   const rules = parseHeaders(text);
 
-  // Two blocks, in this order: a "! Name" only removes what an earlier block added.
+  // Three blocks. Every path gets the policy. Two blocks mark a path
+  // noindex: ":part" is one or more characters that are not a slash, so
+  // "/:part" is every path of one part, and "/:part/*" every path of one
+  // part, a slash and whatever follows. Together they are every path except
+  // "/" and a path that begins with two slashes, which no page or file of
+  // the app has. No path gets one header from two blocks, so the order the
+  // blocks are applied in cannot change what a path carries.
   assert.deepEqual(
     rules.map((rule) => rule.path),
-    ['/*', '/'],
+    ['/*', '/:part', '/:part/*'],
   );
-  const [everyPath, home] = rules;
-  assert.ok(everyPath && home);
+  const [everyPath, onePart, longer] = rules;
+  assert.ok(everyPath && onePart && longer);
 
   // The policy first and by itself, so a failure shows the two strings side by side.
   const csp = everyPath.add.filter(([name]) => name === 'Content-Security-Policy');
@@ -113,17 +120,17 @@ function checkHeadersFile(file: URL): void {
   assert.equal(csp[0]?.[1], CSP);
 
   assert.deepEqual(everyPath.add, EVERY_PATH);
-  assert.deepEqual(everyPath.remove, []);
 
-  // The home page is the one page a search engine may list.
-  assert.deepEqual(home.add, []);
-  assert.deepEqual(home.remove, ['X-Robots-Tag']);
+  // The home page is the one page a search engine may list: the mark is in no block that matches "/".
+  assert.deepEqual(onePart.add, NOT_LISTED);
+  assert.deepEqual(longer.add, NOT_LISTED);
 }
 
-test('the parser refuses anything that is not a path, a pair or a removal', () => {
-  assert.equal(parseHeaders('/*\n  X-Robots-Tag: noindex\n\n/\n  ! X-Robots-Tag\n').length, 2);
+test('the parser refuses anything that is not a path, a pair or a comment', () => {
+  assert.equal(parseHeaders('# why\n/*\n  X-Content-Type-Options: nosniff\n\n# and why\n/:part\n  X-Robots-Tag: noindex\n').length, 2);
   for (const bad of [
-    '# a comment\n',
+    '/*\n  # a comment that is not at the left edge\n',
+    '/*\n  ! X-Robots-Tag\n',
     '/*\n  X-Robots-Tag noindex\n',
     '/*\nX-Robots-Tag: noindex\n',
     '  X-Robots-Tag: noindex\n',

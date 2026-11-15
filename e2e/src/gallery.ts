@@ -49,6 +49,7 @@ import { tmpdir } from 'node:os';
 import { dirname, extname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import puppeteer from 'puppeteer-core';
+import { applyHeaderRules, parseHeadersFile } from './serve.ts';
 
 const appDir = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', 'app');
 
@@ -63,43 +64,6 @@ export function buildGallery(outDir: string): void {
 }
 
 // -- serving ------------------------------------------------------------------
-
-/** One block of a _headers file: a path, the headers it adds and the ones it takes away again. */
-interface HeaderRule {
-  path: string;
-  add: [name: string, value: string][];
-  remove: string[];
-}
-
-/** Reads a _headers file: a path at the left edge, then indented "Name: value" and "! Name" lines. */
-export function readHeaders(text: string): HeaderRule[] {
-  const rules: HeaderRule[] = [];
-  for (const line of text.split('\n')) {
-    if (line.trim() === '') continue;
-    if (!/^\s/.test(line)) {
-      rules.push({ path: line.trim(), add: [], remove: [] });
-      continue;
-    }
-    const rule = rules.at(-1);
-    if (!rule) continue;
-    const entry = line.trim();
-    if (entry.startsWith('!')) rule.remove.push(entry.slice(1).trim().toLowerCase());
-    else rule.add.push([entry.slice(0, entry.indexOf(':')).trim(), entry.slice(entry.indexOf(':') + 1).trim()]);
-  }
-  return rules;
-}
-
-/** The headers a path is served with: every block that matches, in the file's order. "/*" matches every path. */
-export function headersFor(rules: HeaderRule[], pathname: string): Record<string, string> {
-  const headers = new Map<string, [name: string, value: string]>();
-  for (const rule of rules) {
-    const matches = rule.path.endsWith('*') ? pathname.startsWith(rule.path.slice(0, -1)) : pathname === rule.path;
-    if (!matches) continue;
-    for (const [name, value] of rule.add) headers.set(name.toLowerCase(), [name, value]);
-    for (const name of rule.remove) headers.delete(name);
-  }
-  return Object.fromEntries(headers.values());
-}
 
 const TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -118,17 +82,19 @@ const TYPES: Record<string, string> = {
  * Serves a built folder the way the app is hosted: a file where there is
  * one, index.html for every other address that is not a file's (so a screen
  * can be opened by its address), and the headers of the folder's _headers
- * file on everything. /api/ and /p/ answer 404: the gallery has no Worker,
+ * file on everything, read and matched to the path as the local server
+ * does it (serve.ts). /api/ and /p/ answer 404: the gallery has no Worker,
  * and a screen that asks for one has gone around the wallet.
  */
 export async function serve(dir: string): Promise<{ origin: string; close: () => Promise<void> }> {
   const root = resolve(dir);
-  const rules = readHeaders(readFileSync(join(root, '_headers'), 'utf8'));
+  const rules = parseHeadersFile(readFileSync(join(root, '_headers'), 'utf8'));
   const server: Server = createServer((request, response) => {
     const { pathname } = new URL(request.url ?? '/', 'http://localhost');
-    const headers = headersFor(rules, pathname);
+    const headers = new Headers();
+    applyHeaderRules(rules, pathname, headers);
     const send = (status: number, type: string, body: Buffer | string): void => {
-      response.writeHead(status, { ...headers, 'Content-Type': type, 'Cache-Control': 'no-store' });
+      response.writeHead(status, { ...Object.fromEntries(headers), 'Content-Type': type, 'Cache-Control': 'no-store' });
       response.end(body);
     };
     let file = resolve(root, `.${decodeURIComponent(pathname)}`);

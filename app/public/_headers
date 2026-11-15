@@ -1,3 +1,19 @@
+# The headers of the app's pages and files.
+#
+# The home page is the one page a search engine may list, so every other
+# page and file of the app is marked noindex. An earlier form of this file
+# marked every path ("/*") and took the mark away again for the home page,
+# in a second block ("/", with "! X-Robots-Tag"). Deployed, the home page
+# still came with "X-Robots-Tag: noindex". The local server, which applies
+# the blocks in the order they are written, had sent it without.
+#
+# So no block here takes a header away, and no path gets the same header
+# from two blocks: a path's headers are the same whatever order the blocks
+# are applied in. ":part" stands for one or more characters that are not a
+# slash. "/:part" is a path of one part, "/:part/*" is one part, a slash
+# and whatever follows: together they are every path except "/" and a path
+# that begins with two slashes, which no page or file of the app has.
+
 /*
   Content-Security-Policy: default-src 'none'; script-src 'self' https://challenges.cloudflare.com; style-src 'self'; img-src 'self'; font-src 'self'; connect-src 'self'; frame-src https://challenges.cloudflare.com; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
   Referrer-Policy: no-referrer
@@ -5,7 +21,9 @@
   Cross-Origin-Opener-Policy: same-origin
   Permissions-Policy: publickey-credentials-create=(self), publickey-credentials-get=(self), camera=(), microphone=(), geolocation=(), payment=(), usb=(), serial=()
   Strict-Transport-Security: max-age=31536000
+
+/:part
   X-Robots-Tag: noindex
 
-/
-  ! X-Robots-Tag
+/:part/*
+  X-Robots-Tag: noindex

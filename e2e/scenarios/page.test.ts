@@ -23,10 +23,8 @@ scenario('the page loads under its real headers: no console error, nothing block
   // The headers of the "/*" block, each exactly as written. The home page alone may be listed by a search engine.
   const first = documentOf(page, `${s.url}/`);
   assert.match(first.headers['content-type'] ?? '', /^text\/html/);
-  for (const [name, value] of POLICY) {
-    if (name === 'x-robots-tag') assert.equal(first.headers[name], undefined, 'the home page carries no X-Robots-Tag');
-    else assert.equal(first.headers[name], value, name);
-  }
+  for (const [name, value] of POLICY) assert.equal(first.headers[name], value, name);
+  assert.equal(first.headers['x-robots-tag'], undefined, 'the home page carries no X-Robots-Tag');
   assert.match(first.headers['content-security-policy'] ?? '', /^default-src 'none'; script-src 'self' /);
 
   // The app has drawn itself: the PRACTICE marker and a heading.
@@ -62,7 +60,7 @@ scenario('the page loads under its real headers: no console error, nothing block
   }
 });
 
-scenario('a deep path gets the app, marked noindex; the home page is not marked', async (s) => {
+scenario('a deep path and a path of one part get the app, marked noindex; the home page is not marked', async (s) => {
   // No file is called /wallet/receive: the server answers with the app, and the app's router takes it from there.
   const deep = await s.open('/wallet/receive');
   assert.equal(deep.status, 200);
@@ -78,6 +76,13 @@ scenario('a deep path gets the app, marked noindex; the home page is not marked'
   const spanish = await s.open('/es/wallet');
   assert.equal(spanish.status, 200);
   assert.equal(documentOf(spanish, `${s.url}/es/wallet`).headers['x-robots-tag'], 'noindex');
+
+  // A path of one part is marked by a block of its own in the headers file, and comes under the same policy.
+  const about = await s.open('/about');
+  assert.equal(about.status, 200);
+  const onePart = documentOf(about, `${s.url}/about`);
+  assert.equal(onePart.headers['x-robots-tag'], 'noindex');
+  for (const [name, value] of POLICY) assert.equal(onePart.headers[name], value, name);
 
   const home = await s.open('/');
   assert.equal(documentOf(home, `${s.url}/`).headers['x-robots-tag'], undefined);

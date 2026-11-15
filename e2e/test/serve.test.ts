@@ -77,9 +77,9 @@ const POLICY = parseHeadersFile(APP_HEADERS)[0]!.set;
 
 // -- the _headers file --------------------------------------------------------------
 
-test('_headers: the app\'s own file reads as two blocks, the policy and the home page\'s exception', () => {
+test('_headers: the app\'s own file reads as three blocks, the policy for every path and noindex for every path but the home page and one that begins with two slashes', () => {
   const rules = parseHeadersFile(APP_HEADERS);
-  assert.deepEqual(rules.map((rule) => rule.path), ['/*', '/']);
+  assert.deepEqual(rules.map((rule) => rule.path), ['/*', '/:part', '/:part/*']);
   assert.deepEqual(rules[0]!.set.map(([name]) => name), [
     'content-security-policy',
     'referrer-policy',
@@ -87,22 +87,48 @@ test('_headers: the app\'s own file reads as two blocks, the policy and the home
     'cross-origin-opener-policy',
     'permissions-policy',
     'strict-transport-security',
-    'x-robots-tag',
   ]);
-  assert.deepEqual(rules[0]!.unset, []);
-  assert.deepEqual(rules[1]!.set, []);
-  assert.deepEqual(rules[1]!.unset, ['x-robots-tag']);
+  assert.deepEqual(rules[1]!.set, [['x-robots-tag', 'noindex']]);
+  assert.deepEqual(rules[2]!.set, [['x-robots-tag', 'noindex']]);
+  // The three patterns, sign for sign as Cloudflare's file server makes them of these paths.
+  assert.deepEqual(rules.map((rule) => rule.pattern.source), [String.raw`^\/(?<splat>.*)$`, String.raw`^\/(?<part>[^/]+)$`, String.raw`^\/(?<part>[^/]+)\/(?<splat>.*)$`]);
+});
+
+/** Every order a list can be put in. */
+function orders<T>(list: readonly T[]): T[][] {
+  if (list.length <= 1) return [[...list]];
+  return list.flatMap((first, index) => orders([...list.slice(0, index), ...list.slice(index + 1)]).map((rest) => [first, ...rest]));
+}
+
+test('_headers: the app\'s own file gives a path the same headers whatever order its blocks are applied in', () => {
+  // The order of the file is this server's. What order the deployed site applies the blocks in is not known,
+  // so the file must not lean on one: every path gets the policy, and every path is marked noindex but "/"
+  // and a path that begins with two slashes, which no page or file of the app has.
+  const policy = Object.fromEntries(POLICY);
+  const marked = ['/about', '/wallet', '/es', '/robots.txt', '/index.html', '/wallet/receive', '/es/', '/es/about', '/assets/x.js', '/do/hold-some'];
+  const all = orders(parseHeadersFile(APP_HEADERS));
+  assert.equal(all.length, 6);
+  for (const rules of all) {
+    const order = rules.map((rule) => rule.path).join(', ');
+    const applied = (path: string) => {
+      const headers = new Headers();
+      applyHeaderRules(rules, path, headers);
+      return Object.fromEntries(headers);
+    };
+    assert.deepEqual(applied('/'), policy, `/ (${order})`);
+    for (const path of marked) assert.deepEqual(applied(path), { ...policy, 'x-robots-tag': 'noindex' }, `${path} (${order})`);
+  }
 });
 
 test('_headers: read as Cloudflare reads it', () => {
   // Lines are trimmed, comments and empty lines skipped, names lower-cased, a value keeps its colons.
-  const rules = parseHeadersFile('# a comment\n\n/assets/*\n\tCache-Control:  public, max-age=60 \n  X-Where: https://example.com/:splat\n\n/exact\n  ! Cache-Control\n');
+  const rules = parseHeadersFile('# a comment\n\n/assets/*\n\tCache-Control:  public, max-age=60 \n  X-Where: https://example.com/:splat\n\n/exact\n  # a comment under a path\n  X-Exact: yes\n');
   assert.equal(rules.length, 2);
   assert.deepEqual(rules[0]!.set, [
     ['cache-control', 'public, max-age=60'],
     ['x-where', 'https://example.com/:splat'],
   ]);
-  assert.deepEqual(rules[1]!.unset, ['cache-control']);
+  assert.deepEqual(rules[1]!.set, [['x-exact', 'yes']]);
   // The same header twice in one block is one header, joined with a comma.
   assert.deepEqual(parseHeadersFile('/*\n  X-Robots-Tag: noindex\n  X-Robots-Tag: nofollow\n')[0]!.set, [['x-robots-tag', 'noindex, nofollow']]);
 });
@@ -110,7 +136,7 @@ test('_headers: read as Cloudflare reads it', () => {
 test('_headers: a line Cloudflare would drop, or a rule this server cannot apply, stops the server instead', () => {
   const bad: [text: string, why: RegExp][] = [
     ['  X-Robots-Tag: noindex\n', /before any path/],
-    ['/*\n  X-Robots-Tag noindex\n', /not a path, a "Name: value" pair or a "! Name"/],
+    ['/*\n  X-Robots-Tag noindex\n', /not a path or a "Name: value" pair/],
     ['/*\n  X-Robots-Tag:\n', /no value/],
     ['/*\n  : noindex\n', /not a header name/],
     ['/*\n  X Robots: noindex\n', /not a header name/],
@@ -118,7 +144,11 @@ test('_headers: a line Cloudflare would drop, or a rule this server cannot apply
     ['/*\n', /no header/],
     ['/*\n  X-A: 1\n/*\n  X-B: 2\n', /same path twice/],
     ['/a/*/b/*\n  X-A: 1\n', /more than one \*/],
-    ['/users/:id\n  X-A: 1\n', /placeholder/],
+    // Cloudflare's code can make no pattern of these, and does not apply the rule: a name twice, a name that
+    // is the start of a later one, and ":splat" beside the "*" that bears that name.
+    ['/:a/:a\n  X-A: 1\n', /no pattern can be made of this path/],
+    ['/:a/:ab\n  X-A: 1\n', /no pattern can be made of this path/],
+    ['/:splat/*\n  X-A: 1\n', /no pattern can be made of this path/],
     ['https://practice.learnbitcoin.com/*\n  X-A: 1\n', /one host/],
     [`/*\n  X-Long: ${'a'.repeat(2000)}\n`, /longer than 2000/],
     [Array.from({ length: 101 }, (_, i) => `/p${i}\n  X-A: 1\n`).join(''), /101 rules/],
@@ -128,9 +158,83 @@ test('_headers: a line Cloudflare would drop, or a rule this server cannot apply
   assert.throws(() => parseHeadersFile('/*\n  X-A: 1\n  oops\n'), /_headers line 3/);
 });
 
+test('_headers: a "! Name" line is refused, and the error says why', () => {
+  // Cloudflare takes such a line: it takes away a header that another block added. The app's file as it was
+  // first deployed had one, for the home page. Here the home page then came without the header. There it kept it.
+  const deployed = '/*\n  X-Content-Type-Options: nosniff\n  X-Robots-Tag: noindex\n\n/\n  ! X-Robots-Tag\n';
+  assert.throws(
+    () => parseHeadersFile(deployed),
+    /^Error: _headers line 6: a "! Name" line\. What such a line does on the deployed site cannot be shown here: one took a header off the home page on this server, and the deployed site still sent it\. Write blocks that only add, each for the paths that carry its headers$/,
+  );
+  // Wherever it stands, and whatever it names.
+  for (const text of ['/*\n  ! X-Robots-Tag\n', '/*\n  X-A: 1\n  ! Cache-Control\n', '/:part\n  ! X-A\n  X-B: 2\n']) {
+    assert.throws(() => parseHeadersFile(text), /a "! Name" line\. What such a line does on the deployed site cannot be shown here/, JSON.stringify(text));
+  }
+});
+
+test('_headers: a path that Cloudflare would read as another path than the one written is refused, and the error says which', () => {
+  // Cloudflare's parser reads a rule's path the way the path of a web address is read, and applies the rule to
+  // the path it read. Each line is what its own code made of the path on the left, run on this machine: the
+  // parser in wrangler 4.161.0, and the copy of it in miniflare. This server applies a path as it is written:
+  // taken as it stands, each of these four rules did not give its headers to the path on the right, where
+  // Cloudflare's code did.
+  const rewritten: [written: string, read: string][] = [
+    // What follows a "?" is dropped.
+    ['/wallet?tab=1', '/wallet'],
+    // ".." takes the part before it away.
+    ['/a/../about', '/about'],
+    // A letter outside ASCII and a brace come out as escapes.
+    ['/caf\u00e9', '/caf%C3%A9'],
+    ['/{id}', '/%7Bid%7D'],
+  ];
+  for (const [written, read] of rewritten) {
+    assert.throws(
+      () => parseHeadersFile(`/*\n  X-A: 1\n${written}\n  X-B: 2\n`),
+      {
+        message: `_headers line 3: a path that Cloudflare would read as "${read}". It would apply the rule to that path, and this server to the path as written: write the path the way Cloudflare reads it`,
+      },
+      written,
+    );
+  }
+  // A path that is read as it is written is taken as before: the app's own three, and others.
+  for (const path of ['/*', '/:part', '/:part/*', '/assets/*', '/a.b', '/es/']) {
+    assert.deepEqual(parseHeadersFile(`${path}\n  X-Hit: yes\n`).map((rule) => rule.path), [path]);
+  }
+  // And so is each of the four, written the way Cloudflare reads it.
+  for (const [, read] of rewritten) {
+    assert.deepEqual(parseHeadersFile(`${read}\n  X-Hit: yes\n`).map((rule) => rule.path), [read]);
+  }
+});
+
+test('_headers: a path that no request reaches this server with is refused, and the error says what the path is tidied to', () => {
+  // This server tidies the path of a request before it looks at the rules (networkPath): slashes in a row
+  // become one, an escape of a plain character is read, and an escape is written in capitals. A rule whose
+  // path is not tidy in that way would never apply here, while Cloudflare's own code, run on this machine,
+  // gave each of these six to a request for exactly the path as written.
+  const untidy: [written: string, tidied: string][] = [
+    ['//x', '/x'],
+    ['/a//b', '/a/b'],
+    ['/%77allet', '/wallet'],
+    ['/a%41b', '/aAb'],
+    ['/caf%c3%a9', '/caf%C3%A9'],
+    ['/a%2fb', '/a%2Fb'],
+  ];
+  for (const [written, tidied] of untidy) {
+    assert.throws(
+      () => parseHeadersFile(`/*\n  X-A: 1\n${written}\n  X-B: 2\n`),
+      (error: unknown) => error instanceof Error && error.message.startsWith('_headers line 3: a path that no request reaches this server with') && error.message.includes(JSON.stringify(tidied)),
+      written,
+    );
+  }
+  // A tidy path is taken as before: the app's own three, and the tidy form of the two with escapes.
+  for (const path of ['/*', '/:part', '/:part/*', '/assets/*', '/caf%C3%A9', '/a%2Fb']) {
+    assert.deepEqual(parseHeadersFile(`${path}\n  X-Hit: yes\n`).map((rule) => rule.path), [path]);
+  }
+});
+
 test('_headers: rules are applied in file order, by the path that was asked for', () => {
   const rules = parseHeadersFile(
-    ['/*', '  X-Robots-Tag: noindex', '  Cache-Control: no-cache', '/', '  ! X-Robots-Tag', '/assets/*', '  X-Robots-Tag: nofollow', '  X-File: :splat', ''].join('\n'),
+    ['/*', '  X-Robots-Tag: noindex', '  Cache-Control: no-cache', '/', '  X-Home: yes', '/assets/*', '  X-Robots-Tag: nofollow', '  X-File: :splat', ''].join('\n'),
   );
   const applied = (path: string) => {
     // What the server sends by itself, before the file is looked at.
@@ -140,9 +244,9 @@ test('_headers: rules are applied in file order, by the path that was asked for'
   };
   // A rule's value replaces the server's own, and never joins it.
   assert.deepEqual(applied('/wallet'), { 'content-type': 'text/html', 'cache-control': 'no-cache', 'x-robots-tag': 'noindex' });
-  // "/" is the root and nothing else. Its "!" takes away what the earlier block added.
-  assert.deepEqual(applied('/'), { 'content-type': 'text/html', 'cache-control': 'no-cache' });
-  // Two matching rules that name one header: both values, joined. A value can quote what the "*" stood for.
+  // "/" is the root and nothing else.
+  assert.deepEqual(applied('/'), { 'content-type': 'text/html', 'cache-control': 'no-cache', 'x-robots-tag': 'noindex', 'x-home': 'yes' });
+  // Two matching rules that name one header: both values, joined in the order of the file. A value can quote what the "*" stood for.
   assert.deepEqual(applied('/assets/a/b.js'), {
     'content-type': 'text/html',
     'cache-control': 'no-cache',
@@ -151,6 +255,71 @@ test('_headers: rules are applied in file order, by the path that was asked for'
   });
   // A pattern covers the whole path: "/assets" itself is not under "/assets/*".
   assert.equal(applied('/assets')['x-file'], undefined);
+});
+
+test('_headers: a ":name" in a path is one part of the path, matched as Cloudflare matches it', () => {
+  /** The headers a file gives a path, and nothing else. */
+  const headersOf = (file: string, path: string) => {
+    const headers = new Headers();
+    applyHeaderRules(parseHeadersFile(file), path, headers);
+    return Object.fromEntries(headers);
+  };
+  /** Which of these paths a rule's path matches. */
+  const matched = (rule: string, paths: string[]) => paths.filter((path) => headersOf(`${rule}\n  X-Hit: yes\n`, path)['x-hit'] === 'yes');
+
+  // Every line below is what Cloudflare's own code did with the same rule and the same paths, run on this
+  // machine: the parser in wrangler 4.161.0, and the matcher of the file server that ships with it (in miniflare).
+  //
+  // One or more characters that are not a slash. So: one part and never none, and an escaped slash is no slash.
+  assert.deepEqual(matched('/:part', ['/', '/about', '/es', '/robots.txt', '/index.html', '/a%2Fb', '/a:b', '/about/', '/wallet/receive', '/es/']), [
+    '/about',
+    '/es',
+    '/robots.txt',
+    '/index.html',
+    '/a%2Fb',
+    '/a:b',
+  ]);
+  // With a "*" after it: one part, a slash, and whatever follows, even nothing.
+  assert.deepEqual(matched('/:part/*', ['/', '/about', '/wallet/receive', '/es/', '/es/about', '/assets/x.js', '/a/b/c/d']), [
+    '/wallet/receive',
+    '/es/',
+    '/es/about',
+    '/assets/x.js',
+    '/a/b/c/d',
+  ]);
+  // The rest of the path stands for itself, capitals too, and the pattern covers the whole path.
+  assert.deepEqual(matched('/books/:id', ['/books/7', '/books/ada', '/books', '/books/', '/books/7/', '/books/7/edit', '/Books/7', '/x/books/7']), ['/books/7', '/books/ada']);
+  // A name can stand beside other text. The dot after it is a dot.
+  assert.deepEqual(matched('/file-:name.txt', ['/file-a.txt', '/file-a.b.txt', '/file-.txt', '/file-aXtxt', '/file-a.txt/']), ['/file-a.txt', '/file-a.b.txt']);
+  // Two names, each one part.
+  assert.deepEqual(matched('/:lang/wallet/:screen', ['/es/wallet/send', '/es/wallet', '/es/wallet/send/x', '/wallet/send']), ['/es/wallet/send']);
+  // A name is a colon, a letter, then letters, digits or "_". A colon before anything else is a colon.
+  assert.deepEqual(matched('/a:1', ['/a:1', '/ab', '/a']), ['/a:1']);
+  assert.deepEqual(matched('/:_x', ['/:_x', '/a']), ['/:_x']);
+  assert.deepEqual(matched('/a:b', ['/ax', '/a:b', '/a', '/a/x']), ['/ax', '/a:b']);
+  assert.deepEqual(matched('/:part_1/:Part2', ['/a/b', '/a']), ['/a/b']);
+  // Of two names that start alike, the longer has to come first ("/:a/:ab" is refused: see above).
+  assert.deepEqual(matched('/:ab/:a', ['/x/y', '/x']), ['/x/y']);
+  // ":splat" by itself is a name like any other.
+  assert.deepEqual(matched('/:splat', ['/x', '/x/y']), ['/x']);
+  // The patterns themselves, sign for sign.
+  const source = (rule: string) => parseHeadersFile(`${rule}\n  X-Hit: yes\n`)[0]!.pattern.source;
+  assert.equal(source('/books/:id'), String.raw`^\/books\/(?<id>[^/]+)$`);
+  assert.equal(source('/file-:name.txt'), String.raw`^\/file\-(?<name>[^/]+)\.txt$`);
+  assert.equal(source('/:lang/wallet/:screen'), String.raw`^\/(?<lang>[^/]+)\/wallet\/(?<screen>[^/]+)$`);
+  assert.equal(source('/a:1'), String.raw`^\/a:1$`);
+
+  // A value can quote what a name stood for, and what the "*" stood for, wherever it writes them.
+  assert.deepEqual(headersOf('/books/:id\n  X-Id: book-:id\n', '/books/7'), { 'x-id': 'book-7' });
+  assert.deepEqual(headersOf('/books/:id\n  X-Id: book-:id\n', '/books/a%20b'), { 'x-id': 'book-a%20b' });
+  assert.deepEqual(headersOf('/:lang/wallet/*\n  X-Where: :lang|:splat\n', '/es/wallet/send/now'), { 'x-where': 'es|send/now' });
+  assert.deepEqual(headersOf('/:lang/wallet/*\n  X-Where: :lang|:splat\n', '/es/wallet/'), { 'x-where': 'es|' });
+  // A name the path does not have stays as written. One that starts like a name of the path has that start replaced.
+  assert.deepEqual(headersOf('/books/:id\n  X-Other: :other and :idle\n', '/books/7'), { 'x-other': ':other and 7le' });
+  // The names are put in one after the other, in the order of the path: what the first put in, the second can still replace.
+  assert.deepEqual(headersOf('/:a/:b\n  X-Both: :a\n', '/:b/x'), { 'x-both': 'x' });
+  // Two rules that match, one of them by a name: the values are joined in the order of the file.
+  assert.deepEqual(headersOf('/*\n  X-A: one\n/:part\n  X-A: two\n', '/about'), { 'x-a': 'one, two' });
 });
 
 // -- files ----------------------------------------------------------------------------
@@ -179,14 +348,17 @@ const FILES: Record<string, string | Uint8Array> = {
 
 test('every page carries the policy: the home page, a file, and a path that is no file', async () => {
   const site = await scratchSite(FILES);
-  for (const path of ['/', '/wallet/receive', '/es/wallet/tx/abc', '/assets/app-abc123.js', '/robots.txt', '/assets/no-such-file.js']) {
+  for (const path of ['/', '/about', '/es', '/wallet/receive', '/es/', '/es/wallet/tx/abc', '/assets/app-abc123.js', '/robots.txt', '/assets/no-such-file.js']) {
     const answer = await ask(site.port, path);
     assert.equal(answer.status, 200, path);
-    for (const [name, value] of POLICY) {
-      // The home page alone has no X-Robots-Tag: it may be listed.
-      assert.equal(answer.headers[name], path === '/' && name === 'x-robots-tag' ? undefined : value, `${path}: ${name}`);
-    }
+    for (const [name, value] of POLICY) assert.equal(answer.headers[name], value, `${path}: ${name}`);
+    // The home page alone has no X-Robots-Tag: it may be listed.
+    assert.equal(answer.headers['x-robots-tag'], path === '/' ? undefined : 'noindex', `${path}: x-robots-tag`);
   }
+  // The home page's other name is a path of its own: the answer that sends it on to "/" is marked like any other.
+  const other = await ask(site.port, '/index.html');
+  assert.deepEqual([other.status, other.headers['x-robots-tag']], [307, 'noindex']);
+  for (const [name, value] of POLICY) assert.equal(other.headers[name], value, `/index.html: ${name}`);
 });
 
 test('a path that is no file is the app, with status 200', async () => {
@@ -675,7 +847,9 @@ test('the handler\'s answer goes back as it is: status, headers and body, and no
   assert.deepEqual(teapot.headers['set-cookie'], ['a=1', 'b=2']);
   assert.equal(teapot.headers['content-length'], String(Buffer.byteLength(teapot.body)));
   // Nothing from _headers: Cloudflare never applies that file to what a Worker answers.
-  for (const [name] of POLICY) assert.equal(teapot.headers[name], undefined, name);
+  for (const rule of parseHeadersFile(APP_HEADERS)) {
+    for (const [name] of rule.set) assert.equal(teapot.headers[name], undefined, name);
+  }
   assert.equal(teapot.headers.etag, undefined);
 
   const accepted = await ask(site.port, '/p/event', { method: 'POST', body: '{}' });
@@ -747,6 +921,8 @@ test('it refuses to start without an app, with a policy file it cannot read whol
   await refusesToStart(noPolicy, /no _headers file/);
 
   await refusesToStart(scratchDist({ _headers: '/*\n  X-Robots-Tag noindex\n' }), /_headers line 2/);
+  // A file that takes a header away again, as the app's own did when it was first deployed.
+  await refusesToStart(scratchDist({ _headers: '/*\n  X-Robots-Tag: noindex\n\n/\n  ! X-Robots-Tag\n' }), /_headers line 5: a "! Name" line/);
 
   // Two files Cloudflare would apply and this server cannot: with either, the same path would be answered
   // one way here and another way when deployed, and nothing would say so.
