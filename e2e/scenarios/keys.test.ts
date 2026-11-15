@@ -80,6 +80,15 @@ async function openPasskeyWallet(page: OpenedPage): Promise<{ tag: string; finge
   return stored;
 }
 
+/**
+ * Matches three of the 12 words standing next to each other, with or without
+ * space between them. A leak of the words holds them in a row. One word alone
+ * proves nothing: the wallet's words are random, and "wallet", "page", "key"
+ * and "print" are all on the word list and on these screens.
+ */
+const inARow = (words: string[]): RegExp =>
+  new RegExp(words.slice(0, -2).map((word, i) => `${word}\\s*${words[i + 1]}\\s*${words[i + 2]}`).join('|'));
+
 /** The lock line of a passkey wallet, as the wallet frame words it. */
 const LOCKED = /^Looking and receiving need no passkey\./;
 
@@ -718,8 +727,8 @@ scenario('a passkey wallet: the words come only after the unlock step, Lock take
   assert.equal(words.length, 12);
   assert.equal(await uses(), before + 1, 'exactly one prompt');
   assert.equal(await heading(page), 'Your 12 words');
-  assert.equal((await page.stored())!.includes(words[0]!), false, 'the words are not in storage');
-  assert.doesNotMatch(await lastMatched(page), new RegExp(words.join('|')));
+  assert.doesNotMatch((await page.stored())!, inARow(words), 'the words are not in storage');
+  assert.doesNotMatch(await lastMatched(page), inARow(words));
 
   // Lock takes them off the page at once, and the next ask goes through the unlock step again.
   // (From the top of the page, as a reader would: where the page stands now, the sticky PRACTICE
@@ -731,8 +740,8 @@ scenario('a passkey wallet: the words come only after the unlock step, Lock take
   assert.equal(await heading(page), 'Backup');
   assert.match(await page.text('lock-state'), LOCKED);
   assert.equal(await has(page, 'words-withdrawn'), false, 'a lock is the reader\'s own doing: nothing to explain');
-  assert.equal((await page.page.evaluate(() => document.body.textContent ?? '')).includes(words[0]!), false);
-  assert.doesNotMatch(await lastMatched(page), new RegExp(words.join('|')));
+  assert.doesNotMatch(await page.page.evaluate(() => document.body.textContent ?? ''), inARow(words));
+  assert.doesNotMatch(await lastMatched(page), inARow(words));
   await page.click('reveal-words');
   await page.waitFor('unlock-step');
   assert.deepEqual(await page.texts('word'), []);
