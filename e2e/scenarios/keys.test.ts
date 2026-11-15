@@ -1,6 +1,7 @@
 // Backup and Settings: the 12 words on screen and off it again, the practice
-// card on paper, the wallet's facts and descriptors, Remove, what another
-// tab can do to both screens, and a passkey wallet's lock and unlock.
+// sheet on paper and its one card on screen, the wallet's facts and
+// descriptors, Remove, what another tab can do to both screens, and a
+// passkey wallet's lock and unlock.
 //
 // A wallet kept with its 12 words can be put in a page's storage before the
 // app starts. A passkey wallet cannot (a virtual authenticator's secret
@@ -14,6 +15,7 @@
 import assert from 'node:assert/strict';
 import { accountDescriptor } from '@learnbitcoin/practice-wallet';
 import { RECORD_KEY } from '../../app/src/lib/keystore.ts';
+import { siteHost } from '../../app/src/screens/keys/card-form.ts';
 import { REMOVE_SETTLE_MS } from '../../app/src/screens/keys/taps.ts';
 import { OTHER_WORDS, scenario, testRecord, type OpenedPage, type Scenario } from './helpers.ts';
 
@@ -130,6 +132,189 @@ async function counted(s: Scenario, page: OpenedPage, name: string): Promise<unk
   return s.stack.events.map((recorded) => recorded.event).filter((event) => event.name === name);
 }
 
+// -- the practice sheet ------------------------------------------------------------------
+
+/** A length the page gives in CSS pixels, in points: 96 pixels and 72 points make an inch. */
+const points = (px: number): number => px * 0.75;
+
+/** The numbers of a card's rows: "1" to "12". */
+const ROW_NUMBERS = Array.from({ length: 12 }, (_, index) => String(index + 1));
+
+/** A box as the page measures it, in CSS pixels. */
+interface Box {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+  width: number;
+  height: number;
+}
+
+/** One card of the practice sheet, as it is drawn at the moment it is looked at. */
+interface DrawnCard {
+  /** Its text as a reader would see it, with runs of white space as one space. */
+  text: string;
+  box: Box;
+  /** The title, and the PRACTICE stamp that follows it. */
+  title: Box;
+  stamp: Box;
+  /** The picture that holds the rows. */
+  picture: Box;
+  rows: {
+    number: string;
+    top: number;
+    /** The circle, in the picture's own units (points): its width and height. */
+    circle: { width: number; height: number };
+    /** The middle of the box's outline, in the picture's own units. */
+    outline: { left: number; right: number; height: number };
+    /** Where the dashed lines stand, in the picture's own units. */
+    lines: number[];
+  }[];
+  /** The corners that have a pair of crop marks drawn, each pair's box. */
+  marks: Box[];
+  restores: string;
+}
+
+/** What is drawn of the practice sheet, and of the rest of the screen, at the moment it is looked at. */
+interface DrawnSheet {
+  sheet: Box;
+  /** The sheet's heading, when it is drawn: its text, and how many pictures it holds. */
+  heading: { text: string; pictures: number }[];
+  cards: DrawnCard[];
+  /** How many of the 12 words are drawn, and how many the page holds. */
+  words: number;
+  wordsInPage: number;
+  /** The rest of the screen: the banner, the header, the headings, the section links, every button and link, the footer. */
+  around: number;
+  /** Everything a reader would see, with runs of white space as one space. */
+  text: string;
+  /** What the sheet says to a screen reader: "true" when it is hidden from one. */
+  hidden: string | null;
+}
+
+/** A text as a reader would see it: runs of white space as one space, and none at its ends. */
+const tidy = (text: string): string => text.replace(/\s+/g, ' ').trim();
+
+/**
+ * Looks at the practice sheet as the page draws it right now, on screen or
+ * (under print media) on paper. The page hands its texts over as they are,
+ * and they are tidied here: a pattern run inside the page would leave the
+ * text it ran on, which can hold the 12 words, where the page's scripts can
+ * read it (lastMatched above).
+ */
+async function drawnSheet(page: OpenedPage): Promise<DrawnSheet> {
+  const seen = await page.page.evaluate(() => {
+    const drawn = (selector: string, within: ParentNode = document): Element[] =>
+      [...within.querySelectorAll(selector)].filter((element) => element.getClientRects().length > 0);
+    const said = (element: Element): string => (element as HTMLElement).innerText;
+    const box = (element: Element) => {
+      const { left, top, right, bottom, width, height } = element.getBoundingClientRect();
+      return { left, top, right, bottom, width, height };
+    };
+    const sheet = document.querySelector('[data-testid="practice-sheet"]')!;
+    return {
+      sheet: box(sheet),
+      heading: drawn('[data-testid="sheet-heading"]').map((heading) => ({ text: said(heading), pictures: drawn('img', heading).length })),
+      cards: drawn('[data-testid="practice-card"]').map((card) => {
+        const title = card.querySelector('p')!;
+        const picture = card.querySelector('[data-testid="card-row"]')!.closest('svg')!;
+        return {
+          text: said(card),
+          box: box(card),
+          title: box(title),
+          stamp: box(title.nextElementSibling!),
+          picture: box(picture),
+          rows: drawn('[data-testid="card-row"]', card).map((row) => {
+            const circle = row.querySelector('circle')!.getBBox();
+            const outline = (row.querySelector('[data-testid="card-box"]') as SVGRectElement).getBBox();
+            return {
+              number: row.querySelector('text')?.textContent ?? '',
+              top: row.getBoundingClientRect().top,
+              circle: { width: circle.width, height: circle.height },
+              outline: { left: outline.x, right: outline.x + outline.width, height: outline.height },
+              lines: drawn('[data-testid="card-cell-line"]', row).map((line) => (line as SVGLineElement).getBBox().x),
+            };
+          }),
+          // The marks are drawn in the card's place on the sheet, around the card.
+          marks: drawn('[data-testid="crop-mark"]', card.parentElement!).map(box),
+          restores: said(card.querySelector('[data-testid="card-restores"]')!),
+        };
+      }),
+      words: drawn('[data-testid="word"]').length,
+      wordsInPage: document.querySelectorAll('[data-testid="word"]').length,
+      around: drawn('[role="note"], header, main h1, main h2, main nav, main button, main a, footer').length,
+      text: document.body.innerText,
+      hidden: sheet.getAttribute('aria-hidden'),
+    };
+  });
+  return {
+    ...seen,
+    heading: seen.heading.map((heading) => ({ ...heading, text: tidy(heading.text) })),
+    cards: seen.cards.map((card) => ({
+      ...card,
+      text: tidy(card.text),
+      restores: tidy(card.restores),
+      rows: card.rows.map((row) => ({ ...row, number: tidy(row.number) })),
+    })),
+    text: tidy(seen.text),
+  };
+}
+
+/** The same look under print media: what a sheet of paper would carry. */
+async function onPaper(page: OpenedPage): Promise<DrawnSheet> {
+  await page.page.emulateMediaType('print');
+  try {
+    return await drawnSheet(page);
+  } finally {
+    await page.page.emulateMediaType();
+  }
+}
+
+/**
+ * Two lengths that are the same, to a twentieth of a point (or of a pixel).
+ * The page keeps a place to 1/64 of a pixel, and a place that is a sum of
+ * a few lengths can be a few of those off.
+ */
+const same = (a: number, b: number): boolean => Math.abs(a - b) < 0.05;
+
+/** On screen the card is drawn a third larger than it prints (PracticeCard.svelte says why). */
+const ON_SCREEN = 1.3333;
+
+/**
+ * Holds one card to the form: twelve rows numbered 1 to 12, each under the
+ * one before; in every row a circle, and a box that seven dashed lines part
+ * into eight cells of the same width; the card's own width, in points.
+ * `scale` is how much larger than on paper the card is drawn: 1 on paper.
+ */
+function assertIsTheForm(card: DrawnCard, what: string, scale = 1): void {
+  /** A length of the page, as the points it is on paper. */
+  const real = (px: number): number => points(px) / scale;
+  // The form's card is 148 points wide, and the rows fill it between its two margins of 8 points.
+  assert.ok(same(real(card.box.width), 148), `${what}: ${real(card.box.width)} points wide`);
+  assert.ok(same(real(card.picture.left - card.box.left), 8), `${what}: the rows start 8 points in`);
+  assert.ok(same(real(card.picture.width), 131.59) && same(real(card.picture.height), 220), `${what}: the rows' picture`);
+  assert.deepEqual(card.rows.map((row) => row.number), ROW_NUMBERS, what);
+  card.rows.forEach((row, index) => {
+    const where = `${what}, row ${index + 1}`;
+    if (index > 0) assert.ok(row.top > card.rows[index - 1]!.top, `${where} stands under the row before it`);
+    assert.ok(same(row.circle.width, 14) && same(row.circle.height, 14), `${where}: the circle is 14 points across`);
+    // Seven lines and the box's two ends: eight cells, each 14 points wide. (The outline is measured on
+    // its middle, a third of a point inside the box's edge.)
+    assert.equal(row.lines.length, 7, where);
+    const edges = [row.outline.left, ...row.lines, row.outline.right];
+    const cells = edges.slice(1).map((edge, i) => edge - edges[i]!);
+    assert.equal(cells.length, 8, where);
+    for (const [i, width] of cells.entries()) {
+      const outer = i === 0 || i === cells.length - 1;
+      assert.ok(Math.abs(width - (outer ? 14 - 0.325 : 14)) < 0.01, `${where}: cell ${i + 1} is ${width} wide`);
+    }
+    assert.ok(same(row.outline.height, 14 - 0.65), where);
+  });
+  // From row to row 18 points, and 26 from row 6 to row 7.
+  const steps = card.rows.slice(1).map((row, i) => Math.round(real(row.top - card.rows[i]!.top) * 10) / 10);
+  assert.deepEqual(steps, [18, 18, 18, 18, 18, 26, 18, 18, 18, 18, 18], what);
+}
+
 scenario('Backup: the 12 words show only when asked for, are the stored wallet\'s, and leave the screen again', async (s) => {
   const record = testRecord();
   const words = record.mnemonic!.split(' ');
@@ -172,18 +357,12 @@ scenario('Backup: the 12 words show only when asked for, are the stored wallet\'
     await page.page.$eval(byTestId('word'), (item) => (item.closest('[data-print="never"]')?.previousElementSibling?.textContent ?? '').trim()),
     'Practice',
   );
-  // The card's lines stand where the words do: on a phone both are two columns wide, and line 2 is at
-  // the top right like word 2. A reader who copies by place writes the words in the right order.
-  const places = await page.page.evaluate(() => {
-    const columns = (selector: string): number[] => {
-      const lefts = [...document.querySelectorAll(selector)].map((element) => Math.round(element.getBoundingClientRect().left));
-      const order = [...new Set(lefts)].sort((a, b) => a - b);
-      return lefts.map((left) => order.indexOf(left));
-    };
-    return { words: columns('[data-testid="word"]'), lines: columns('[data-testid="practice-card"] ol > li') };
-  });
-  assert.deepEqual(places.words, [0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1]);
-  assert.deepEqual(places.lines, places.words);
+  // Under the words, the card to write them on: the main site's backup form, with its rows numbered
+  // 1 to 12 down the card, one row to a word, eight letter cells to a row. One card shows on screen.
+  const below = await drawnSheet(page);
+  assert.equal(below.cards.length, 1);
+  assertIsTheForm(below.cards[0]!, 'the card on screen', ON_SCREEN);
+  assert.ok(below.cards[0]!.box.top > (await page.page.$eval(byTestId('hide-words'), (button) => button.getBoundingClientRect().bottom)));
 
   // The list as SPEC section 12 wants it: ordered, English, not to be translated, corrected, completed or kept.
   const list = await page.page.$eval(byTestId('word'), (item) => {
@@ -256,53 +435,111 @@ scenario('Backup: the 12 words show only when asked for, are the stored wallet\'
   assert.deepEqual(await page.passkey!.credentials(), []);
 });
 
-scenario('Backup: on paper the practice card shows alone, and no word does, shown or not', async (s) => {
+/** The papers the sheet has to fit, each with its width in points. */
+const PAPERS = [
+  { format: 'Letter', width: 8.5 * 72 },
+  { format: 'A4', width: (210 / 25.4) * 72 },
+] as const;
+/** Half an inch on every side: Firefox's margin when the reader changes nothing. Chrome's default for a PDF is 1 cm, which is less. */
+const HALF_INCH = { top: '0.5in', right: '0.5in', bottom: '0.5in', left: '0.5in' } as const;
+
+/** How many pages a PDF has. */
+const pagesOf = (pdf: Uint8Array): number => Buffer.from(pdf).toString('latin1').match(/\/Type\s*\/Page\b/g)?.length ?? 0;
+
+/**
+ * Holds what print media draws to the sheet: the sheet alone, with its
+ * heading and three cards side by side in real sizes, every card the form
+ * with the stamp and the "restores" line, each inside its crop marks, and
+ * not one of the 12 words. `expected` is the sheet's text in the page's
+ * language.
+ */
+function assertSheetOnPaper(paper: DrawnSheet, expected: { heading: string; card: string; restores: string }, wordsInPage: number): void {
+  // The sheet and nothing else: no word, and nothing of the screen around it.
+  assert.deepEqual([paper.cards.length, paper.heading.length, paper.words, paper.wordsInPage, paper.around], [3, 1, 0, wordsInPage, 0]);
+  // The heading: the logo (its mark and its name, two picture files), the stamp, the site's name, the
+  // title, and the short form of the exception paragraph.
+  assert.equal(paper.heading[0]!.text, expected.heading);
+  assert.equal(paper.heading[0]!.pictures, 2);
+  // Three cards, each the same: the title, the stamp, the two warnings, the twelve numbers, the line
+  // that says where the words restore, and the site's name.
+  for (const [index, card] of paper.cards.entries()) {
+    const what = `card ${index + 1} on paper`;
+    assert.equal(card.text, expected.card, what);
+    assert.equal(card.restores, expected.restores, what);
+    assertIsTheForm(card, what);
+    assert.ok(same(card.box.height, paper.cards[0]!.box.height), `${what} is as tall as the first`);
+  }
+  assert.equal(paper.text, [expected.heading, expected.card, expected.card, expected.card].join(' '));
+
+  // Side by side, on one line, with the gap the crop marks need: 22 points between two cards, and 16
+  // points of room at the sheet's two ends.
+  const [first, second, third] = paper.cards.map((card) => card.box) as [Box, Box, Box];
+  assert.ok(same(first.top, second.top) && same(second.top, third.top), 'the three cards stand on one line');
+  assert.ok(same(points(second.left - first.right), 22) && same(points(third.left - second.right), 22), 'the gaps between the cards');
+  assert.ok(same(points(first.left - paper.sheet.left), 16) && same(points(paper.sheet.right - third.right), 16), "the room at the sheet's ends");
+  // The sheet is 520 points wide: it fits the narrower paper, A4, inside half-inch margins.
+  assert.ok(same(points(paper.sheet.width), 520));
+  for (const { format, width } of PAPERS) assert.ok(points(paper.sheet.width) <= width - 72, format);
+
+  // Crop marks at the four corners of every card: each pair reaches 16 points out from its corner, along
+  // both edges, and stops 4 points short of it. (A hairline is a quarter of a point wide; the page
+  // measures a pair with its lines' width, so a third of a point either way is still the corner.)
+  for (const [index, card] of paper.cards.entries()) {
+    assert.equal(card.marks.length, 4, `card ${index + 1}`);
+    /** Two places of the page that are a third of a point apart at most. */
+    const near = (a: number, b: number): boolean => Math.abs(points(a - b)) < 0.34;
+    const [topLeft, topRight, bottomLeft, bottomRight] = card.marks as [Box, Box, Box, Box];
+    assert.ok(near(topLeft.right, card.box.left) && near(topLeft.bottom, card.box.top), `card ${index + 1}: top left`);
+    assert.ok(near(topRight.left, card.box.right) && near(topRight.bottom, card.box.top), `card ${index + 1}: top right`);
+    assert.ok(near(bottomLeft.right, card.box.left) && near(bottomLeft.top, card.box.bottom), `card ${index + 1}: bottom left`);
+    assert.ok(near(bottomRight.left, card.box.right) && near(bottomRight.top, card.box.bottom), `card ${index + 1}: bottom right`);
+    for (const mark of card.marks) {
+      assert.ok(Math.abs(points(mark.width) - 16) < 0.34 && Math.abs(points(mark.height) - 16) < 0.34, `card ${index + 1}: a pair reaches 16 points`);
+    }
+  }
+}
+
+scenario('Backup: on paper the practice sheet shows alone, three cards under its heading, and no word does, shown or not', async (s) => {
   const page = await s.open('/wallet/backup', { record: testRecord(), width: 1280 });
   await page.waitFor('practice-card');
+  const site = siteHost(s.stack.config.siteUrl);
+  assert.equal(site, 'learnbitcoin.com');
 
-  /** What print media draws: which things take up room, and the text a sheet would carry. */
-  const onPaper = async () => {
-    await page.page.emulateMediaType('print');
-    try {
-      return await page.page.evaluate(() => {
-        const drawn = (selector: string): number =>
-          [...document.querySelectorAll(selector)].filter((element) => element.getClientRects().length > 0).length;
-        return {
-          card: drawn('[data-testid="practice-card"]'),
-          lines: drawn('[data-testid="practice-card"] ol > li'),
-          words: drawn('[data-testid="word"]'),
-          wordsInPage: document.querySelectorAll('[data-testid="word"]').length,
-          // The rest of the screen: the banner, the header, the heading, the section links, every button, the footer.
-          around: drawn('[role="note"], header, main h1, main h2, main nav, main button, main a, footer'),
-          text: document.body.innerText.replace(/\s+/g, ' ').trim(),
-        };
-      });
-    } finally {
-      await page.page.emulateMediaType();
-    }
+  // The form's own words, and the two things a practice card adds: the stamp and the last line.
+  const expected = {
+    heading: `PRACTICE ${site} Recovery Seed Phrases Practice words only. The words of a real wallet never go into a web page, this one included.`,
+    card: `Recovery Seed Phrases PRACTICE Don't make digital copies Never share with anyone ${ROW_NUMBERS.join(' ')} Restores only on the practice network. ${site}`,
+    restores: 'Restores only on the practice network.',
   };
-  const CARD = /^The 12 words of a practice wallet PRACTICE 1\. 2\. 3\. 4\. 5\. 6\. 7\. 8\. 9\. 10\. 11\. 12\. Practice words only\. The words of a real wallet never go into a web page, this one included\. Restores only on the practice network\.$/i;
 
   // With the words hidden.
-  const hidden = await onPaper();
-  assert.deepEqual([hidden.card, hidden.lines, hidden.words, hidden.wordsInPage, hidden.around], [1, 12, 0, 0, 0]);
-  assert.match(hidden.text, CARD);
+  const hidden = await onPaper(page);
+  assertSheetOnPaper(hidden, expected, 0);
+  // In English the stamp fits on the title's line: it stands at the title's right, level with it.
+  for (const card of hidden.cards) {
+    assert.ok(card.stamp.left > card.title.right, 'the stamp stands at the right of the title');
+    assert.ok(card.stamp.top >= card.title.top && card.stamp.bottom <= card.title.bottom, "the stamp is on the title's line");
+    assert.ok(same(points(card.stamp.right - card.box.left), 148 - 8), "the stamp ends at the card's right margin");
+  }
 
-  // With the words on screen: twelve in the page, none on paper, and the same card.
+  // With the words on screen: twelve in the page, none on paper, and the same sheet to the point.
   await page.click('reveal-words');
   await page.waitFor('word');
-  const shown = await onPaper();
-  assert.deepEqual([shown.card, shown.lines, shown.words, shown.wordsInPage, shown.around], [1, 12, 0, 12, 0]);
-  assert.match(shown.text, CARD);
+  const shown = await onPaper(page);
+  assertSheetOnPaper(shown, expected, 12);
   assert.doesNotMatch(shown.text, /abandon/);
+  assert.deepEqual(shown.cards.map((card) => [card.box.width, card.box.height]), hidden.cards.map((card) => [card.box.width, card.box.height]));
   // Back on screen they are still there: only paper leaves them out.
   assert.equal((await page.texts('word')).length, 12);
 
-  // The sheet itself: one page, as Chrome prints it.
-  const pdf = Buffer.from(await page.page.pdf({ format: 'Letter' })).toString('latin1');
-  assert.equal(pdf.match(/\/Type\s*\/Page\b/g)?.length, 1, 'the printout is one page');
+  // The sheet itself, as Chrome prints it: one page, on US Letter and on A4, inside half-inch margins
+  // and with none at all.
+  for (const { format } of PAPERS) {
+    assert.equal(pagesOf(await page.page.pdf({ format, margin: HALF_INCH })), 1, `${format}, half-inch margins`);
+    assert.equal(pagesOf(await page.page.pdf({ format })), 1, `${format}, no margins`);
+  }
 
-  // "Print the card" asks the browser to print, once: also for a double click, which is two clicks.
+  // "Print the sheet" asks the browser to print, once: also for a double click, which is two clicks.
   await page.page.evaluate(() => {
     const counter = window as unknown as { printed: number };
     counter.printed = 0;
@@ -310,10 +547,73 @@ scenario('Backup: on paper the practice card shows alone, and no word does, show
       counter.printed += 1;
     };
   });
+  assert.equal(await page.text('print-card'), 'Print the sheet');
   await page.click('print-card');
   assert.equal(await page.page.evaluate(() => (window as unknown as { printed: number }).printed), 1);
   await page.page.click(byTestId('print-card'), { count: 2 });
   assert.equal(await page.page.evaluate(() => (window as unknown as { printed: number }).printed), 2);
+});
+
+scenario('Backup in Spanish: on paper the sheet is the same form in the site\'s Spanish terms, with the stamp under the longer title', async (s) => {
+  const page = await s.open('/es/wallet/backup', { record: testRecord(), lang: 'es', width: 1280 });
+  await page.waitFor('practice-card');
+  const site = siteHost(s.stack.config.siteUrl);
+
+  await page.click('reveal-words');
+  await page.waitFor('word');
+  const paper = await onPaper(page);
+  assertSheetOnPaper(
+    paper,
+    {
+      heading: `PRÁCTICA ${site} Frases semilla de recuperación Solo palabras de práctica. Las palabras de una billetera de verdad nunca van en una página web, incluida esta.`,
+      card: `Frases semilla de recuperación PRÁCTICA No hagas copias digitales No las compartas con nadie ${ROW_NUMBERS.join(' ')} Solo se restaura en la red de práctica. ${site}`,
+      restores: 'Solo se restaura en la red de práctica.',
+    },
+    12,
+  );
+  assert.doesNotMatch(paper.text, /abandon/);
+  // The Spanish title is too long to share its line with the stamp: the stamp stands under it, at the left.
+  for (const card of paper.cards) {
+    assert.ok(card.stamp.top >= card.title.bottom, 'the stamp stands under the title');
+    assert.ok(same(card.stamp.left, card.title.left), 'the stamp starts where the title does');
+    assert.ok(card.title.height < card.stamp.height * 2, 'the title is on one line');
+  }
+  // The card is taller by the stamp's line, and the sheet is still one page on both papers.
+  for (const { format } of PAPERS) assert.equal(pagesOf(await page.page.pdf({ format, margin: HALF_INCH })), 1, `${format}, half-inch margins`);
+  assert.equal(await page.text('print-card'), 'Imprimir la hoja');
+});
+
+scenario('Backup on a phone 320 px wide: one card shows, as a picture of what prints, and nothing scrolls sideways', async (s) => {
+  for (const lang of ['en', 'es'] as const) {
+    const page = await s.open(lang === 'es' ? '/es/wallet/backup' : '/wallet/backup', { record: testRecord(), lang, width: 320 });
+    await page.waitFor('practice-card');
+    assert.equal(await page.sidewaysScroll(), 0, lang);
+
+    const screen = await drawnSheet(page);
+    // One card of the three, with no heading and no crop marks: those are for paper.
+    assert.deepEqual([screen.cards.length, screen.heading.length, screen.cards[0]!.marks.length], [1, 0, 0], lang);
+    assert.equal(await page.page.$$eval(byTestId('practice-card'), (cards) => cards.length), 3, lang);
+    // The card is the form, a third larger than it prints, and whole inside the screen.
+    const card = screen.cards[0]!;
+    assertIsTheForm(card, `the card on a phone (${lang})`, ON_SCREEN);
+    assert.ok(card.box.left >= 0 && card.box.right <= 320, lang);
+    // It is a picture: a screen reader is told nothing by it. The sentence above it says what the sheet
+    // is, how many cards it prints, and that the words are never printed.
+    assert.equal(screen.hidden, 'true', lang);
+    const lead = await page.page.$eval(byTestId('practice-sheet'), (sheet) => (sheet.previousElementSibling?.textContent ?? '').trim());
+    assert.match(
+      lead,
+      lang === 'en'
+        ? /^This is LearnBitcoin's 12-word backup form, marked for practice\. The sheet prints 3 blank cards: .+ never printed, whether they are showing or not\.$/
+        : /^Este es el formulario de respaldo de 12 palabras de LearnBitcoin, marcado para práctica\. La hoja imprime 3 tarjetas en blanco: .+ nunca se imprimen, se estén mostrando o no\.$/,
+    );
+    // The stamp: on the title's line in English, under the title in Spanish, whose title is longer.
+    if (lang === 'en') {
+      assert.ok(card.stamp.left > card.title.right && card.stamp.top >= card.title.top && card.stamp.bottom <= card.title.bottom);
+    } else {
+      assert.ok(card.stamp.top >= card.title.bottom && same(card.stamp.left, card.title.left));
+    }
+  }
 });
 
 scenario('Settings: the wallet fingerprint the record holds, and the descriptors the wallet package gives for it', async (s) => {
@@ -519,9 +819,13 @@ scenario('the Spanish routes: Backup and Settings in Spanish, with the 12 words 
   assert.equal(await page.page.$eval(byTestId('word'), (item) => item.parentElement!.getAttribute('lang')), 'en');
   assert.match(await seenText(page), /Las 12 palabras están en inglés a propósito: salen de una lista fija\. Cópialas tal como están, sin traducirlas\./);
   assert.equal(await page.text('hide-words'), 'Ocultarlas');
-  // The card, in Spanish, with the marker's own Spanish word.
-  assert.match(await page.text('practice-card'), /Las 12 palabras de una billetera de práctica\s*Práctica.+Solo se restaura en la red de práctica\./);
-  assert.equal(await page.text('print-card'), 'Imprimir la tarjeta');
+  // The card, in Spanish: the form's words in the site's Spanish terms, with the marker's own Spanish
+  // word, the twelve numbers, and the site's name at its foot.
+  assert.equal(
+    await page.text('practice-card'),
+    `Frases semilla de recuperación Práctica No hagas copias digitales No las compartas con nadie ${ROW_NUMBERS.join('')} Solo se restaura en la red de práctica. ${siteHost(s.stack.config.siteUrl)}`,
+  );
+  assert.equal(await page.text('print-card'), 'Imprimir la hoja');
 
   // The section links stay in Spanish, and Settings follows.
   await toSection(page, '/es/wallet/settings');

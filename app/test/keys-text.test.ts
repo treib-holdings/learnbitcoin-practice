@@ -1,10 +1,12 @@
 // The rules the text of the Backup and Settings screens keeps, beyond the
 // ones test/strings.test.ts holds every table to: the exception paragraph
-// word for word, what Remove may promise, the words the app may use about
-// privacy, facts as slots, and that every key of the two tables is used.
+// word for word, the words of the main site's backup form on the practice
+// card, what Remove may promise, the words the app may use about privacy,
+// facts as slots, and that every key of the two tables is used.
 // And a few rules for the screens' own source: nothing reaches around the
 // wallet, the 12 words meet no regular expression and no copy control, the
-// passkey's whole name is built nowhere here, the words of the "Wallet
+// practice sheet is the form's parts in the form's order and holds no word,
+// the passkey's whole name is built nowhere here, the words of the "Wallet
 // made" step are taken only once the screen is on the page, and the Remove
 // question neither moves the page nor takes an answer at once.
 
@@ -15,6 +17,7 @@ import { LANGS } from '@learnbitcoin/practice-contract';
 import { splitLead } from '../src/components/text.ts';
 import { SAFARI_KEEPS_DAYS } from '../src/components/wallet/frame.ts';
 import { fill, slotNames } from '../src/lib/format.ts';
+import { COPIES } from '../src/screens/keys/card-form.ts';
 import { strings } from '../src/strings/index.ts';
 
 type Table = Readonly<Record<string, string>>;
@@ -118,7 +121,7 @@ test('real money must never go on these words: the companion line, in both langu
     strings.backup.es.neverRealMoney,
     'Nunca pongas dinero de verdad en estas 12 palabras. Las palabras que estuvieron en una página web solo sirven para practicar: una billetera de verdad debe generar las suyas.',
   );
-  // The card carries the short form, which is the shared one.
+  // The practice sheet carries the short form, which is the shared one.
   assert.match(source('keys/PracticeCard.svelte'), /\{w\.wordsException\}/);
 });
 
@@ -163,12 +166,13 @@ test('"Wallet made" with a passkey: where the passkey lives, and the words as th
   assert.ok(step.indexOf('<WordsList') < step.indexOf('{t.madePasskeyBack}'));
   assert.ok(step.indexOf('<WordsList') < step.indexOf('{t.madeKeepsWords}'));
   assert.ok(step.indexOf('{t.madeKeepsWords}') < step.indexOf('{@render exception(true)}'));
-  // The card to write the words on is offered before the button that says they are written down,
-  // which takes them off the screen. On the other steps the card closes the screen.
-  assert.ok(step.indexOf('{@render exception(true)}') < step.indexOf('<PracticeCard />'));
-  assert.ok(step.indexOf('<PracticeCard />') < step.indexOf('data-testid="words-written"'));
-  assert.equal(backup.match(/<PracticeCard \/>/g)?.length, 2);
-  assert.match(backup, /\{#if !made\}\s*<PracticeCard \/>\s*\{\/if\}/);
+  // The sheet to write the words on is offered before the button that says they are written down,
+  // which takes them off the screen. On the other steps the sheet closes the screen.
+  assert.ok(step.indexOf('{@render exception(true)}') < step.indexOf('<PracticeCard {site} />'));
+  assert.ok(step.indexOf('<PracticeCard {site} />') < step.indexOf('data-testid="words-written"'));
+  assert.equal(backup.match(/<PracticeCard \{site\} \/>/g)?.length, 2);
+  assert.equal(backup.match(/<PracticeCard\b/g)?.length, 2);
+  assert.match(backup, /\{#if !made\}\s*<PracticeCard \{site\} \/>\s*\{\/if\}/);
 });
 
 test('the PRACTICE stamp stands beside the 12 words wherever they are shown', () => {
@@ -182,15 +186,135 @@ test('the PRACTICE stamp stands beside the 12 words wherever they are shown', ()
   }
 });
 
-test('the card is numbered across, as the words on screen are', () => {
-  // The words list fills its rows first (1 2 / 3 4). A card that ran down its columns would put line 7
-  // where the list has word 2, on a phone, on the same screen.
-  const card = code(source('keys/PracticeCard.svelte'));
-  const list = card.slice(card.indexOf('<ol'), card.indexOf('</ol>'));
-  assert.match(list, /class="[^"]*\bgrid grid-cols-2\b/);
-  assert.doesNotMatch(list, /grid-flow-col|grid-rows-/);
-  const words = readFileSync(new URL('../src/components/wallet/WordsList.svelte', import.meta.url), 'utf8');
-  assert.doesNotMatch(code(words), /grid-flow-col|grid-rows-/, 'the shared list still runs across');
+// -- the practice sheet --------------------------------------------------------------------
+
+/** The practice sheet's own file, without its comments. */
+const sheet = (): string => code(source('keys/PracticeCard.svelte'));
+
+test("the card's words are the form's own: its title and its two warnings, word for word, and the site's terms in Spanish", () => {
+  const { en, es } = strings.backup;
+  assert.equal(en.cardName, 'Recovery Seed Phrases');
+  assert.equal(en.cardNoCopies, "Don't make digital copies");
+  assert.equal(en.cardNoSharing, 'Never share with anyone');
+  // "Frase semilla" is the Spanish glossary's term for the words; the word for "recovery" is in that entry's alias.
+  assert.equal(es.cardName, 'Frases semilla de recuperación');
+  assert.equal(es.cardNoCopies, 'No hagas copias digitales');
+  assert.equal(es.cardNoSharing, 'No las compartas con nadie');
+  // The one line the form lacks and a practice card needs.
+  assert.equal(en.cardRestores, 'Restores only on the practice network.');
+  assert.equal(es.cardRestores, 'Solo se restaura en la red de práctica.');
+});
+
+test("the section says what the sheet is: the site's form marked for practice, how many cards, written by hand, and never the words in print", () => {
+  const { en, es } = strings.backup;
+  assert.equal(en.cardTitle, 'A practice backup sheet to print');
+  assert.equal(es.cardTitle, 'Una hoja de respaldo de práctica para imprimir');
+  assert.match(en.cardLead, /^This is LearnBitcoin's 12-word backup form, marked for practice\./);
+  assert.match(en.cardLead, /The sheet prints \{cards\} blank cards: write the 12 words on one by hand, in order\./);
+  assert.match(en.cardLead, /The words themselves are never printed, whether they are showing or not\.$/);
+  assert.match(es.cardLead, /^Este es el formulario de respaldo de 12 palabras de LearnBitcoin, marcado para práctica\./);
+  assert.match(es.cardLead, /La hoja imprime \{cards\} tarjetas en blanco: escribe las 12 palabras en una, a mano y en orden\./);
+  assert.match(es.cardLead, /Las palabras mismas nunca se imprimen, se estén mostrando o no\.$/);
+  // How many cards is a slot, filled from the number of cards the sheet draws.
+  for (const lang of LANGS) {
+    const text = strings.backup[lang].cardLead;
+    assert.deepEqual(slotNames(text), ['cards'], lang);
+    assert.doesNotMatch(withoutTheWords(text.replace('12-word', '')), /[0-9]/, lang);
+  }
+  assert.equal(fill(en.cardLead, { cards: String(COPIES) }).match(/The sheet prints (\S+) blank cards/)?.[1], '3');
+  assert.match(sheet(), /\{fill\(t\.cardLead, \{ cards: String\(COPIES\) \}\)\}/);
+  assert.match(sheet(), /const CARDS = Array\.from\(\{ length: COPIES \}, \(_, index\) => index\);/);
+  assert.equal(en.cardPrint, 'Print the sheet');
+  assert.equal(es.cardPrint, 'Imprimir la hoja');
+});
+
+test('the card is the form: its parts in its order, with the stamp on the title\'s line and the "restores" line under the rows', () => {
+  const card = sheet();
+  const body = card.slice(card.indexOf('{#snippet card('), card.indexOf('<Section'));
+  assert.ok(body.length > 0, 'the card is in the file');
+  const order = [
+    '{t.cardName}',
+    '<Badge tone="stamp" small>{c.markerBadge}</Badge>',
+    't.cardNoCopies, t.cardNoSharing',
+    '{@render shield()}',
+    '{#each ROWS as row (row.number)}',
+    '{t.cardRestores}',
+    "{@render logo('text-[12pt]')}",
+    '{site}',
+  ];
+  let at = -1;
+  for (const part of order) {
+    const next = body.indexOf(part, at + 1);
+    assert.ok(next > at, `${part} is missing from the card, or not where the form has it`);
+    at = next;
+  }
+  // The stamp shares the title's line, at the right, and may drop under the title: one row that wraps.
+  assert.match(
+    body,
+    /<div class="flex flex-wrap items-center justify-between [^"]*">\s*<p class=\{\['[^']*', TIGHT\]\}>\{t\.cardName\}<\/p>\s*<Badge tone="stamp" small>\{c\.markerBadge\}<\/Badge>\s*<\/div>/,
+  );
+  // Numbered down the card, one row to a word, as on the form: no second column for a number to land in.
+  assert.match(card, /const ROWS = formRows\(WORD_COUNT\);/);
+  assert.match(body, /<text[^>]*>\{row\.number\}<\/text\s*>/);
+  assert.doesNotMatch(card, /grid-cols|grid-flow|columns-/);
+  // Seven dashed lines part a row's box into its eight letter cells.
+  assert.match(card, /const LINES = cellLines\(\);/);
+  assert.match(body, /\{#each LINES as x \(x\)\}/);
+});
+
+test('the sheet on paper: a heading with the logo, the stamp, the title and the short exception, then every card; on screen one card, as a picture', () => {
+  const card = sheet();
+  const page = card.slice(card.indexOf('<Section'));
+  // The one thing marked for paper. It says nothing to a screen reader: the sentence above it says what it is.
+  assert.match(page, /<div data-print="only" data-testid="practice-sheet" aria-hidden="true" class="[^"]*">/);
+  assert.equal(card.match(/data-print=/g)?.length, 1);
+  assert.ok(page.indexOf('{fill(t.cardLead') > 0 && page.indexOf('{fill(t.cardLead') < page.indexOf('data-print="only"'));
+  // The heading is for paper only.
+  assert.match(page, /<div data-testid="sheet-heading" class="hidden [^"]*\bprint:block">/);
+  const heading = page.slice(page.indexOf('data-testid="sheet-heading"'), page.indexOf('{#each CARDS'));
+  for (const part of ["{@render logo('text-[16.5pt]')}", '<Badge tone="stamp">{c.markerBadge}</Badge>', '{site}', '{t.cardName}', '{w.wordsException}']) {
+    assert.ok(heading.includes(part), `the heading lacks ${part}`);
+  }
+  // Every card of the sheet is drawn, each in a place of its own, and only the first place is on screen.
+  // The crop marks of a place are for paper only too.
+  const places = page.slice(page.indexOf('{#each CARDS as copy (copy)}'));
+  assert.match(places, /^\{#each CARDS as copy \(copy\)\}\s*<div\s+class=\{\[\s*'[^']*',\s*copy > 0 && 'hidden print:block',?\s*\]\}\s*>/);
+  assert.match(places, /<svg class="absolute [^"]*\bhidden\b[^"]*\bprint:block">\s*\{#each MARKS as mark/);
+  assert.equal(places.match(/\{@render card\(\)\}/g)?.length, 1);
+  // A place is never cut in two by the end of a page. On screen it is drawn a third larger than on
+  // paper, where its size is the form's own.
+  assert.match(places, /^\{#each CARDS as copy \(copy\)\}\s*<div\s+class=\{\[\s*'[^']*\bbreak-inside-avoid\b/);
+  assert.match(places, /^\{#each CARDS as copy \(copy\)\}\s*<div\s+class=\{\[\s*'[^']* \[zoom:1\.3333\] [^']*print:\[zoom:1\]'/);
+  // The button stands after the sheet, outside it: it is not printed.
+  assert.match(page, /\{\/each\}\s*<\/div>\s*<\/div>\s*<div>\s*<Button\s+data-testid="print-card"/);
+});
+
+test('the card is made for paper: every length on it is in points, or counted from its own size', () => {
+  const card = sheet();
+  const drawn = card.slice(card.indexOf('{#snippet shield()'), card.indexOf('<Section'));
+  const units = [...drawn.matchAll(/\[(?:calc\()?-?[0-9.]+(px|rem|pt|em|mm|in|%|vw|vh)\b/g)].map((hit) => hit[1]);
+  assert.ok(units.length > 20, 'the walk found the lengths of the card');
+  for (const unit of units) assert.ok(unit === 'pt' || unit === 'em' || unit === '%', `a length in ${unit}`);
+  // Nothing from the app's own scale of sizes: that scale is counted from the reader's type size, for screens.
+  assert.doesNotMatch(drawn, /\b(?:text-(?:xs|sm|base|lg|xl)|(?:[mp][trblxy]?|gap(?:-[xy])?|[wh]|leading|top|left|right|bottom|inset)-[0-9])/);
+  // The card's own width, and the sheet's on paper.
+  assert.match(drawn, /class="w-\[148pt\] /);
+  assert.match(card, /class="print:mx-auto print:w-\[520pt\] print:max-w-full"/);
+});
+
+test("the blue of the form's circles is a colour of its own, named as the one exception, and only the practice card uses it", () => {
+  const src = new URL('../src/', import.meta.url);
+  const css = readFileSync(new URL('app.css', src), 'utf8');
+  assert.match(css, /^ {2}--color-form-blue: #444ce7;$/m);
+  // The stylesheet's sentence about its hues still holds: it names the exception.
+  assert.match(css, /Three hues only \(orange, ink, white\), light only\. There is one\s+exception/);
+  assert.match(css, /\(--color-form-blue, at the end of this list\)/);
+  const users = (readdirSync(src, { recursive: true }) as string[])
+    .filter((name) => /\.(svelte|ts|css)$/.test(name))
+    .filter((name) => readFileSync(new URL(name, src), 'utf8').includes('form-blue'))
+    .sort();
+  assert.deepEqual(users, ['app.css', 'screens/keys/PracticeCard.svelte']);
+  assert.match(sheet(), /<circle [^>]*class="fill-form-blue" \/>/);
 });
 
 test('the words that left the screen because another tab changed the wallet are accounted for', () => {
@@ -477,9 +601,9 @@ test('Spanish: the first mention of a passkey in a screen\'s own text carries th
   assert.match(settings.kindPasskey ?? '', /llave de acceso \(passkey\)/);
   assert.match(settings.kindWords ?? '', /llave de acceso \(passkey\)/);
 
-  // Backup, step by step. The card and the exception close every step.
+  // Backup, step by step. The practice sheet and the exception close every step.
   const backup: Table = strings.backup.es;
-  const card = ['cardTitle', 'cardLead', 'cardName', 'cardRestores', 'cardPrint'];
+  const card = ['cardTitle', 'cardLead', 'cardName', 'cardNoCopies', 'cardNoSharing', 'cardRestores', 'cardPrint'];
   const madePasskey = [
     'madeTitle', 'madeLede', 'madePasskeyTitle', 'madePasskeyName', 'madePasskeyNameIs', 'madePasskeyTag', 'madePasskeyTagIs', 'madePasskeyWhere',
     'shownTitle', 'spokenAloud', 'after', 'madePasskeyBack', 'exception', 'neverRealMoney', 'chapterLink', ...card, 'written',
@@ -549,7 +673,7 @@ test('the 12 words meet no regular expression, no copy control and no download i
   assert.match(backup, /<WordsList \{words\} \/>/);
   // They are dropped when the screen is left.
   assert.match(backup, /onDestroy\(\(\) => \{\s*left = true;\s*drop\(\);/);
-  // The card is the one thing marked for paper, and it holds no word.
+  // The practice sheet is the one thing marked for paper, and it holds no word.
   const card = code(source('keys/PracticeCard.svelte'));
   assert.match(card, /data-print="only"/);
   assert.doesNotMatch(card, /words=|revealWords|useWallet/);

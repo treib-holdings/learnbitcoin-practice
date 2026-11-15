@@ -7,7 +7,10 @@
 @import "@fontsource-variable/geist-mono";
 
 /* The main site's palette and type, so the wallet looks like the site it
-   belongs to. Three hues only (orange, ink, white), light only. */
+   belongs to. Three hues only (orange, ink, white), light only. There is one
+   exception, and it is not a hue of the app: the practice card redraws the
+   main site's printed backup form, whose numbered circles are blue
+   (--color-form-blue, at the end of this list). */
 @theme {
   /* Brand palette - extracted from the legacy site for parity, then trimmed. */
   --color-orange-50: #fff8eb;
@@ -31,6 +34,11 @@
   --color-ink-900: #0a0e18;
 
   --color-accent-coral: #d97757;  /* secondary illustration accent */
+
+  /* The blue of the numbered circles on the main site's 12-word backup form.
+     Only the practice card uses it (screens/keys/PracticeCard.svelte), so
+     that the card is that form at a glance. Nothing else may. */
+  --color-form-blue: #444ce7;
 
   /* "Geist Variable" and "Geist Mono Variable" are the names the font
      packages register, so they come first: with only the plain names, no
@@ -67,21 +75,21 @@ main :not(pre) > code {
    one more copy to keep safe, and it passes through a printer's memory on
    the way. Whatever shows or takes the words carries data-print="never"
    (the words list, the fields for typing them) and is left out of a
-   printout. What does print is the blank practice card. */
+   printout. What does print is the blank practice sheet. */
 @media print {
   [data-print="never"] {
     display: none !important;
   }
 }
 
-/* The practice card (the Backup screen) is the one thing in the app that is
+/* The practice sheet (the Backup screen) is the one thing in the app that is
    made for paper. It carries data-print="only". When a page holds it, a
-   printout is the card alone: whatever is neither the card, nor inside it,
+   printout is the sheet alone: whatever is neither the sheet, nor inside it,
    nor around it is left out. So no screenful of links and buttons is
-   printed around the card, and the 12 words cannot reach paper from that
-   screen by any road, shown or not. What is around the card gives up its
-   own margins, padding and height, so the card starts at the top of the
-   sheet and the sheet is not followed by an empty one. */
+   printed around the sheet, and the 12 words cannot reach paper from that
+   screen by any road, shown or not. What is around the sheet gives up its
+   own margins, padding and height, so the sheet starts at the top of the
+   paper and the paper is not followed by an empty page. */
 @media print {
   body:has([data-print="only"]) :not(:has([data-print="only"]), [data-print="only"], [data-print="only"] *) {
     display: none !important;

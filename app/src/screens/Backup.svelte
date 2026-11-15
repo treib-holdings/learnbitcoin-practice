@@ -1,6 +1,6 @@
 <script lang="ts">
   // The Backup screen: the 12 words of the wallet in this browser, and a
-  // blank practice card to print and write them on.
+  // blank practice sheet to print and write them on.
   //
   // It has four steps, and one shows at a time (keys/backup-flow.ts):
   //
@@ -12,7 +12,7 @@
   //           where the passkey lives, and under the words that they are the way
   //           back without it. A wallet made without a passkey is told,
   //           under the words, what this browser now keeps and who can
-  //           look and spend. Then the card to write the words on, and
+  //           look and spend. Then the sheet to write the words on, and
   //           "I have written them down", which ends the step; so does
   //           leaving it any other way.
   //   ask     At any other time: why this page is the one exception to
@@ -33,7 +33,7 @@
   // the wallet: nothing here copies them, stores them, or runs a regular
   // expression over them (a pattern that has matched keeps the text it ran
   // on where any script in the page can read it). There is no control to
-  // copy or download them, and a printout of this screen is the blank card
+  // copy or download them, and a printout of this screen is the blank sheet
   // alone.
 
   import { onDestroy, onMount, tick, untrack } from 'svelte';
@@ -60,6 +60,7 @@
   import { strings } from '../strings/index.ts';
   import PracticeCard from './keys/PracticeCard.svelte';
   import { afterUnlock, backupView, chapterUrl, mustDropWords, showPlan, takenByAnotherTab } from './keys/backup-flow.ts';
+  import { siteHost } from './keys/card-form.ts';
   import { isRepeatTap } from './keys/taps.ts';
 
   const wallet = useWallet();
@@ -151,6 +152,9 @@
    * this screen never builds a name itself.
    */
   let madeName = $derived(wallet.createdName);
+
+  /** The main site's name as its backup form prints it, for the foot of the practice card. */
+  let site = $derived(siteHost(wallet.config.siteUrl));
 
   // The words leave the screen with the keys: when the wallet is locked,
   // and when the wallet in this browser is no longer the one they belong
@@ -331,10 +335,10 @@
 
       {@render exception(true)}
 
-      <!-- The card comes before the button: the button says the words are
+      <!-- The sheet comes before the button: the button says the words are
            written down and takes them off the screen, so what to write
            them on has to be offered first. -->
-      <PracticeCard />
+      <PracticeCard {site} />
 
       <Actions>
         <Button variant="primary" data-testid="words-written" onclick={written}>{t.written}</Button>
@@ -407,7 +411,7 @@
     {/if}
 
     {#if !made}
-      <PracticeCard />
+      <PracticeCard {site} />
     {/if}
   {/snippet}
 </WalletFrame>

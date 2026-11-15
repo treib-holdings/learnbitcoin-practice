@@ -359,6 +359,8 @@
     <p class="flex flex-wrap items-center gap-4">
       <Badge tone="practice">{t.markerBadge}</Badge>
       <Badge tone="stamp">{t.markerBadge}</Badge>
+      <!-- The stamp of the practice card, in the card's own sizes (points): made for paper, so it is small on a screen. -->
+      <Badge tone="stamp" small>{t.markerBadge}</Badge>
       <Badge tone="kind">{s.changeBadge}</Badge>
       <Badge tone="fact">{t.unconfirmed}</Badge>
       <Badge tone="tag">{s.planned}</Badge>

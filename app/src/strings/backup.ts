@@ -1,14 +1,14 @@
-// The text of the Backup screen: the 12 words, the "Wallet made" step and the printable card.
+// The text of the Backup screen: the 12 words, the "Wallet made" step and the printable sheet.
 //
 // The same shape as every file in this folder (see common.ts): one table per
 // language with the same keys, plain strings, slots written {name}.
 //
 // Four things the screen shows are not in this table. Three are shared: the
 // screen's name ("Backup", in common.ts), the short form of the exception
-// paragraph that is printed on the card (wordsException, in wallet.ts), and
-// the line a Spanish screen puts under the words to say that they are
-// English on purpose (the words list adds it itself). The fourth is the
-// name of a passkey this page has just made: the wallet hands it over as
+// paragraph that is printed at the top of the sheet (wordsException, in
+// wallet.ts), and the line a Spanish screen puts under the words to say that
+// they are English on purpose (the words list adds it itself). The fourth is
+// the name of a passkey this page has just made: the wallet hands it over as
 // it wrote it then, in whichever language the page had at that moment.
 //
 // The exception paragraph is here in full. Chapter 4 of the main site tells
@@ -106,15 +106,26 @@ export const en = {
     'This browser was asked to keep what this page stores, and did not agree. So it may also erase the wallet by itself when the device runs short of space.',
   written: 'I have written them down',
 
-  // -- the practice card: a blank form for paper --
-  cardTitle: 'A practice card to print',
+  // -- the practice sheet: the main site's 12-word backup form, blank, for paper --
+  //
+  // The form is the one chapter 4 of the Journey offers for a real wallet.
+  // The three lines printed on each card are the form's own, word for word:
+  // its title and its two warnings. This is working copy: a copy pass comes later.
+  cardTitle: 'A practice backup sheet to print',
+  /**
+   * What the sheet is, how many cards it prints ({cards}), that the words
+   * are written by hand, and that they are never printed.
+   */
   cardLead:
-    'Print this blank card and write the 12 words on it by hand, in order. The words themselves are never printed, whether they are showing or not.',
-  /** Printed at the top of the card. */
-  cardName: 'The 12 words of a practice wallet',
-  /** Printed at the foot of the card. */
+    "This is LearnBitcoin's 12-word backup form, marked for practice. The sheet prints {cards} blank cards: write the 12 words on one by hand, in order. The words themselves are never printed, whether they are showing or not.",
+  /** The form's title: printed at the top of each card, and at the top of the sheet. */
+  cardName: 'Recovery Seed Phrases',
+  /** The form's two warnings, each beside a small shield. */
+  cardNoCopies: "Don't make digital copies",
+  cardNoSharing: 'Never share with anyone',
+  /** Printed under the last row of each card. The form has no such line: a practice card needs it. */
   cardRestores: 'Restores only on the practice network.',
-  cardPrint: 'Print the card',
+  cardPrint: 'Print the sheet',
 } as const;
 
 export const es: Record<keyof typeof en, string> = {
@@ -163,10 +174,12 @@ export const es: Record<keyof typeof en, string> = {
     'A este navegador se le pidió conservar lo que esta página guarda, y no aceptó. Así que también puede borrar la billetera por su cuenta cuando al dispositivo le falte espacio.',
   written: 'Ya las escribí',
 
-  cardTitle: 'Una tarjeta de práctica para imprimir',
+  cardTitle: 'Una hoja de respaldo de práctica para imprimir',
   cardLead:
-    'Imprime esta tarjeta en blanco y escribe en ella las 12 palabras a mano, en orden. Las palabras mismas nunca se imprimen, se estén mostrando o no.',
-  cardName: 'Las 12 palabras de una billetera de práctica',
+    'Este es el formulario de respaldo de 12 palabras de LearnBitcoin, marcado para práctica. La hoja imprime {cards} tarjetas en blanco: escribe las 12 palabras en una, a mano y en orden. Las palabras mismas nunca se imprimen, se estén mostrando o no.',
+  cardName: 'Frases semilla de recuperación',
+  cardNoCopies: 'No hagas copias digitales',
+  cardNoSharing: 'No las compartas con nadie',
   cardRestores: 'Solo se restaura en la red de práctica.',
-  cardPrint: 'Imprimir la tarjeta',
+  cardPrint: 'Imprimir la hoja',
 };
