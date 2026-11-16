@@ -30,11 +30,21 @@ const POLICY_NAMES = [
   'strict-transport-security',
 ];
 
+/**
+ * The check's name for its look at the pot's counts. It is made only while the site's settings say that the
+ * counts are off, which is how the Worker ships and how the stack here runs.
+ */
+const POT_OFF = "GET /api/pot/stats (the settings say the pot's counts are off)";
+
+/** The one check that is the pot's own: the answer is the answer of a path the Worker does not know. */
+const POT_AS_UNKNOWN = `${POT_OFF}: answered as GET /api/no-such-path is`;
+
 /** The answers of the Worker that the check looks at, in the order it asks for them. */
 const WORKER_ANSWERS = [
   'GET /api/no-such-path',
   'GET /p/no-such-path',
   'GET /api/config',
+  POT_OFF,
   'POST /api/pot/address from another site',
   'POST /api/pot/address from no page at all',
 ];
@@ -231,10 +241,19 @@ test('it passes on the local server', async () => {
     'POST /api/pot/address from another site: access-control-allow-origin is absent',
     'POST /api/pot/address from another site: 403 {"error":"forbidden"}',
     'POST /api/pot/address from no page at all: 403 {"error":"forbidden"}',
+    // The pot's counts are off, as the Worker ships: asked for, they are a path the Worker does not know.
+    POT_AS_UNKNOWN,
+    `${POT_OFF}: content-type`,
+    `${POT_OFF}: cache-control`,
+    `${POT_OFF}: x-robots-tag`,
+    `${POT_OFF}: access-control-allow-origin is absent`,
   ]) {
     assert.ok(names.includes(part), part);
   }
-  // Nothing was asked of the practice network: the check only reads the Worker's own answers.
+  // That look was taken because the settings of this site say so: the stack runs on the settings of
+  // worker/wrangler.jsonc, where the pot's counts are off.
+  assert.equal(stack.config.potCounts, false);
+  // Nothing was asked of the practice network, by that look or any other: the check only reads the Worker's own answers.
   assert.deepEqual(stack.network!.requests(), []);
 
   // The script itself: one line per check, a count, exit code 0.
@@ -279,6 +298,20 @@ const withHeader = (name: string, value: string): Handler =>
     headers.set(name, value);
     return new Response(response.body, { status: response.status, headers });
   });
+/** The Worker's handler, with its answer to a request for the pot's counts made from its answer to that request as it is (an unknown path's). */
+const potAnswered = (make: (unknown: Response) => Response): Handler =>
+  answering((response, request) => (new URL(request.url).pathname === '/api/pot/stats' ? make(response) : response));
+/** A handler that notes the path of every request it is asked, and hands each on. */
+const noting = (inner: Handler): { handler: Handler; paths: string[] } => {
+  const paths: string[] = [];
+  return {
+    paths,
+    handler: (request) => {
+      paths.push(new URL(request.url).pathname);
+      return inner(request);
+    },
+  };
+};
 
 test('every expectation, broken one at a time, fails its own check', async () => {
   /** The same mistake in both places: in the copy that is served, and in the file the check reads what to expect from. */
@@ -417,34 +450,24 @@ test('every expectation, broken one at a time, fails its own check', async () =>
     },
     // -- the Worker --
     {
+      // With the pot's counts off their path is one of the unknown ones, so it gets the app too. It is then
+      // answered as the other unknown path is, and that one check passes: what fails for it is every header.
       what: 'unknown /api/ paths get the app instead of the Worker (run_worker_first is missing)',
       handler: async (request) =>
-        new URL(request.url).pathname.includes('no-such-path')
+        new URL(request.url).pathname.includes('no-such-path') || new URL(request.url).pathname === '/api/pot/stats'
           ? new Response(PAGE, { status: 200, headers: { 'Content-Type': 'text/html; charset=utf-8' } })
           : stack.handler(request),
-      fails: [/^GET \/api\/no-such-path: /, /^GET \/p\/no-such-path: /],
+      fails: [/^GET \/api\/no-such-path: /, /^GET \/p\/no-such-path: /, /^GET \/api\/pot\/stats \(the settings say the pot's counts are off\): (?!answered as )/],
     },
     {
       what: 'the Worker\'s answers may be cached',
       handler: withoutHeader('Cache-Control'),
-      fails: [
-        'GET /api/no-such-path: cache-control',
-        'GET /p/no-such-path: cache-control',
-        'GET /api/config: cache-control',
-        'POST /api/pot/address from another site: cache-control',
-        'POST /api/pot/address from no page at all: cache-control',
-      ],
+      fails: WORKER_ANSWERS.map((label) => `${label}: cache-control`),
     },
     {
       what: 'the Worker\'s answers may be listed by a search engine',
       handler: withoutHeader('X-Robots-Tag'),
-      fails: [
-        'GET /api/no-such-path: x-robots-tag',
-        'GET /p/no-such-path: x-robots-tag',
-        'GET /api/config: x-robots-tag',
-        'POST /api/pot/address from another site: x-robots-tag',
-        'POST /api/pot/address from no page at all: x-robots-tag',
-      ],
+      fails: WORKER_ANSWERS.map((label) => `${label}: x-robots-tag`),
     },
     // The config is the one answer here that is not a refusal. A header lost on that answer alone must show.
     ...Object.keys(WORKER_HEADERS).map((name) => ({
@@ -469,13 +492,7 @@ test('every expectation, broken one at a time, fails its own check', async () =>
         headers.set('Access-Control-Allow-Origin', '*');
         return new Response(response.body, { status: response.status, headers });
       }),
-      fails: [
-        'GET /api/no-such-path: access-control-allow-origin is absent',
-        'GET /p/no-such-path: access-control-allow-origin is absent',
-        'GET /api/config: access-control-allow-origin is absent',
-        'POST /api/pot/address from another site: access-control-allow-origin is absent',
-        'POST /api/pot/address from no page at all: access-control-allow-origin is absent',
-      ],
+      fails: WORKER_ANSWERS.map((label) => `${label}: access-control-allow-origin is absent`),
     },
     {
       what: 'the config alone is opened to one other site (the header a later phase may add to the chain reads, come too early)',
@@ -502,6 +519,27 @@ test('every expectation, broken one at a time, fails its own check', async () =>
         return new Response(JSON.stringify(rest), { status: 200, headers: response.headers });
       }),
       fails: ['GET /api/config: 200, with every setting'],
+    },
+    // -- the pot's counts, which the settings say are off --
+    {
+      what: 'the pot\'s counts are answered while the settings say that they are off',
+      handler: potAnswered((unknown) => new Response(JSON.stringify({ passedOn: 3, waiting: 1, handedOn: 2 }), { status: 200, headers: unknown.headers })),
+      fails: [POT_AS_UNKNOWN],
+    },
+    {
+      what: 'the pot\'s counts are refused in a way of their own: the status of an unknown path, and another body',
+      handler: potAnswered((unknown) => new Response(JSON.stringify({ error: 'switched_off' }), { status: 404, headers: unknown.headers })),
+      fails: [POT_AS_UNKNOWN],
+    },
+    {
+      what: 'the pot\'s counts are refused in a way of their own: the body of an unknown path, and another status',
+      handler: potAnswered((unknown) => new Response(unknown.body, { status: 403, headers: unknown.headers })),
+      fails: [POT_AS_UNKNOWN],
+    },
+    {
+      what: 'the pot\'s counts are answered as an unknown path is, and may be cached',
+      handler: withoutHeader('Cache-Control', '/api/pot/stats'),
+      fails: [`${POT_OFF}: cache-control`],
     },
     {
       what: 'a POST from another site is answered',
@@ -554,7 +592,7 @@ test('Strict-Transport-Security: a max-age as long as ours passes, and so does a
     const local = await site({ _headers: APP_HEADERS.replace('max-age=31536000', value) }, withHeader('Strict-Transport-Security', value));
     const checks = await liveCheck(local.url, EXPECT);
     assert.deepEqual(failed(checks), [], value);
-    // The value that was looked at is the one this test sent, on every answer: the three pages and the Worker's five.
+    // The value that was looked at is the one this test sent, on every answer: the three pages and the Worker's six.
     for (const path of [...PAGES, '/api/config', '/api/no-such-path']) {
       assert.equal((await fetch(`${local.url}${path}`)).headers.get('strict-transport-security'), value, `${path}: ${value}`);
     }
@@ -582,6 +620,99 @@ test('the first deploy, as it answered: the longer Strict-Transport-Security pas
 test('every other header is still compared letter for letter: more behind the expected value fails', async () => {
   const local = await site({ _headers: headersWith('Referrer-Policy: no-referrer', 'Referrer-Policy: no-referrer, strict-origin') }, withHeader('X-Robots-Tag', 'noindex, nofollow'));
   assert.deepEqual(failed(await liveCheck(local.url, EXPECT)), [...onPages('referrer-policy'), ...WORKER_ANSWERS.map((label) => `${label}: x-robots-tag`)]);
+});
+
+test('the pot\'s counts: asked for only while the settings say that they are off, and then held to the answer of an unknown path', async () => {
+  // -- Off, as the Worker ships: one request, answered as GET /api/no-such-path is, and the practice network is asked nothing. --
+  // (The stack is the one every test of this file uses: what the network was asked before this test is set aside.)
+  const askedBefore = stack.network!.requests().length;
+  const off = noting(stack.handler);
+  const shipped = await site({}, off.handler);
+  const checks = await liveCheck(shipped.url, EXPECT);
+  assert.deepEqual(failed(checks), []);
+  assert.equal(off.paths.filter((path) => path === '/api/pot/stats').length, 1);
+  assert.equal(off.paths.filter((path) => path === '/api/no-such-path').length, 1);
+  const pot = checks.filter((check) => check.name.startsWith(`${POT_OFF}: `)).map((check) => check.name);
+  assert.deepEqual(pot, [POT_AS_UNKNOWN, `${POT_OFF}: content-type`, ...Object.keys(WORKER_HEADERS).map((name) => `${POT_OFF}: ${name}`), `${POT_OFF}: access-control-allow-origin is absent`]);
+  // What it is held to is what this site answers for a path nobody knows, letter for letter.
+  const [unknown, counts] = await Promise.all(['/api/no-such-path', '/api/pot/stats'].map((path) => fetch(`${shipped.url}${path}`)));
+  assert.deepEqual([counts!.status, await counts!.text()], [unknown!.status, await unknown!.text()]);
+  assert.equal(unknown!.status, 404);
+  assert.deepEqual(stack.network!.requests().slice(askedBefore), [], 'asked that way, a look at the counts costs the practice network nothing');
+  // A failed one says what was expected and what came.
+  const answered = await site({}, potAnswered((response) => new Response('{"passedOn":3,"waiting":1,"handedOn":2}', { status: 200, headers: response.headers })));
+  const check = (await liveCheck(answered.url, EXPECT)).find((each) => each.name === POT_AS_UNKNOWN);
+  assert.deepEqual([check?.ok, check?.detail], [false, 'expected status 404, body "{\\"error\\":\\"not_found\\"}"; got status 200, body "{\\"passedOn\\":3,\\"waiting\\":1,\\"handedOn\\":2}"']);
+
+  // -- On: the settings say that the counts can be had. The check does not ask for them: an answered look can
+  //    cost the practice network a reading of the pot's coins, and a check from outside must cost it nothing. --
+  const on = await startStack({ vars: { POT_COUNTS: 'on' } });
+  try {
+    assert.equal(on.config.potCounts, true);
+    const asked = noting(on.handler);
+    const local = await site({}, asked.handler);
+    const withCounts = await liveCheck(local.url, EXPECT);
+    assert.deepEqual(failed(withCounts), []);
+    assert.deepEqual(asked.paths.filter((path) => path.startsWith('/api/pot/')), ['/api/pot/address', '/api/pot/address'], 'the two refused POSTs, and no look at the counts');
+    assert.deepEqual(withCounts.filter((each) => each.name.includes('/api/pot/stats')), []);
+    assert.equal(withCounts.length, checks.length - pot.length, 'every other check is made as before');
+    assert.deepEqual(on.network!.requests(), []);
+  } finally {
+    await on.close();
+  }
+
+  // -- Not known: settings that could not be read, or that do not say. Nothing is asked then either: only a
+  //    plain "false" counts as off. (The settings' own check fails, which is the news.) --
+  const unreadable: [what: string, change: (settings: Record<string, unknown>) => unknown][] = [
+    ['the setting is missing', ({ potCounts: _dropped, ...rest }) => rest],
+    ['the setting is a word', (settings) => ({ ...settings, potCounts: 'off' })],
+    ['the setting is null', (settings) => ({ ...settings, potCounts: null })],
+    ['the settings are no object', () => 'off'],
+  ];
+  for (const [what, change] of unreadable) {
+    const asked = noting(
+      answering(async (response, request) => {
+        if (new URL(request.url).pathname !== '/api/config') return response;
+        return new Response(JSON.stringify(change((await response.json()) as Record<string, unknown>)), { status: 200, headers: response.headers });
+      }),
+    );
+    const local = await site({}, asked.handler);
+    assert.deepEqual(failed(await liveCheck(local.url, EXPECT)), ['GET /api/config: 200, with every setting'], what);
+    assert.ok(!asked.paths.includes('/api/pot/stats'), what);
+  }
+  // The same for settings that say "false" under a status that is no answer to the question.
+  const refused = noting(
+    answering((response, request) => (new URL(request.url).pathname === '/api/config' ? new Response(response.body, { status: 503, headers: response.headers }) : response)),
+  );
+  assert.deepEqual(failed(await liveCheck((await site({}, refused.handler)).url, EXPECT)), ['GET /api/config: 200, with every setting']);
+  assert.ok(!refused.paths.includes('/api/pot/stats'));
+});
+
+test('the settings it expects are every setting the Worker answers with: each one taken away, or given the wrong kind of value, is named as missing or of the wrong kind', async () => {
+  // The check carries its own list of the settings, so that it needs nothing but Node. What holds that list
+  // to the contract is this: the keys of the Worker's own answer, one at a time.
+  const answer = (await (await stack.handler(new Request('http://localhost/api/config'))).json()) as Record<string, unknown>;
+  const keys = Object.keys(answer);
+  assert.deepEqual(keys, Object.keys(stack.config));
+  assert.ok(keys.includes('potCounts') && keys.length >= 11, keys.join(', '));
+  /** A value of another kind than the one it is given: a number for a text, a text for a number or for yes and no. */
+  const wrongKind = (value: unknown): unknown => (typeof value === 'string' ? 7 : String(value));
+  for (const key of keys) {
+    for (const [what, change] of [
+      ['missing', (settings: Record<string, unknown>) => Object.fromEntries(Object.entries(settings).filter(([name]) => name !== key))],
+      ['of the wrong kind', (settings: Record<string, unknown>) => ({ ...settings, [key]: wrongKind(settings[key]) })],
+    ] as const) {
+      const local = await site(
+        {},
+        answering(async (response, request) => {
+          if (new URL(request.url).pathname !== '/api/config') return response;
+          return new Response(JSON.stringify(change((await response.json()) as Record<string, unknown>)), { status: 200, headers: response.headers });
+        }),
+      );
+      const found = (await liveCheck(local.url, EXPECT)).find((each) => each.name === 'GET /api/config: 200, with every setting');
+      assert.deepEqual([found?.ok, found?.detail], [false, `status 200; missing or of the wrong kind: ${key}`], `${key}, ${what}`);
+    }
+  }
 });
 
 test('a server that is not there fails every request, and the run', async () => {

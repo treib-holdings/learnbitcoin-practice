@@ -166,6 +166,9 @@ test('the pot counts ship switched off, and the note at the setting says what of
   // When it may be switched on.
   assert.match(note, /It may be switched on once the bots that run on the practice network's server keep their own reading of the counts/);
   assert.match(note, /Until it is live there, leave this off\./);
+  // And what else has to change with it: the sentence of the About page that lists the requests the Worker writes a line for.
+  assert.match(note, /A sentence of the app's About page changes with this setting\./);
+  assert.match(note, /Switched on, the page asks, and the list must name "the pot's totals" \(serverLog in app\/src\/strings\/about\.ts, in both languages\)\./);
 });
 
 test('the four secrets are named, and none has a value here', () => {

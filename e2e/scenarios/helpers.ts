@@ -62,9 +62,11 @@
 //     their file, each in a context of its own that is gone with the page.
 //     A scenario about what a browser keeps when it is closed and opened
 //     again, or about a setting of the browser itself (site data blocked),
-//     starts a Chrome of its own on a profile folder it names: s.chromeOn().
-//     Its pages are watched, and checked at the scenario's end, like any
-//     other.
+//     starts a Chrome of its own on a profile folder that makeProfile()
+//     made for it: s.chromeOn(). Its pages are watched, and checked at the
+//     scenario's end, like any other. No other folder is taken, by
+//     s.chromeOn() or by setSiteData(): never a browser profile of
+//     somebody's own.
 //   - Every file in this folder is a scenario file (*.test.ts) or a helper
 //     (helpers.ts, or a name ending in helpers.ts). Under any other name a
 //     file of scenarios would never be run, and nothing would say so: the
@@ -93,7 +95,7 @@ import type { StandInCall } from '../src/fake-turnstile.ts';
 import { serve, type LocalServer } from '../src/serve.ts';
 import { DUMMY_TOKEN, startStack, type RealOrigin, type Stack, type StackOptions } from '../src/stack.ts';
 
-export { FUNDED_COINS, OTHER_WORDS, TEST_MADE_AT, TEST_WORDS, freshRecord, fundTestWallet, setSiteData, testRecord } from '../src/browser.ts';
+export { FUNDED_COINS, OTHER_WORDS, TEST_MADE_AT, TEST_WORDS, freshRecord, fundTestWallet, makeProfile, setSiteData, testRecord } from '../src/browser.ts';
 export type { OpenOptions, OpenedPage, Passkey, PasskeyKind } from '../src/browser.ts';
 export { DUMMY_TOKEN };
 
@@ -338,8 +340,9 @@ export interface Scenario {
    */
   elsewhere(): Promise<string>;
   /**
-   * Starts a Chrome of this scenario's own on `profile`, a folder the
-   * scenario names, and removes when it is done with it. For what a browser
+   * Starts a Chrome of this scenario's own on `profile`: a folder that
+   * makeProfile() made for the scenario, and that the scenario removes when
+   * it is done with it. Any other folder is refused. For what a browser
    * keeps when it is closed and opened again, and for a setting of the
    * browser itself: close it, change the setting (setSiteData), and start
    * another on the same folder. Its pages are watched like the pages of

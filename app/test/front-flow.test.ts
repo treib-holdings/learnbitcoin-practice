@@ -10,6 +10,7 @@ import { LANGS } from '@learnbitcoin/practice-contract';
 import { fill } from '../src/lib/format.ts';
 import type { CreateResult, KeepResult, RestoreResult, WalletStatus } from '../src/lib/wallet-api.ts';
 import {
+  addsUnderTrouble,
   chapterFourUrl,
   createView,
   frontGate,
@@ -170,6 +171,28 @@ test('create: a wallet from another tab, a browser that stores nothing and the b
     assert.deepEqual(createView({ kind: 'no-storage' }, way), { kind: 'stopped', why: 'no-storage', orphan }, way);
     assert.deepEqual(createView({ kind: 'reload' }, way), { kind: 'stopped', why: 'reload', orphan: false }, way);
   }
+});
+
+test('create: the storage stops answering while the passkey prompt is open: the card says that the page cannot tell, and the line about the passkey stands under it', () => {
+  // The answer that comes back: nothing could be stored, and a passkey prompt was open before it.
+  for (const way of ['passkey', 'finish'] as const) {
+    assert.deepEqual(createView({ kind: 'no-storage' }, way), { kind: 'stopped', why: 'no-storage', orphan: true }, way);
+  }
+  // By then the wallet has looked again and was refused, so what stands in the screen's place is the wallet's
+  // own card, in front of "this browser refuses to store": the one gate that had no place for the screen's line.
+  assert.equal(frontGate('blocked', false, 'no-storage'), 'trouble');
+  assert.equal(frontGate('none', false, 'no-storage'), 'no-storage');
+  // So the line is drawn under that card too. And only under that one: of something stored that cannot be
+  // read, or that a newer version wrote, nobody can tell whose wallet it is, and the line says of a passkey
+  // that it has no wallet.
+  const under: Record<WalletStatus, boolean> = { blocked: true, unreadable: false, newer: false, broken: false, none: false, ready: false };
+  for (const status of Object.keys(under) as WalletStatus[]) assert.equal(addsUnderTrouble(status), under[status], status);
+  for (const status of Object.keys(under) as WalletStatus[]) {
+    // Wherever it answers yes, the gate is the one that draws the card.
+    if (addsUnderTrouble(status)) assert.equal(frontGate(status, false, 'no-storage'), 'trouble', status);
+  }
+  // Without a passkey no prompt was open, and the screen has no such line to add.
+  assert.deepEqual(createView({ kind: 'no-storage' }, 'words'), { kind: 'stopped', why: 'no-storage', orphan: false });
 });
 
 test('create: a closed prompt left nothing behind when it made the passkey, and a passkey waiting when it finished one', () => {

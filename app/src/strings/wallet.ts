@@ -89,12 +89,17 @@ export const en = {
   // Never "no wallet": a browser that blocks a site's data deletes none of it, so a wallet made before may still
   // be stored. The sentences are in the past tense on purpose: they say what happened when this page looked, and
   // stay true until it looks again (after a reload).
+  //
+  // Why the read failed, the page cannot tell: a storage that is not there and one that throws, whatever it
+  // throws, are the same to it (lib/keystore.ts, lib/wallet.svelte.ts). So the cause is said as what it can be:
+  // site data that is blocked, an app's built-in browser that hands a page no storage, a storage that does
+  // not work. The way out is what a reader can do about the first two; for the third there is only Reload.
   blockedTitle: 'This page cannot tell whether this browser has a practice wallet.',
   blockedName: 'Wallet not known',
   blockedBody:
-    'This browser did not let this page read what it may have stored here. That happens when site data is blocked. If you made a practice wallet in this browser before, it may still be stored.',
-  /** A Reload button follows it. */
-  blockedWay: 'Allow site data for this page, then reload.',
+    "This browser did not let this page read what it may have stored here. That happens when site data is blocked, inside some apps' built-in browsers, and when the browser's own storage is not working. If you made a practice wallet in this browser before, it may still be stored.",
+  /** A way out for each of those causes that has one. A Reload button follows it. */
+  blockedWay: "Allow site data for this page, or open this page in your device's own browser, then reload.",
 
   // -- the frame of every wallet screen: what the practice network last said about the coins --
   chainLooking: "Looking up this wallet's coins...",
@@ -392,8 +397,8 @@ export const es: Record<keyof typeof en, string> = {
   blockedTitle: 'Esta página no puede saber si este navegador tiene una billetera de práctica.',
   blockedName: 'No se sabe si hay billetera',
   blockedBody:
-    'Este navegador no dejó que esta página leyera lo que pueda tener guardado aquí. Pasa cuando los datos de los sitios están bloqueados. Si antes creaste una billetera de práctica en este navegador, puede que siga guardada.',
-  blockedWay: 'Permite los datos del sitio para esta página y recarga.',
+    'Este navegador no dejó que esta página leyera lo que pueda tener guardado aquí. Pasa cuando los datos de los sitios están bloqueados, dentro del navegador integrado de algunas apps, y cuando el almacenamiento del propio navegador no funciona. Si antes creaste una billetera de práctica en este navegador, puede que siga guardada.',
+  blockedWay: 'Permite los datos del sitio para esta página, o abre esta página en el navegador propio de tu dispositivo, y después recarga.',
 
   chainLooking: 'Buscando las monedas de esta billetera...',
   chainRetryIn: 'Esta página vuelve a intentarlo sola en {time}.',

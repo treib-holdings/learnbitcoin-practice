@@ -33,6 +33,7 @@ import { EVENTS, eventPaths, isEventBody, type EventBody } from '@learnbitcoin/p
 import { accountFromMnemonic, isValidMnemonic } from '@learnbitcoin/practice-wallet';
 import { ANSWER_SETTLE_MS } from '../../app/src/components/taps.ts';
 import { RECORD_KEY, makeRecord, type WalletRecord } from '../../app/src/lib/keystore.ts';
+import { strings } from '../../app/src/strings/index.ts';
 import type { OpenOptions, OpenedPage, Scenario } from './helpers.ts';
 
 // -- small things ---------------------------------------------------------------------------
@@ -726,24 +727,55 @@ export const pressAndRemember = (page: OpenedPage, id: string): Promise<PatternM
   });
 
 /**
+ * Every text of the app's own string tables, in both languages. They are
+ * part of the app's script, which every visitor is sent: public, whoever
+ * the reader is and whatever their wallet. Many are templates with a slot
+ * in them ("Practice: {screen} | LearnBitcoin"), which the page fills with
+ * a pattern and never shows as they stand.
+ */
+const OWN_TEXTS: ReadonlySet<string> = new Set(Object.values(strings).flatMap((tables) => [...Object.values(tables.en), ...Object.values(tables.es)]));
+
+/**
  * None of the 12 words lies in what the page's patterns remember.
  *
  * Two of the words in a row are never there. One word alone is not there
- * either, unless the text it stands in is text the page itself shows
- * (`shown`: the page's own text and markup at that moment). The last text
- * a pattern ran on is often a sentence of the page, "Wallet locked." say,
- * and "wallet" is on the word list: one wallet in a few hundred has it
- * among its 12 words. A sentence that anyone can read on the screen gives
- * nothing away.
+ * either, unless the text it stands in gives nothing away. Two kinds of
+ * text do not:
+ *
+ *   - Text the page itself shows (`shown`: the page's own text and markup
+ *     at that moment). The last text a pattern ran on is often a sentence
+ *     of the page, "Wallet locked." say, and "wallet" is on the word list:
+ *     one wallet in a few hundred has it among its 12 words. A sentence
+ *     that anyone can read on the screen gives nothing away.
+ *   - A text of the app's own string tables, word for word, as the text
+ *     the last pattern ran on (RegExp.input). The page fills the title of
+ *     every screen from the template "Practice: {screen} | LearnBitcoin",
+ *     with a pattern, so that template is often what the patterns remember:
+ *     it is, when the 12 words are taken off the Backup screen. It is not
+ *     on the page as it stands (the title is shown filled), and "practice"
+ *     and "screen" are both on the word list: about one wallet in 85 has
+ *     one of them. Everything else the patterns remember then is a part of
+ *     that same public text: the match, what stood before and after it,
+ *     what the brackets picked out.
+ *
+ *     A text that is nothing but one of the 12 words is never taken for
+ *     the app's own. The tables hold a few bare words too (the glossary's
+ *     "change", "fee" and "address", labels such as "Lock"), and a word
+ *     that stands alone could as well be the wallet's: it passes only
+ *     where the page shows it, as before.
  */
 export function assertNoWordsRemembered(memory: PatternMemory, words: readonly string[], shown: string, when: string): void {
+  const own = OWN_TEXTS.has(memory.input) && !words.includes(memory.input.trim().toLowerCase());
   for (const [name, text] of Object.entries(memory)) {
     if (text === '') continue;
     const lower = text.toLowerCase();
     for (const pair of pairsOf(words)) assert.ok(!lower.includes(pair), `${when}: RegExp.${name} holds two of the 12 words in a row`);
     const tokens = tokensOf(text);
     const hits = words.filter((word) => tokens.has(word));
-    assert.ok(hits.length === 0 || shown.includes(text), `${when}: RegExp.${name} holds ${JSON.stringify(text)}, with "${hits.join('", "')}" of the 12 words in it, and the page shows no such text`);
+    assert.ok(
+      hits.length === 0 || own || shown.includes(text),
+      `${when}: RegExp.${name} holds ${JSON.stringify(text)}, with "${hits.join('", "')}" of the 12 words in it, and the page shows no such text, nor is the text the last pattern ran on one of the app's own`,
+    );
   }
 }
 

@@ -25,6 +25,7 @@
   import { useWallet } from '../../lib/wallet-context.ts';
   import { strings } from '../../strings/index.ts';
   import Page from '../Page.svelte';
+  import { clearStatus } from '../status.svelte.ts';
   import NoWallet from './NoWallet.svelte';
   import StoredTrouble from './StoredTrouble.svelte';
 
@@ -47,13 +48,22 @@
   // and whatever had focus may be gone, so focus moves to the new heading,
   // as it does when the router changes the screen. When the address changed
   // too, the router has already seen to scroll and focus: nothing is done.
+  //
+  // And when it is a gate that has taken a screen's place, what the status
+  // region last said was said on that screen, about a wallet that is no
+  // longer shown ("This browser now keeps them", after a restore). The
+  // shell empties the region when the address changes. Here the address
+  // stays, so it is emptied here, by the same rule: what the region said
+  // belongs to the screen it was said on.
   let before = { gate: null as typeof gate, path: '' };
   let started = false;
   $effect(() => {
     const now = { gate, path: router.path };
     const swapped = started && now.gate !== before.gate && now.path === before.path;
+    const screenGone = swapped && before.gate === null;
     before = now;
     started = true;
+    if (screenGone) clearStatus();
     if (swapped) void tick().then(focusHeading);
   });
 </script>

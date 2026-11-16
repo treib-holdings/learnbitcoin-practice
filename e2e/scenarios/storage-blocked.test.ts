@@ -19,9 +19,11 @@
 //      own setting, and every screen is read in both languages; then the
 //      block is lifted, and everything is there as it was.
 //   2. the same refusal made by a script in the page, in the two ways a
-//      browser can refuse (the storage itself, or every call to it), with a
-//      second tab of the same browser that may still read: what the browser
-//      holds is what it held, character for character.
+//      browser can refuse (the storage itself, or every call to it), and a
+//      page that is handed no storage at all, as inside an app's built-in
+//      browser that gives a page none. Each with a second tab of the same
+//      browser that may still read: what the browser holds is what it
+//      held, character for character.
 //   3. the refusal that begins while a wallet screen is open: the page
 //      remembers the wallet until its tab is back in view, then says that
 //      it cannot tell. The wallet is not counted as removed, and is there
@@ -31,12 +33,11 @@
 
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { makeRecord } from '../../app/src/lib/keystore.ts';
 import { strings } from '../../app/src/strings/index.ts';
-import { TEST_MADE_AT, TEST_WORDS, scenario, setSiteData, testRecord, type OpenedPage, type OwnChrome } from './helpers.ts';
+import { TEST_MADE_AT, TEST_WORDS, makeProfile, scenario, setSiteData, testRecord, type OpenedPage, type OwnChrome } from './helpers.ts';
 import { arrivesAt, attributeOf, countOf, createFrom, headingOf, hook, until } from './journey-helpers.ts';
 import { PROGRESS_KEY, noteFor, partsOf, stripOf } from './doit-helpers.ts';
 
@@ -46,11 +47,13 @@ type Lang = 'en' | 'es';
 const mainText = (page: OpenedPage): Promise<string> =>
   page.page.$eval('main', (main) => (main.textContent ?? '').replace(/\s+/g, ' ').trim());
 
-/** What the page is told when it reaches for its storage: "ok", or the name of what the browser threw. */
+/** What the page is told when it reaches for its storage: "ok", "absent" where it is handed none, or the name of what the browser threw. */
 const storageAnswers = (page: OpenedPage): Promise<string> =>
   page.page.evaluate(() => {
     try {
-      window.localStorage.getItem('lbp_wallet_v1');
+      const storage = window.localStorage as Storage | null | undefined;
+      if (storage === null || storage === undefined) return 'absent';
+      storage.getItem('lbp_wallet_v1');
       return 'ok';
     } catch (error) {
       return (error as Error).name;
@@ -165,7 +168,8 @@ scenario(
   { timeout: 300_000 },
   async (s) => {
     const { en } = strings.about;
-    const profile = await mkdtemp(join(tmpdir(), 'lbp-own-profile-'));
+    // A throwaway profile folder of the harness's own making: the only kind it starts a Chrome on, or changes a setting in.
+    const profile = await makeProfile();
     let chrome: OwnChrome | null = null;
     try {
       // -- As it comes: a wallet is made without a passkey on the Create screen, and a step is opened. --
@@ -232,7 +236,7 @@ scenario(
   },
 );
 
-// -- 2. the same refusal, made in the page, in the two ways a browser can refuse ----------------------
+// -- 2. the same refusal, made in the page: the two ways a browser can refuse, and no storage at all -----
 
 /** A note with a step done, one under way and followed: what a page that could read would show. */
 const NOTE = noteFor({
@@ -244,7 +248,15 @@ const NOTE = noteFor({
   },
 });
 
-for (const how of ['the storage itself is refused', 'every call to the storage is refused'] as const) {
+/**
+ * The three ways a page can be left without its storage. The first two are refusals (the browser throws). In the
+ * third nothing is refused: the page is handed no storage (`window.localStorage` is null), which is what a page
+ * meets inside an app's built-in browser that gives it none. The page cannot tell the three apart, and shows
+ * the same screens for each.
+ */
+const WAYS = ['the storage itself is refused', 'every call to the storage is refused', 'the page is handed no storage at all'] as const;
+
+for (const how of WAYS) {
   for (const kind of ['words', 'passkey'] as const) {
     scenario(
       `A wallet ${kind === 'words' ? 'kept with its 12 words' : 'opened with a passkey'} and a note of the steps are stored, and then ${how}: every screen says that the page cannot tell, in both languages, and a second tab that may still read finds both as they were`,
@@ -270,6 +282,8 @@ for (const how of ['the storage itself is refused', 'every call to the storage i
           };
           if (mode === 'the storage itself is refused') {
             Object.defineProperty(window, 'localStorage', { configurable: true, get: refuse });
+          } else if (mode === 'the page is handed no storage at all') {
+            Object.defineProperty(window, 'localStorage', { configurable: true, get: () => null });
           } else {
             for (const name of ['getItem', 'setItem', 'removeItem', 'clear', 'key'] as const) {
               (Storage.prototype as unknown as Record<string, unknown>)[name] = refuse;
@@ -278,9 +292,24 @@ for (const how of ['the storage itself is refused', 'every call to the storage i
         }, how);
         await page.goto('/about');
         await page.waitFor('about-kept-now');
-        assert.equal(await storageAnswers(page), 'SecurityError');
+        assert.equal(await storageAnswers(page), how === 'the page is handed no storage at all' ? 'absent' : 'SecurityError');
         await readEveryScreen(page, 'en', '');
         await readEveryScreen(page, 'es', '/es');
+        // The page cannot tell which of these states it is in, so each gets the same words: the causes it can be,
+        // this one among them, and the ways out. (Where the page is handed no storage, nothing is blocked:
+        // "allow site data" alone would lead that reader nowhere, and Create and Restore never get as far as
+        // the gate that names an ordinary window.)
+        await page.goto('/new');
+        await page.waitFor('storage-blocked');
+        const gate = await page.text('storage-blocked');
+        assert.ok(gate.includes("That happens when site data is blocked, inside some apps' built-in browsers, and when the browser's own storage is not working."), gate);
+        assert.ok(gate.includes("Allow site data for this page, or open this page in your device's own browser, then reload."), gate);
+        for (const [path, hookOf] of [['/do', 'do-no-read'], ['/sparrow', 'sparrow-need-wallet']] as const) {
+          await page.goto(path);
+          await page.waitFor(hookOf);
+          const said = await page.text(hookOf);
+          assert.ok(said.includes("inside some apps' built-in browsers") && said.includes("or open this page in your device's own browser"), `${path}: ${said}`);
+        }
 
         // What the browser holds is what it held: nothing was written, and nothing removed.
         assert.deepEqual(await held(), before);

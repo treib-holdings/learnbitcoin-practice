@@ -161,8 +161,13 @@ export const en = {
   serverBody:
     "The wallet asks our server which coins its addresses hold, and sends its payments through it. So the server sees the wallet's addresses and payments, and the IP address each request comes from. Any wallet that asks someone else's server shares the same.",
   serverLimit: 'It uses the IP address to slow down anyone who asks too fast.',
+  // The list in brackets is what the page asks for beside the chain. The pot's totals are not on it while the
+  // pot's counts are switched off, which is how the Worker ships (POT_COUNTS in worker/wrangler.jsonc): the
+  // page then never asks for them. Once that setting is "on" the page does ask, the request writes a line,
+  // and the list must name it: "the pot's totals" after "the address of the pot", in both languages.
+  // test/info-text.test.ts reads the setting and holds this sentence to it.
   serverLog:
-    "When the page asks about an address, a transaction or the height of the chain, the server writes nothing down, unless something on our side is broken. For every other request (the page's settings, the faucet, the address of the pot, the pot's totals, a payment being sent, a count) it writes one line: what kind of request it was, how it ended and how long it took. The line itself holds no address, no transaction ID and no IP address.",
+    "When the page asks about an address, a transaction or the height of the chain, the server writes nothing down, unless something on our side is broken. For every other request (the page's settings, the faucet, the address of the pot, a payment being sent, a count) it writes one line: what kind of request it was, how it ended and how long it took. The line itself holds no address, no transaction ID and no IP address.",
   // What Cloudflare keeps beside a line was read off a line the deployed Worker wrote, as Workers
   // Logs stored it (worker/wrangler.jsonc, above "observability"): the web address, the time and
   // the request's IDs, and no IP address. "No IP address" is said of that place only: the last
@@ -312,7 +317,7 @@ export const es: Record<keyof typeof en, string> = {
     'La billetera le pregunta a nuestro servidor qué monedas tienen sus direcciones, y envía sus pagos a través de él. Así que el servidor ve las direcciones y los pagos de la billetera, y la dirección IP desde la que llega cada solicitud. Cualquier billetera que le pregunta al servidor de otro comparte lo mismo.',
   serverLimit: 'Usa la dirección IP para frenar a quien pregunta demasiado rápido.',
   serverLog:
-    'Cuando la página pregunta por una dirección, una transacción o la altura de bloque actual, el servidor no anota nada, salvo que algo de nuestro lado esté fallando. Por cada una de las demás solicitudes (la configuración de la página, el faucet, la dirección del fondo común, los totales del fondo común, un pago que se envía, un conteo) anota una línea: qué tipo de solicitud fue, cómo terminó y cuánto tardó. La línea en sí no contiene ninguna dirección, ningún txid ni ninguna dirección IP.',
+    'Cuando la página pregunta por una dirección, una transacción o la altura de bloque actual, el servidor no anota nada, salvo que algo de nuestro lado esté fallando. Por cada una de las demás solicitudes (la configuración de la página, el faucet, la dirección del fondo común, un pago que se envía, un conteo) anota una línea: qué tipo de solicitud fue, cómo terminó y cuánto tardó. La línea en sí no contiene ninguna dirección, ningún txid ni ninguna dirección IP.',
   serverCloudflare:
     'El servidor funciona en la red de Cloudflare. Cloudflare guarda esas líneas por poco tiempo. Junto a cada una guarda la dirección web que se pidió, la hora y los identificadores que Cloudflare le da a la solicitud, y ninguna dirección IP. En una línea anotada mientras algo de nuestro lado está fallando, esa dirección web puede contener una dirección de la billetera o un txid. Cloudflare también lleva sus propios registros, y esos sí pueden contener la dirección IP.',
   serverBack:

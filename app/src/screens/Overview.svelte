@@ -37,7 +37,9 @@
   // brings it back as it was (Back from another site, a background tab
   // that wakes up), and the wallet then shows whatever is in the browser by
   // now: that wallet behind its passkey again, or another wallet. The line
-  // must not stand over those.
+  // must not stand over those. The same sentence is said through the status
+  // region, which keeps it for as long as the address stays: it is taken
+  // out of there by the same rule, when the line goes.
 
   import { onMount, tick } from 'svelte';
   import Button from '../components/Button.svelte';
@@ -45,7 +47,7 @@
   import Notice from '../components/Notice.svelte';
   import { takeOutcome } from '../components/outcome.ts';
   import Section from '../components/Section.svelte';
-  import { announce } from '../components/status.svelte.ts';
+  import { announce, clearStatus, statusText } from '../components/status.svelte.ts';
   import { EYEBROW } from '../components/styles.ts';
   import TextLink from '../components/TextLink.svelte';
   import CoinList from '../components/wallet/CoinList.svelte';
@@ -93,6 +95,13 @@
   onMount(() => {
     // Read out as well, once the status region has been emptied for the new screen: by the same rule as the line.
     if (restored) void tick().then(() => announce(t.restoredHere));
+  });
+  // The status region keeps what it was last told for as long as the address stays, and a screen reader can
+  // still read it there. So the sentence leaves it when the line leaves the screen: once it is no longer true
+  // (the same wallet behind its passkey again, say), and only while the region still holds that very sentence.
+  // Whatever was said since stays.
+  $effect(() => {
+    if (restoredNow && !restored && statusText() === t.restoredHere) clearStatus();
   });
 </script>
 

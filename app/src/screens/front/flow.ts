@@ -69,6 +69,28 @@ export function frontGate(status: WalletStatus, canStore: boolean, stop: Stop | 
   return 'open';
 }
 
+/**
+ * Under the gate "trouble": whether what the screen adds to a gate is drawn
+ * there too. On Create that is the line about a passkey that was saved a
+ * moment ago and has no wallet.
+ *
+ * Only for a storage this page was not let read ("blocked"). That can
+ * begin while the passkey prompt is open: the passkey is saved, its wallet
+ * cannot be stored, and the card that takes the screen's place says only
+ * that the page cannot tell whether a wallet is here. The reader has to
+ * hear of the passkey as well, and at once: in that state the page does not
+ * hint it away (lib/session.ts, forgetPasskey).
+ *
+ * Not for something stored that cannot be read, or that a newer version
+ * of the page wrote. The line says of a passkey that it has no wallet, and
+ * of what is stored there nobody can tell whose wallet it is: under those
+ * cards the screen adds nothing. Nor for a failed self-test: there no
+ * prompt is ever opened.
+ */
+export function addsUnderTrouble(status: WalletStatus): boolean {
+  return status === 'blocked';
+}
+
 // -- which wallet is here -------------------------------------------------------------
 
 /** The line that says which wallet is in this browser: a key of strings/home.ts, and the passkey's tag when it has one. */

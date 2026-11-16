@@ -223,8 +223,11 @@ async function backToMarked(page: OpenedPage, times: number): Promise<void> {
   throw new Error(`the page the reader left did not come back from the browser's memory, so nothing was shown about it: ${trail.join(' <- ')}`);
 }
 
+/** What the status region holds right now: what a screen reader that goes there is told. Empty: nothing. */
+const statusNow = (page: OpenedPage): Promise<string> => textOf(page, hook('status'));
+
 scenario(
-  'The Overview\'s line after a restore, "This browser now keeps them", is drawn only while it is so: brought back from the browser\'s memory with Back it still stands over the wallet that was restored, and it is gone over that same wallet once it is behind its passkey again, and over another wallet',
+  'The Overview\'s line after a restore, "This browser now keeps them", is drawn only while it is so: brought back from the browser\'s memory with Back it still stands over the wallet that was restored, and it is gone over that same wallet once it is behind its passkey again, and over another wallet; the status region stops saying it when the line goes, also when a second tab removes the wallet and the gate takes the Overview\'s place',
   { timeout: 300_000 },
   async (s) => {
     const c = strings.common.en;
@@ -259,6 +262,8 @@ scenario(
     assert.equal(await noticeOf(page, 'overview-restored'), wallet.restoredHere);
     assert.equal(wallet.restoredHere, 'This wallet was restored from its 12 words. This browser now keeps them.');
     assert.deepEqual([(await storedRecord(page))?.kind, (await storedRecord(page))?.fingerprint], ['words', made.record.fingerprint]);
+    // Said to a screen reader as well, and kept in the status region for as long as the address stays.
+    await until(async () => (await statusNow(page)) === wallet.restoredHere, 'the status region says that the wallet was restored');
     await markDocument(page);
 
     // The reader leaves for another site in this tab, and comes straight back with Back. The browser brings
@@ -268,6 +273,7 @@ scenario(
     await page.waitFor('wallet-fingerprint');
     assert.equal(await page.text('wallet-fingerprint'), made.record.fingerprint);
     assert.equal(await noticeOf(page, 'overview-restored'), wallet.restoredHere);
+    assert.equal(await statusNow(page), wallet.restoredHere, 'still true, so still said');
 
     // The reader leaves again, comes back to the wallet by its address (a page of its own), removes the
     // wallet there and opens it with its passkey: the same wallet, and this browser keeps no words of it now.
@@ -296,6 +302,10 @@ scenario(
     // And it does not say that this browser keeps the 12 words: it keeps none.
     assert.equal(await countOf(page, 'overview-restored'), 0, 'the line outlived the state it was said of');
     assert.ok(!(await textOf(page, 'main')).includes('This browser now keeps them'));
+    // Nor does the status region go on saying it, where a screen reader would still be told: the address has
+    // not changed, so nothing else would have emptied it.
+    await until(async () => (await statusNow(page)) === '', 'the status region no longer says that this browser keeps the 12 words');
+    assert.ok(!(await textOf(page, 'body')).includes('This browser now keeps them'), 'no part of the page says it, seen or read out');
 
     // -- Another wallet in its place. --
     const fresh = freshRecord();
@@ -329,6 +339,41 @@ scenario(
     await until(async () => (await second.text('wallet-fingerprint')) === other.record.fingerprint, 'the Overview shows the wallet that is in the browser now');
     // That wallet was made here a moment ago. It was never restored: the line must not stand over it.
     assert.equal(await countOf(second, 'overview-restored'), 0, 'the line stands over a wallet it was never said of');
+    await until(async () => !(await statusNow(second)).includes('This browser now keeps them'), 'the status region does not say it of that wallet either');
+
+    // -- The wallet removed in a second tab, while the first stays on the Overview. --
+    const kept = freshRecord();
+    const third = await s.open('/restore', { timeout: 30_000 });
+    await typeWords(third, (kept.mnemonic ?? '').split(' '));
+    await third.click('restore-check');
+    await third.click('restore-go');
+    await third.waitFor('restore-keep');
+    await third.click('restore-keep');
+    await arrivesAt(third, '/wallet');
+    await third.waitFor('overview-restored');
+    assert.equal(await third.text('wallet-fingerprint'), kept.fingerprint);
+    await until(async () => (await statusNow(third)) === wallet.restoredHere, 'the status region says that the wallet was restored');
+    const loads = third.responses.filter((response) => response.type === 'document').length;
+    // Another tab of the same browser: the wallet is removed there, on Settings.
+    const tab = await s.open('/wallet/settings', { context: third.context, timeout: 30_000 });
+    await tab.page.bringToFront();
+    await tab.click('remove-wallet');
+    await tab.waitFor('remove-confirm');
+    await untilAnswersCount();
+    await tab.click('remove-confirm');
+    await arrivesAt(tab, '/');
+    assert.equal(await tab.stored(), null);
+    // The first tab, which nobody touched: at the same address the gate has taken the Overview's place.
+    await third.page.bringToFront();
+    await headingBecomes(third, wallet.gateNoneTitle);
+    assert.equal(await third.page.evaluate(() => location.pathname), '/wallet');
+    assert.equal(third.responses.filter((response) => response.type === 'document').length, loads, 'no page was loaded for it');
+    assert.equal(await countOf(third, 'overview-restored'), 0);
+    assert.equal(await countOf(third, 'wallet-fingerprint'), 0);
+    // This browser keeps no wallet and none of its words now, and no part of the page says that it does: the
+    // status region was emptied when the gate took the screen's place, as it is when the address changes.
+    await until(async () => (await statusNow(third)) === '', 'the status region is empty under the gate');
+    assert.ok(!(await textOf(third, 'body')).includes('This browser now keeps them'), 'no part of the page says it, seen or read out');
   },
 );
 

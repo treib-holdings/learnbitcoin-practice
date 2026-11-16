@@ -11,8 +11,10 @@
   //               this browser, and the way out is another browser.
   //   blocked     the browser did not let this page read its storage, so
   //               nobody knows whether a wallet is here: one made before
-  //               may still be stored. It never says "no wallet". The way
-  //               out is to allow site data for the page, and Reload.
+  //               may still be stored. It never says "no wallet". The page
+  //               cannot tell why the read failed, so it names what it can
+  //               be, and the ways out: allow site data for the page, or
+  //               open the page in the device's own browser, and Reload.
   //
   // For "none" and "ready" it shows nothing. On a wallet screen it is the
   // body of the gate, under the gate's heading. Home passes `titled`, and

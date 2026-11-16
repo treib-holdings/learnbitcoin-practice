@@ -68,7 +68,10 @@ export const en = {
     'Your password manager may already have deleted that passkey. If it is still listed there (the newest one under {host}), delete it: it is of no use now.',
   noPrfElsewhere:
     'A passkey saved in another password manager, or on a phone, may work: try again and choose that place when your device asks where to save it.',
-  /** Under "a wallet arrived from another tab" and "this browser stores nothing", when the tap had opened a passkey prompt. */
+  /**
+   * Under "a wallet arrived from another tab" and "this browser stores nothing", and under the card for a
+   * storage this page was not let read, when the tap had opened a passkey prompt.
+   */
   orphan:
     'If your device saved a new passkey a moment ago, that passkey has no wallet. You can delete it in your password manager.',
 

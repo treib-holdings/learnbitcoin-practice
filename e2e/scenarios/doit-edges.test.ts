@@ -200,7 +200,7 @@ scenario(
     // opening of the step's screen was counted (About lists it), so the list does not say "nothing is sent".
     assert.ok((await page.page.$eval('main', (main) => (main.textContent ?? '').replace(/\s+/g, ' '))).includes(en.forgetWhat));
     assert.match(en.forgetWhat, /^This browser keeps a note of your progress: .*, such as a wallet fingerprint and a payment it waits for\. The About page lists it all\. /);
-    assert.match(en.forgetWhat, /The note itself is never sent to us\. Opening a step's screen and finishing a step are counted, as the About page says\.$/);
+    assert.match(en.forgetWhat, /The note itself is never sent to us\. While counting is on, opening a step's screen and finishing a step are counted; the About page says whether it is on\.$/);
     assert.equal((await noteOf(page))?.steps[DRILL]?.wallet, record.fingerprint);
     const sent = reader.requests().map((request) => request.body);
     assert.ok(sent.includes(JSON.stringify(view(`/do/${DRILL}`))), sent.join(' '));

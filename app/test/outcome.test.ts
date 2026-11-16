@@ -80,8 +80,29 @@ test('"Remove it" and a restore each leave their word, and the screen they lead 
     overview,
     /let restored = \$derived\(restoredNow && wallet\.record\?\.kind === 'words' && wallet\.record\.xpub === restoredXpub\);/,
   );
+  // The same sentence was said through the status region, which keeps what it was last told for as long as
+  // the address stays: a screen reader can still read it there. So it leaves the region by the same rule. Where
+  // the Overview stays on the page (the same wallet behind its passkey again), the Overview takes it out, when
+  // the line is no longer drawn and only while the region still holds that very sentence: what was said since
+  // is not touched.
+  assert.match(overview, /import \{ announce, clearStatus, statusText \} from '\.\.\/components\/status\.svelte\.ts';/);
+  assert.match(overview, /\$effect\(\(\) => \{\s*if \(restoredNow && !restored && statusText\(\) === t\.restoredHere\) clearStatus\(\);\s*\}\);/);
   // Nothing else on the screen is drawn from the outcome itself.
-  assert.equal(overview.match(/restoredNow/g)?.length, 2, 'taken once, and used once: in the rule above');
+  assert.equal(overview.match(/restoredNow/g)?.length, 3, 'taken once, and used twice: in the rule above, and in the one that empties the status region');
+  // And where the Overview leaves the page with the address unchanged (the wallet removed in another tab: the
+  // gate "This browser has no practice wallet." takes its place), the gate empties the region, as the shell does
+  // when the address changes. Only when it is a screen that the gate took the place of.
+  const gate = source('components/wallet/WalletGate.svelte');
+  assert.match(gate, /import \{ clearStatus \} from '\.\.\/status\.svelte\.ts';/);
+  assert.match(
+    gate,
+    /const swapped = started && now\.gate !== before\.gate && now\.path === before\.path;\s*const screenGone = swapped && before\.gate === null;\s*before = now;\s*started = true;\s*if \(screenGone\) clearStatus\(\);\s*if \(swapped\) void tick\(\)\.then\(focusHeading\);/,
+  );
+  assert.match(source('components/Shell.svelte'), /\$effect\(\(\) => \{\s*void router\.path;\s*return clearStatus;\s*\}\);/);
+  // The region itself: one text, replaced or emptied, and nothing else keeps a sentence there.
+  const status = source('components/status.svelte.ts');
+  assert.match(status, /export function clearStatus\(\): void \{\s*message = '';\s*\}/);
+  assert.match(status, /export function statusText\(\): string \{\s*return message;\s*\}/);
 
   // The sentences: a wallet is "removed" from this browser, never "deleted", and its coins stay where they are.
   assert.equal(strings.home.en.removed, 'The wallet was removed from this browser. Its coins stay on the practice network.');

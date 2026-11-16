@@ -11,7 +11,8 @@ because it doubles as teaching material: its comments say why, in plain
 language.
 
 **Status:** the practice network runs. The wallet app in this repository is
-built and tested against a stand-in of that network, and is not released yet.
+built and tested against a stand-in of that network. It is live at
+practice.learnbitcoin.com, and not yet linked from the main site.
 Six guided "Do it" steps (under `/do`) take a reader through what the site's
 Journey teaches: hold some, pass it on, see that there are no balances, wait
 for a block, write down the 12 words, prove the backup. Nothing here holds value.
@@ -88,7 +89,7 @@ fails on any console error, any violation of the page's security policy and
 any request to another host. `--wallet` chooses what the browser holds:
 `none`, `empty`, `funded` or `passkey`.
 
-`pnpm e2e` runs 220 scenarios in about three minutes. Each gets a
+`pnpm e2e` runs 223 scenarios in about three minutes. Each gets a
 world of its own: the built app, the Worker's handler, a stand-in network,
 and pages in Chrome. Most files hold the scenarios of one screen. The files
 named `doit-*` hold the "Do it" steps: one file for each step, and one each
@@ -128,9 +129,9 @@ reader passes on go to the pay-it-forward pot, and the oldest of them goes
 out with the next newcomer's faucet payment, so a first coin can be traced on
 the explorer to an earlier reader's payment.
 
-Three names are public: the wallet at `practice.learnbitcoin.com` (once it
-is released), the explorer at `practice-explorer.learnbitcoin.com`, and the
-Electrum port at `practice-electrum.learnbitcoin.com:50002`. The origin that
+Three names are public: the wallet at `practice.learnbitcoin.com`, the
+explorer at `practice-explorer.learnbitcoin.com`, and the Electrum port at
+`practice-electrum.learnbitcoin.com:50002`. The origin that
 serves the chain's read API and the bots is reachable by the Worker alone.
 How the network is set up, backed up and checked is in `ops/README.md`; what
 the bots do, and their API, in `bots/README.md`.

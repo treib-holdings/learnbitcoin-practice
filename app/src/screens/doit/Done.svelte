@@ -130,7 +130,10 @@
 
   /** Whether the wallet in this browser is the one the three words were checked for. */
   let seed = $derived(id === 'the-seed' ? seedWallet(doit.seen(now)) : 'none');
-  /** The check was passed again on this screen, for the wallet that is here. */
+  /**
+   * The check was passed again on this screen, for the wallet that was here then. That is said only while
+   * `seed` is "same": while the wallet in this browser is still the one the note names.
+   */
   let rechecked = $state(false);
 </script>
 
@@ -150,10 +153,12 @@
       {/if}
     </div>
 
-    {#if id === 'the-seed' && rechecked}
+    <!-- "Checked ... for the wallet that is here" only while that is so: while the wallet here is the one the note
+         names. Another tab can put another wallet in this browser afterwards, and the line below then takes its place. -->
+    {#if id === 'the-seed' && rechecked && seed === 'same'}
       <Notice kind="info" text={t.seedRechecked} data-testid="step-seed-rechecked" />
     {:else if id === 'the-seed' && seed === 'other'}
-      <!-- Another wallet is here: its paper has not been checked, and the check is offered again for it. -->
+      <!-- Another wallet is here: this step's note names no check for it, and the check is offered again for it. -->
       <div class="space-y-4 border-t border-ink-200 pt-4" data-testid="step-seed-other">
         <p class="text-pretty text-base leading-relaxed text-ink-700">
           <Sentence text={t.seedOther} slots={{ here: wallet.record?.fingerprint ?? '' }} mono={['here']} />

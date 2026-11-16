@@ -214,7 +214,8 @@
   {/if}
 {/snippet}
 
-<!-- Under "a wallet arrived" and "this browser stores nothing", when the tap had opened a passkey prompt. -->
+<!-- Under "a wallet arrived" and "this browser stores nothing", and under the card that says the page could not
+     read this browser's storage, when the tap had opened a passkey prompt. -->
 {#snippet orphaned()}
   <p data-testid="create-orphan">{t.orphan}</p>
 {/snippet}

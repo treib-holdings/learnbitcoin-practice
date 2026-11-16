@@ -30,7 +30,7 @@ import { PROGRESS_KEY, chapterLink } from '../src/lib/doit/progress.ts';
 import { CHAPTERS, STEP_DEFS } from '../src/lib/doit/steps.ts';
 import { RECORD_KEY, loadRecord, makeRecord } from '../src/lib/keystore.ts';
 import { TURNSTILE_SCRIPT, faucetWidgetOptions } from '../src/lib/turnstile.ts';
-import { chapterUrl } from '../src/screens/doit/view.ts';
+import { asksPotCount, chapterUrl } from '../src/screens/doit/view.ts';
 import { ARROW, LABEL_MARK, needsSays, sentenceParts, sentenceText } from '../src/screens/info/says.ts';
 import { REGTEST_FLAG } from '../src/screens/info/sparrow-guide.ts';
 import { strings } from '../src/strings/index.ts';
@@ -577,14 +577,15 @@ test('About, "what our server sees": what is written down, and what Cloudflare k
   // broken; every other request writes one line. (The last scenario of e2e/scenarios/info.test.ts reads the
   // lines a real run wrote, and holds these sentences to them.)
   assert.match(en.serverLog, /^When the page asks about an address, a transaction or the height of the chain, the server writes nothing down, unless something on our side is broken\./);
-  // The pot's totals are on the list since the "Do it" steps ask for them (GET /api/pot/stats writes a line).
-  assert.match(en.serverLog, /\(the page's settings, the faucet, the address of the pot, the pot's totals, a payment being sent, a count\)/);
+  // The list in brackets is what the page asks for beside the chain. Whether the pot's totals are on it goes by
+  // a setting of the Worker: the next test reads the setting as it ships, and holds the list to it.
+  assert.match(en.serverLog, /\. For every other request \(the page's settings, the faucet, the address of the pot, [^)]*a payment being sent, a count\) it writes one line: /);
   // The pot has one name in the app, the one Send and Receive give it.
   for (const text of Object.values(strings.about.en)) assert.doesNotMatch(text, /pass-it-on|pay-it-forward/);
   assert.match(en.serverLog, /what kind of request it was, how it ended and how long it took\. The line itself holds no address, no transaction ID and no IP address\.$/);
   // "Block height" is "altura de bloque" on the Spanish site (notes/06, section 2).
   assert.match(es.serverLog, /^Cuando la página pregunta por una dirección, una transacción o la altura de bloque actual, el servidor no anota nada/);
-  assert.match(es.serverLog, /\(la configuración de la página, el faucet, la dirección del fondo común, los totales del fondo común, un pago que se envía, un conteo\)/);
+  assert.match(es.serverLog, /\. Por cada una de las demás solicitudes \(la configuración de la página, el faucet, la dirección del fondo común, [^)]*un pago que se envía, un conteo\) anota una línea: /);
   assert.match(es.serverLog, /La línea en sí no contiene ninguna dirección, ningún txid ni ninguna dirección IP\.$/);
   // "The line itself" is the Worker's own line. What the log service stores beside it was read off a stored
   // line on the live host after the first deploy (worker/wrangler.jsonc, above "observability"): the web
@@ -610,6 +611,69 @@ test('About, "what our server sees": what is written down, and what Cloudflare k
   assert.match(es.serverCloudflare, /esa dirección web puede contener una dirección de la billetera o un txid\./);
   // The limit per reader.
   assert.match(en.serverLimit, /^It uses the IP address to slow down anyone who asks too fast\.$/);
+});
+
+/**
+ * The setting POT_COUNTS as worker/wrangler.jsonc ships it. The file is JSON with comments, and its comments
+ * name the setting too: the value is taken from the one line that sets it (a comment line begins with "//").
+ */
+function potCountsShipped(): string {
+  const text = readFileSync(new URL('../../worker/wrangler.jsonc', import.meta.url), 'utf8');
+  const set = text.split('\n').flatMap((line) => {
+    const hit = /^\s*"POT_COUNTS":\s*"([^"]*)",?\s*$/.exec(line);
+    return hit === null ? [] : [hit[1] ?? ''];
+  });
+  assert.equal(set.length, 1, 'worker/wrangler.jsonc sets POT_COUNTS in exactly one line');
+  return set[0] ?? '';
+}
+
+test('About, "what our server sees": the list of requests names the pot\'s totals when the Worker ships with the pot\'s counts switched on, and only then', () => {
+  // The list, both ways. The page asks for the pot's totals only where the Worker's settings say that they can
+  // be had; where they say no, no request for them ever leaves the page, and a list that named one would
+  // tell the reader of a request that is not made.
+  const lists = {
+    off: {
+      en: "(the page's settings, the faucet, the address of the pot, a payment being sent, a count)",
+      es: '(la configuración de la página, el faucet, la dirección del fondo común, un pago que se envía, un conteo)',
+    },
+    on: {
+      en: "(the page's settings, the faucet, the address of the pot, the pot's totals, a payment being sent, a count)",
+      es: '(la configuración de la página, el faucet, la dirección del fondo común, los totales del fondo común, un pago que se envía, un conteo)',
+    },
+  } as const;
+  const names: Record<Lang, RegExp> = { en: /\bthe pot's totals\b/, es: /\blos totales del fondo común\b/ };
+  for (const lang of LANGS) {
+    assert.doesNotMatch(lists.off[lang], names[lang], lang);
+    assert.match(lists.on[lang], names[lang], lang);
+  }
+
+  // The setting, as this repository ships it. Only the exact word "on" switches the counts on (worker/src/config.ts).
+  const shipped = potCountsShipped();
+  const on = shipped === 'on';
+  for (const lang of LANGS) {
+    const said = strings.about[lang].serverLog;
+    const why = `POT_COUNTS is ${JSON.stringify(shipped)} in worker/wrangler.jsonc, so About's list of requests ${on ? 'must name' : 'must not name'} the pot's totals (${lang})`;
+    assert.equal(names[lang].test(said), on, why);
+    assert.ok(said.includes(lists[on ? 'on' : 'off'][lang]), why);
+    // And no other sentence of the page speaks of them while the page never asks.
+    if (!on) {
+      for (const [key, text] of Object.entries(strings.about[lang] as Table)) assert.doesNotMatch(text, /\bpot's (totals|counts)\b|\b(totales|conteos) del fondo\b/i, `about.${lang}.${key}`);
+    }
+  }
+
+  // What the sentence follows: the app asks only when the Worker's settings say yes, and the settings it
+  // carries built in say no. So with the setting off no page asks, whatever else is true.
+  assert.equal(DEFAULT_CONFIG.potCounts, false);
+  for (const id of STEPS) assert.equal(asksPotCount(id, { potCounts: false }), false, id);
+  assert.equal(asksPotCount('pass-it-on', { potCounts: true }), true);
+  // One piece of the page calls for the counts, behind that rule. (Everything under lib/ is the wallet's own
+  // seam and its client, which ask only when a screen does.)
+  const asks = readdirSync(new URL('../src/', import.meta.url), { recursive: true, encoding: 'utf8' })
+    .filter((name) => /\.(ts|svelte)$/.test(name) && !name.startsWith('lib/'))
+    .filter((name) => /\bpotStats\(/.test(code(readFileSync(new URL(`../src/${name}`, import.meta.url), 'utf8'))));
+  assert.deepEqual(asks, ['screens/doit/Done.svelte']);
+  assert.match(source('src/screens/doit/Done.svelte'), /let countsWanted = \$derived\(asksPotCount\(id, wallet\.config\)\);/);
+  assert.match(source('src/screens/doit/Done.svelte'), /if \(!countsWanted \|\| asked\) return;\s*asked = true;\s*untrack\(\(\) => \{\s*void busyWhile\(wallet\.potStats\(\)\)/);
 });
 
 test('About, "what is counted": Plausible is sent the IP address and what the browser says it is, and no ID', () => {

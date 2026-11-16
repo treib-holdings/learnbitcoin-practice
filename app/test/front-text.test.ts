@@ -385,6 +385,31 @@ test('every wait on Create marks <main> busy, and the hooks of the spec are on i
   assert.match(text, /<Waiting inline text=\{t\.passkeyChecking\} data-testid="create-checking" \/>/);
 });
 
+test('Create says what became of a passkey that was saved before the wallet could not be stored, under every gate that such an answer leads to', () => {
+  const { en, es } = strings.create;
+  assert.equal(en.orphan, 'If your device saved a new passkey a moment ago, that passkey has no wallet. You can delete it in your password manager.');
+  assert.equal(es.orphan, 'Si tu dispositivo guardó una llave de acceso nueva hace un momento, esa llave no tiene billetera. Puedes borrarla en tu administrador de contraseñas.');
+  // The screen hands the line to the gate when its last answer stopped it after a passkey prompt, and at no other time.
+  const create = source('New.svelte');
+  assert.match(create, /let orphan = \$derived\(last !== null && last\.view\.kind === 'stopped' && last\.view\.orphan\);/);
+  assert.match(create, /\{#snippet orphaned\(\)\}\s*<p data-testid="create-orphan">\{t\.orphan\}<\/p>\s*\{\/snippet\}/);
+  assert.match(create, /<FrontGate \{gate\} \{stop\} extra=\{orphan \? orphaned : undefined\}>/);
+  assert.equal(create.match(/t\.orphan\b/g)?.length, 1);
+  // The gate draws it under a wallet that is here, under "a wallet arrived" and under "this browser refuses to
+  // store". And under the card for a storage the page was not let read, which stands in front of that last
+  // gate: the storage can stop answering while the prompt is open, and without the line the reader would be
+  // left with a passkey nobody mentions. There it comes as an alert of its own: the card is none.
+  const gate = source('front/FrontGate.svelte');
+  assert.match(
+    gate,
+    /\{:else if gate === 'trouble'\}\s*<StoredTrouble titled \/>\s*\{#if extra !== undefined && addsUnderTrouble\(wallet\.status\)\}\s*<!--[^>]*-->\s*<Notice kind="problem">\s*\{@render extra\(\)\}\s*<\/Notice>\s*\{\/if\}\s*\{:else if gate === 'here'\}/,
+  );
+  assert.match(gate, /import \{ addsUnderTrouble, type Gate, type Stop \} from '\.\/flow\.ts';/);
+  assert.equal(gate.match(/\{@render extra\?*\.?\(\)\}/g)?.length, 4, 'under the blocked card, a wallet that is here, "arrived" and "no storage"');
+  // Restore has no such line: it opens no passkey prompt.
+  assert.match(source('Restore.svelte'), /<FrontGate \{gate\} \{stop\}>/);
+});
+
 test('Home keeps the fixed document title, and shows the shared pieces for the states it does not own', () => {
   const text = source('Home.svelte');
   assert.match(text, /documentTitle=\{c\.homeTitle\}/);

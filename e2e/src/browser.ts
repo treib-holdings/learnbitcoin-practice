@@ -2,9 +2,13 @@
 //
 // launchChrome() starts the Chrome installed on this machine (puppeteer-core
 // brings no browser of its own) on a throwaway profile, or on a profile
-// folder the caller names and keeps (for what a browser holds when it is
-// closed and opened again, and for a setting of the browser itself:
-// setSiteData). openPage() opens one page of the local server and watches it:
+// folder that makeProfile() made and the caller keeps (for what a browser
+// holds when it is closed and opened again, and for a setting of the
+// browser itself: setSiteData). Both take such a folder and no other: a
+// folder under the system's temporary folder that this harness made itself.
+// So neither can be pointed at a person's own browser profile, where
+// setSiteData would switch that person's Chrome to blocking all site data.
+// openPage() opens one page of the local server and watches it:
 //
 //   - Every console error, every uncaught error and every violation of the
 //     page's Content-Security-Policy is recorded as a failure, in the page
@@ -37,10 +41,10 @@
 // its storage, a width, a language and a slow phone's speed.
 
 import type { ChildProcess } from 'node:child_process';
-import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, sep } from 'node:path';
 import puppeteer, { PredefinedNetworkConditions, type Browser, type BrowserContext, type CDPSession, type Page } from 'puppeteer-core';
 import type { Lang } from '@learnbitcoin/practice-contract';
 import { accountFromMnemonic, deriveAddress, newMnemonic, watchOnlyAccount } from '@learnbitcoin/practice-wallet';
@@ -87,27 +91,80 @@ export function endOnSignals(): void {
 
 export interface ChromeOptions {
   /**
-   * A profile folder of the caller's own, in place of a throwaway one.
+   * A profile folder that makeProfile() made, in place of a throwaway one.
    * Chrome keeps what its pages store in it (the pages of its own context:
    * `browser.defaultBrowserContext()`), so a Chrome started on the same
    * folder later finds it again, as a browser that was closed and opened
-   * again does. The folder is made if it is not there. It is NOT removed
-   * when Chrome is closed, or when this process ends: it is the caller's
-   * to remove.
+   * again does. It is NOT removed when Chrome is closed, or when this
+   * process ends: it is the caller's to remove. Any other folder is
+   * refused, and nothing is started (ownProfile).
    */
   profile?: string;
 }
 
+/** The profile folders makeProfile() has made in this process, each by its real path. */
+const madeProfiles = new Set<string>();
+
+/**
+ * Makes a new, empty profile folder under the system's temporary folder
+ * and gives its path: for a Chrome that the caller starts more than once
+ * on the same folder (launchChrome with `profile`) and whose own settings
+ * it changes in between (setSiteData). The folder is the caller's to
+ * remove when it is done with it.
+ *
+ * It is the one way to such a folder. launchChrome and setSiteData take a
+ * folder that this function made, in this process, and refuse every other.
+ */
+export async function makeProfile(): Promise<string> {
+  const folder = realpathSync(await mkdtemp(join(tmpdir(), 'lbp-own-profile-')));
+  madeProfiles.add(folder);
+  return folder;
+}
+
+/**
+ * The real path of a profile folder that the harness may start a Chrome on
+ * or write a setting into. It throws for every other folder, before
+ * anything is started, read or written:
+ *
+ *   - a folder that is not there;
+ *   - one whose real path does not lie under the system's temporary
+ *     folder (a link that sits in the temporary folder and leads out of it
+ *     is where it leads);
+ *   - one that makeProfile() did not make in this process.
+ *
+ * A person's own browser profile is none of these. Chrome's own folder has
+ * the very file setSiteData rewrites, so a path given by mistake would
+ * otherwise go through without a word.
+ */
+function ownProfile(folder: string, asked: string): string {
+  let real: string;
+  try {
+    real = realpathSync(folder);
+  } catch {
+    throw new Error(`${asked}: there is no folder ${folder}. A profile folder is made with makeProfile().`);
+  }
+  const temporary = realpathSync(tmpdir());
+  if (!real.startsWith(temporary + sep)) {
+    throw new Error(`${asked}: ${folder} is not under the system's temporary folder. Only a throwaway profile that makeProfile() made is taken, never a browser profile of somebody's own.`);
+  }
+  if (!madeProfiles.has(real)) {
+    throw new Error(`${asked}: ${folder} is not a profile folder that makeProfile() made in this run. Only such a folder is taken.`);
+  }
+  return real;
+}
+
 export async function launchChrome(options: ChromeOptions = {}): Promise<Chrome> {
+  /** True for a throwaway profile, which goes with its Chrome. */
+  const throwaway = options.profile === undefined;
+  // A folder the caller names is looked at first: one that is not a throwaway folder of this harness's own
+  // making stops here, before Chrome is looked for or anything is started.
+  const named = options.profile === undefined ? null : ownProfile(options.profile, 'launchChrome');
   const executablePath = process.env.CHROME_PATH || DEFAULT_CHROME_PATH;
   if (!existsSync(executablePath)) {
     throw new Error(`No Chrome at ${executablePath}. Set CHROME_PATH to a Chrome or Chromium program.`);
   }
   endOnSignals();
-  /** True for a throwaway profile, which goes with its Chrome. */
-  const throwaway = options.profile === undefined;
-  const profile = options.profile ?? (await mkdtemp(join(tmpdir(), 'lbp-chrome-')));
-  if (!throwaway) await mkdir(profile, { recursive: true });
+  const profile = named ?? (await mkdtemp(join(tmpdir(), 'lbp-chrome-')));
   /** Chrome's process, once it runs. */
   let running: ChildProcess | null = null;
   const removeProfile = () => {
@@ -171,9 +228,13 @@ export async function launchChrome(options: ChromeOptions = {}): Promise<Chrome>
  * folder: it writes that file when it closes, and reads it when it starts.
  * The folder must have been used by a Chrome once (launchChrome with
  * `profile`), or there is no such file yet.
+ *
+ * `profile` is a folder that makeProfile() made. Any other folder is
+ * refused, and no file in it is read or written (ownProfile): a person's
+ * own Chrome folder has this file too.
  */
 export function setSiteData(profile: string, setting: 'allow' | 'block'): void {
-  const file = join(profile, 'Default', 'Preferences');
+  const file = join(ownProfile(profile, 'setSiteData'), 'Default', 'Preferences');
   if (!existsSync(file)) throw new Error(`setSiteData: no Preferences file in ${profile}. Start Chrome on this profile once, and close it, first.`);
   const preferences = JSON.parse(readFileSync(file, 'utf8')) as { profile?: { default_content_setting_values?: Record<string, number> } };
   preferences.profile ??= {};

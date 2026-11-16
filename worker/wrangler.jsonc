@@ -147,6 +147,14 @@
     // work is in bots/ of this repository and is not finished, and a
     // change there takes effect on the server only when its bots have been
     // built and started again. Until it is live there, leave this off.
+    //
+    // A sentence of the app's About page changes with this setting. Under
+    // "What our server sees" the page lists the requests for which the
+    // Worker writes a line. While this is off the page never asks for the
+    // pot's counts, and the list does not name them. Switched on, the page
+    // asks, and the list must name "the pot's totals" (serverLog in
+    // app/src/strings/about.ts, in both languages). A test of the app
+    // reads this setting and fails until the sentence says so.
     "POT_COUNTS": "off"
   },
 

@@ -541,7 +541,7 @@ scenario(
     await page.click('do-forget-confirm');
     await page.waitFor('do-forgotten');
     assert.equal(await page.text('do-forgotten'), en.forgotten);
-    assert.equal(en.forgotten, 'Your "Do it" progress was forgotten. This site keeps none of it now.');
+    assert.equal(en.forgotten, 'Your "Do it" progress was forgotten. This site keeps none of it in this browser now.');
     assert.equal(await page.waitForStatus(en.forgotten), en.forgotten);
     // And that is so: of all this site keeps in this browser, the wallet's record is what is left.
     assert.deepEqual(await storageKeys(page), ['lbp_wallet_v1']);
@@ -1289,7 +1289,7 @@ scenario(
     // What each card says, word for word. Each is what happened on the day, so it is as true today.
     const SAID: Record<(typeof STEPS)[number], string> = {
       'hold-some':
-        "You got practice coins, and you did not have to take this page's word for it: the explorer showed the same coin in the same block. On Bitcoin it works the same way. Verify, don't trust.",
+        "You got practice coins, and you named the block that took the first of them in. A block explorer shows a chain to anyone who asks, with no wallet at all, so nobody has to take a wallet's word for what is on it. On Bitcoin it works the same way: verify, don't trust.",
       'pass-it-on': 'Your payment got into a block, and the pot took your coins to hand on to a learner who comes after you. The fee was what went in less what came out.',
       'no-balances':
         'You counted the coins in your wallet, and opened one of its payments to see what it did to them. A wallet keeps no balance: it holds coins, and its total is what they add up to. A payment uses coins up whole and makes new ones: one for the address paid and, when something is left over, one back to you as change.',

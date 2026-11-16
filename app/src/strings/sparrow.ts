@@ -165,7 +165,7 @@ export const en = {
     'The practice wallet in this browser was saved by a newer version of this page, and this older version leaves it alone. Reload the page, then come back to this step.',
   /** The browser did not let this page read its storage: never "no wallet yet". A Reload button follows it. */
   needBlocked:
-    'This browser did not let this page read what it may have stored here, so the page cannot tell whether a practice wallet is here to bring into Sparrow. Allow site data for this page and reload it, then come back to this step.',
+    "This browser did not let this page read what it may have stored here, so the page cannot tell whether a practice wallet is here to bring into Sparrow. That happens when site data is blocked, inside some apps' built-in browsers, and when the browser's own storage is not working. Allow site data for this page, or open this page in your device's own browser, then reload it and come back to this step.",
 
   // -- step 6 --
   addressesTitle: '6. Check that the addresses start bcrt1',
@@ -279,7 +279,7 @@ export const es: Record<keyof typeof en, string> = {
   needNewer:
     'La billetera de práctica de este navegador fue guardada por una versión más nueva de esta página, y esta versión más vieja no la toca. Recarga la página y vuelve a este paso.',
   needBlocked:
-    'Este navegador no dejó que esta página leyera lo que pueda tener guardado aquí, así que la página no puede saber si aquí hay una billetera de práctica para llevar a Sparrow. Permite los datos del sitio para esta página y recárgala. Después vuelve a este paso.',
+    'Este navegador no dejó que esta página leyera lo que pueda tener guardado aquí, así que la página no puede saber si aquí hay una billetera de práctica para llevar a Sparrow. Pasa cuando los datos del sitio están bloqueados, dentro del navegador integrado de algunas apps, y cuando el almacenamiento del propio navegador no funciona. Permite los datos del sitio para esta página, o abre esta página en el navegador propio de tu dispositivo, y después recárgala y vuelve a este paso.',
 
   addressesTitle: '6. Comprueba que las direcciones empiecen por bcrt1',
   addressesBody:

@@ -9,6 +9,13 @@
 // not told where to look). It only reads, except for two POSTs that must be
 // refused. It needs nothing but Node.
 //
+// One request goes by what the site's own settings say. While GET
+// /api/config says that the pot's counts are off, which is how the Worker
+// ships, the check asks for the counts once and expects the answer of a
+// path the Worker does not know. Asked that way the request costs the
+// practice network nothing. Where the settings say that the counts are on,
+// it does not ask for them at all.
+//
 // What it expects comes from two places. The pages' headers are read from
 // app/public/_headers, the file the build ships, so a deploy that lost the
 // file, or serves an old one, shows. The Content-Security-Policy is also
@@ -74,7 +81,16 @@ const ONE_PART_PATH = '/about';
 /** Every page this check asks for. */
 const PAGES = [DEEP_PATH, ONE_PART_PATH, '/'];
 
-/** Every key of GET /api/config, and the kind of value it holds (contract/src/index.ts, AppConfig). */
+/**
+ * The keys of GET /api/config, and the kind of value each holds (contract/src/index.ts, AppConfig). The list is
+ * written out by hand, since this script imports nothing from the rest of the repository, so nothing but a test
+ * can hold it to the contract: e2e/test/live-check.test.ts takes each key of the Worker's own answer away in
+ * turn, and this check must then name it as missing. A setting that is added to the contract and not here
+ * fails there.
+ *
+ * `potCounts` says whether the pot's counts can be had. It is false as the Worker ships (POT_COUNTS in
+ * worker/wrangler.jsonc), and what is expected of GET /api/pot/stats goes by it (POT_STATS_PATH below).
+ */
 const CONFIG_KEYS: Readonly<Record<string, 'string' | 'number' | 'boolean'>> = {
   turnstileSiteKey: 'string',
   explorerUrl: 'string',
@@ -86,7 +102,20 @@ const CONFIG_KEYS: Readonly<Record<string, 'string' | 'number' | 'boolean'>> = {
   faucetSats: 'number',
   blockSeconds: 'number',
   events: 'boolean',
+  potCounts: 'boolean',
 };
+
+/** A path under /api/ that the Worker does not know: what it answers here is its answer to any unknown path. */
+const UNKNOWN_PATH = '/api/no-such-path';
+
+/**
+ * The pot's counts (contract/src/index.ts, API.potStats). While the site's settings say that the counts
+ * cannot be had (`potCounts` false), the Worker does not know this path: it must answer it exactly as it
+ * answers UNKNOWN_PATH. Asked that way the request costs the practice network nothing: the Worker counts
+ * nothing at its limiter and asks its origin nothing. Where the settings say true, this check does not ask
+ * at all: an answered look can cost the practice network a reading of the pot's coins.
+ */
+const POT_STATS_PATH = '/api/pot/stats';
 
 export interface Check {
   name: string;
@@ -375,8 +404,13 @@ export async function liveCheck(base: string, expect: Expectations): Promise<Che
     check(`${label}: ${status} {"error":"${error}"}`, right, `status ${got.status}, body ${JSON.stringify(got.body.slice(0, 120))}`);
     workerHeaders(label, got);
   };
-  for (const path of ['/api/no-such-path', '/p/no-such-path']) {
-    await on(`GET ${path}`, path, undefined, (got) => workerAnswer(`GET ${path}`, got, 404, 'not_found'));
+  /** What two of the answers said, for the check on the pot's counts further down. */
+  const seen: { unknown: Got | null; potCounts: boolean | null } = { unknown: null, potCounts: null };
+  for (const path of [UNKNOWN_PATH, '/p/no-such-path']) {
+    await on(`GET ${path}`, path, undefined, (got) => {
+      if (path === UNKNOWN_PATH) seen.unknown = got;
+      workerAnswer(`GET ${path}`, got, 404, 'not_found');
+    });
   }
   await on('GET /api/config', '/api/config', undefined, (got) => {
     let config: Record<string, unknown> = {};
@@ -390,7 +424,22 @@ export async function liveCheck(base: string, expect: Expectations): Promise<Che
     check('GET /api/config: 200, with every setting', got.status === 200 && wrong.length === 0, `status ${got.status}; missing or of the wrong kind: ${wrong.join(', ') || 'none'}`);
     // The one answer here that is not a refusal: it has to come with the same headers as the others.
     workerHeaders('GET /api/config', got);
+    // Only a settings answer that was read, and says it in so many words, counts as "the counts are off".
+    if (got.status === 200 && typeof config.potCounts === 'boolean') seen.potCounts = config.potCounts;
   });
+  // The pot's counts, while the settings say that they are off: a path the Worker does not know, answered as
+  // any other one is. The same status, the same body, the Worker's headers. (Where the settings say that they
+  // are on, or could not be read, nothing is asked: see POT_STATS_PATH.)
+  if (seen.potCounts === false) {
+    const label = `GET ${POT_STATS_PATH} (the settings say the pot's counts are off)`;
+    await on(label, POT_STATS_PATH, undefined, (got) => {
+      const unknown = seen.unknown;
+      const same = unknown !== null && got.status === unknown.status && got.body === unknown.body;
+      const expected = unknown === null ? `GET ${UNKNOWN_PATH} was not answered, so there is nothing to hold it to` : `expected status ${unknown.status}, body ${JSON.stringify(unknown.body.slice(0, 120))}`;
+      check(`${label}: answered as GET ${UNKNOWN_PATH} is`, same, `${expected}; got status ${got.status}, body ${JSON.stringify(got.body.slice(0, 120))}`);
+      workerHeaders(label, got);
+    });
+  }
   // A POST that names another site as its sender, and one that names nobody. Neither may be answered.
   await on('POST /api/pot/address from another site', '/api/pot/address', { method: 'POST', headers: { Origin: 'https://elsewhere.example' } }, (got) =>
     workerAnswer('POST /api/pot/address from another site', got, 403, 'forbidden'),

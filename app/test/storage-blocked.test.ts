@@ -229,22 +229,31 @@ test('a storage the page could not read: every screen says that it cannot tell, 
   assert.equal(es.blockedTitle, 'Esta página no puede saber si este navegador tiene una billetera de práctica.');
   assert.equal(
     en.blockedBody,
-    'This browser did not let this page read what it may have stored here. That happens when site data is blocked. If you made a practice wallet in this browser before, it may still be stored.',
+    "This browser did not let this page read what it may have stored here. That happens when site data is blocked, inside some apps' built-in browsers, and when the browser's own storage is not working. If you made a practice wallet in this browser before, it may still be stored.",
   );
   assert.equal(
     es.blockedBody,
-    'Este navegador no dejó que esta página leyera lo que pueda tener guardado aquí. Pasa cuando los datos de los sitios están bloqueados. Si antes creaste una billetera de práctica en este navegador, puede que siga guardada.',
+    'Este navegador no dejó que esta página leyera lo que pueda tener guardado aquí. Pasa cuando los datos de los sitios están bloqueados, dentro del navegador integrado de algunas apps, y cuando el almacenamiento del propio navegador no funciona. Si antes creaste una billetera de práctica en este navegador, puede que siga guardada.',
   );
-  assert.equal(en.blockedWay, 'Allow site data for this page, then reload.');
-  assert.equal(es.blockedWay, 'Permite los datos del sitio para esta página y recarga.');
+  assert.equal(en.blockedWay, "Allow site data for this page, or open this page in your device's own browser, then reload.");
+  assert.equal(es.blockedWay, 'Permite los datos del sitio para esta página, o abre esta página en el navegador propio de tu dispositivo, y después recarga.');
   // The list of steps and a step's screen.
   assert.equal(
     strings.doit.en.noRead,
-    'This browser did not let this page read what it may have stored here, so the page cannot tell whether you have "Do it" progress in this browser, and cannot keep any. That happens when site data is blocked. Allow site data for this page, then reload.',
+    'This browser did not let this page read what it may have stored here, so the page cannot tell whether you have "Do it" progress in this browser, and cannot keep any. That happens when site data is blocked, inside some apps\' built-in browsers, and when the browser\'s own storage is not working. Allow site data for this page, or open this page in your device\'s own browser, then reload.',
   );
   assert.equal(
     strings.doit.es.noRead,
-    'Este navegador no dejó que esta página leyera lo que pueda tener guardado aquí, así que la página no puede saber si tienes progreso de "Hazlo" en este navegador, y tampoco puede guardarlo. Pasa cuando los datos del sitio están bloqueados. Permite los datos del sitio para esta página y recarga.',
+    'Este navegador no dejó que esta página leyera lo que pueda tener guardado aquí, así que la página no puede saber si tienes progreso de "Hazlo" en este navegador, y tampoco puede guardarlo. Pasa cuando los datos del sitio están bloqueados, dentro del navegador integrado de algunas apps, y cuando el almacenamiento del propio navegador no funciona. Permite los datos del sitio para esta página, o abre esta página en el navegador propio de tu dispositivo, y después recarga.',
+  );
+  // The Sparrow guide, step 5.
+  assert.equal(
+    strings.sparrow.en.needBlocked,
+    "This browser did not let this page read what it may have stored here, so the page cannot tell whether a practice wallet is here to bring into Sparrow. That happens when site data is blocked, inside some apps' built-in browsers, and when the browser's own storage is not working. Allow site data for this page, or open this page in your device's own browser, then reload it and come back to this step.",
+  );
+  assert.equal(
+    strings.sparrow.es.needBlocked,
+    'Este navegador no dejó que esta página leyera lo que pueda tener guardado aquí, así que la página no puede saber si aquí hay una billetera de práctica para llevar a Sparrow. Pasa cuando los datos del sitio están bloqueados, dentro del navegador integrado de algunas apps, y cuando el almacenamiento del propio navegador no funciona. Permite los datos del sitio para esta página, o abre esta página en el navegador propio de tu dispositivo, y después recárgala y vuelve a este paso.',
   );
 
   // Every sentence written for this state, in each language: it says what the browser did in the past tense
@@ -328,6 +337,82 @@ test('a storage the page could not read: every screen says that it cannot tell, 
     assert.equal(stripText(strip, 'en', 0), 'this page could not look for a wallet here');
     assert.equal(stripText(strip, 'es', 0), 'esta página no pudo buscar una billetera aquí');
   }
+});
+
+test('why the read failed, the page cannot tell: a storage that is refused, one that is not there and one that does not work are one state to it, so its words name all three and a way out', () => {
+  // -- The three, as the page meets them. Each gives the same two answers: "blocked" for the wallet's record,
+  //    "blocked" for the note of the steps. Nothing else is known. --
+  /** A storage whose every call throws `error`. */
+  const throwing = (error: () => unknown): Storage => {
+    const refuse = (): never => {
+      throw error();
+    };
+    return { get length(): number { return refuse(); }, clear: refuse, getItem: refuse, key: refuse, removeItem: refuse, setItem: refuse };
+  };
+  const met: [how: string, storage: Storage][] = [
+    // Site data is blocked: the browser refuses the page, with a security error.
+    ['site data is blocked', throwing(() => new DOMException("Failed to read the 'localStorage' property from 'Window': Access is denied for this document.", 'SecurityError'))],
+    // The browser's own storage is not working (a disk that takes no write, a profile that cannot be opened):
+    // the call fails with an error of the browser's own, which is no security error.
+    ['the storage is not working', throwing(() => new Error('NS_ERROR_FAILURE'))],
+    ['the storage is not working, and throws no error object', throwing(() => 'failed')],
+  ];
+  for (const [how, storage] of met) {
+    assert.equal(loadRecord(storage), 'blocked', how);
+    assert.equal(readProgress(storage).state, 'blocked', how);
+  }
+  // No storage at all, as inside an app's built-in browser that hands a page none: the glue puts a stand-in in
+  // its place whose every use fails, so the same two answers follow. (The glue is the one file that reaches
+  // for the browser's storage.)
+  const glue = code('lib/wallet.svelte.ts');
+  assert.match(glue, /function browserStorage\(\): Storage \{\s*try \{\s*return window\.localStorage \?\? noStorage\(\);\s*\} catch \{\s*return noStorage\(\);\s*\}\s*\}/);
+  assert.match(glue, /function noStorage\(\): Storage \{\s*const blocked = \(\): never => \{\s*throw new DOMException\('Storage is not available', 'SecurityError'\);\s*\};\s*return \{ length: 0, clear: blocked, getItem: blocked, key: blocked, removeItem: blocked, setItem: blocked \};\s*\}/);
+  // And the status that follows is one status, with one set of words on every screen: nothing of the cause is kept.
+  assert.match(code('lib/keystore.ts'), /function storedText\(local: Storage\): string \| null \| undefined \{\s*try \{\s*const text = local\.getItem\(RECORD_KEY\);\s*return typeof text === 'string' \? text : null;\s*\} catch \{\s*return undefined;\s*\}\s*\}/);
+
+  // -- So the words name the causes the page cannot tell apart, in the three places that give a cause ... --
+  const cause = {
+    en: "That happens when site data is blocked, inside some apps' built-in browsers, and when the browser's own storage is not working.",
+    es: /Pasa cuando los datos (del sitio|de los sitios) están bloqueados, dentro del navegador integrado de algunas apps, y cuando el almacenamiento del propio navegador no funciona\./,
+  };
+  // ... and a way out for each cause that has one: allow site data, or leave the app's browser for the device's own.
+  const way = {
+    en: "Allow site data for this page, or open this page in your device's own browser, then reload",
+    es: /Permite los datos del sitio para esta página, o abre esta página en el navegador propio de tu dispositivo, y después rec[aá]rga/,
+  };
+  const places: Record<(typeof LANGS)[number], [cause: string, way: string][]> = {
+    en: [
+      [strings.wallet.en.blockedBody, strings.wallet.en.blockedWay],
+      [strings.doit.en.noRead, strings.doit.en.noRead],
+      [strings.sparrow.en.needBlocked, strings.sparrow.en.needBlocked],
+    ],
+    es: [
+      [strings.wallet.es.blockedBody, strings.wallet.es.blockedWay],
+      [strings.doit.es.noRead, strings.doit.es.noRead],
+      [strings.sparrow.es.needBlocked, strings.sparrow.es.needBlocked],
+    ],
+  };
+  for (const [said, out] of places.en) {
+    assert.ok(said.includes(cause.en), said);
+    assert.ok(out.includes(way.en), out);
+    // Never one cause alone, as if the page knew it, and never the one way out that helps only for that cause.
+    assert.doesNotMatch(said, /That happens when site data is blocked\./, said);
+    assert.doesNotMatch(out, /Allow site data for this page(,? then| and) reload/, out);
+  }
+  for (const [said, out] of places.es) {
+    assert.match(said, cause.es);
+    assert.match(out, way.es);
+    assert.doesNotMatch(said, /están bloqueados\./, said);
+    assert.doesNotMatch(out, /Permite los datos del sitio para esta página y rec[aá]rga/, out);
+  }
+  // The way out a reader inside another app needs is said in the words the app uses for it elsewhere.
+  assert.match(strings.wallet.en.openNotOffered, /open this page in your device's own browser/);
+  assert.match(strings.wallet.es.openNotOffered, /abre esta página en el navegador propio de tu dispositivo/);
+  // This card stands in front of the gate "this browser refuses to store", whose words send the reader to
+  // another window. Where the page is handed no storage that gate is never reached, on Create or on Restore:
+  // so the way out of an app's own browser has to be said by this card.
+  for (const canStore of [true, false]) assert.equal(frontGate('blocked', canStore, null), 'trouble', String(canStore));
+  assert.equal(frontGate('none', false, null), 'no-storage');
 });
 
 test('"none" means that the storage was read and holds no wallet: no other status lets a screen say so', () => {

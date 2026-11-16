@@ -238,6 +238,30 @@ async function refuseWrites(page: OpenedPage): Promise<() => Promise<void>> {
 }
 
 /**
+ * From now on this browser refuses the page every call to its storage,
+ * reads as well as writes, as a storage does that has stopped answering.
+ * The returned function lets the calls through again.
+ */
+async function refuseStorage(page: OpenedPage): Promise<() => Promise<void>> {
+  await page.page.evaluate(() => {
+    const names = ['getItem', 'setItem', 'removeItem', 'clear', 'key'] as const;
+    const real: Record<string, unknown> = {};
+    for (const name of names) {
+      real[name] = Storage.prototype[name];
+      (Storage.prototype as unknown as Record<string, unknown>)[name] = (): never => {
+        throw new DOMException('Access is denied for this document.', 'SecurityError');
+      };
+    }
+    (window as unknown as { __realStorage: Record<string, unknown> }).__realStorage = real;
+  });
+  return () =>
+    page.page.evaluate(() => {
+      const real = (window as unknown as { __realStorage: Record<string, unknown> }).__realStorage;
+      for (const [name, method] of Object.entries(real)) (Storage.prototype as unknown as Record<string, unknown>)[name] = method;
+    });
+}
+
+/**
  * Notes, from now on and until the next page load, whether an element with
  * this hook is ever on the page while the address is `path`. The returned
  * function reads the answer.
@@ -1626,6 +1650,53 @@ scenario('the browser stops storing while the passkey prompt is open: nothing is
   await page.page.waitForFunction(() => document.activeElement?.tagName === 'H1');
   assert.equal(await page.stored(), null);
   assert.deepEqual(await page.passkey!.credentials(), [], 'the passkey has no wallet, and the password manager was told so');
+  assert.deepEqual(await counted(s, page), [
+    { name: 'pageview', path: '/new' },
+    { name: 'Passkey', path: '/new', value: 'ok' },
+  ]);
+});
+
+scenario('the browser stops letting the page read its storage while the passkey prompt is open: nothing is made, the page says that it cannot tell whether a wallet is here, and under that what became of the passkey', async (s) => {
+  const page = await s.open('/new', { passkey: 'prf' });
+  await page.page.bringToFront();
+  await page.waitFor('create-passkey');
+  const release = await holdPrompt(page, 'create');
+  await page.click('create-passkey');
+  await waitsOn(page, 'create-passkey');
+  assert.deepEqual(await page.passkey!.credentials(), [], 'the prompt is open, and no passkey is made yet');
+  const allowStorage = await refuseStorage(page);
+
+  // The reader answers the prompt: the passkey is saved, and its wallet cannot be stored. By then the page
+  // cannot read its storage either, so what takes the screen's place is the wallet's own card: the page
+  // cannot tell whether a wallet is here. Not "this browser refuses to store", which says nothing of a
+  // wallet that may still be stored.
+  assert.equal(await release(), 1);
+  await page.waitFor('storage-blocked');
+  assert.equal(await headingOf(page), en.common.screen_new);
+  assert.equal(await page.text('storage-blocked'), `${en.wallet.blockedBody} ${en.wallet.blockedWay}`);
+  const said = await page.page.$eval('main', (main) => (main.textContent ?? '').replace(/\s+/g, ' ').trim());
+  assert.ok(said.includes(en.wallet.blockedTitle), said);
+  assert.ok(!said.includes(en.wallet.noStorage), said);
+  // Under the card, what the tap left behind: a passkey was saved a moment ago, and it has no wallet. It
+  // answers a tap, so it is called out.
+  await page.waitFor('create-orphan');
+  assert.equal(await page.text('create-orphan'), en.create.orphan);
+  assert.equal(await page.page.$eval('[data-testid="create-orphan"]', (line) => line.closest('[role="alert"]') !== null), true);
+  const under = await page.page.$eval('main', (main) => {
+    const card = main.querySelector('[data-testid="storage-blocked"]');
+    const line = main.querySelector('[data-testid="create-orphan"]');
+    return card !== null && line !== null && (card.compareDocumentPosition(line) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+  });
+  assert.equal(under, true, 'the line stands under the card');
+  for (const hook of ['create-passkey', 'create-words', 'finish-setup', 'front-stop', 'wallet-here']) assert.equal(await countOf(page, hook), 0, hook);
+  await page.page.waitForFunction(() => document.activeElement?.tagName === 'H1');
+  assert.equal(await pathOf(page), '/new');
+  // The passkey is still with the device. While the page cannot look into its storage it hints no passkey
+  // away (a wallet may be stored there): that is why the reader has to be told of this one here.
+  assert.equal((await page.passkey!.credentials()).length, 1, 'the passkey was saved, and the page did not ask the device to drop it');
+  // Nothing was stored (looked at once the storage answers again), and no wallet was counted as made.
+  await allowStorage();
+  assert.equal(await page.stored(), null);
   assert.deepEqual(await counted(s, page), [
     { name: 'pageview', path: '/new' },
     { name: 'Passkey', path: '/new', value: 'ok' },

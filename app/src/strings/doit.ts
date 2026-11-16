@@ -66,10 +66,12 @@ export const en = {
   /**
    * Where a reader decides whether to forget: so it names what the note holds, by the kinds of thing About
    * lists field by field, and says where the whole list is. What is kept is one thing, and what is counted
-   * another: the last sentence must not say more than About does.
+   * another: the last sentence must not say more than About does. The list draws it without a look at
+   * whether counting is on, so it has to hold both ways: it says what is counted while counting is on, and
+   * leaves it to About to say whether it is ("Counting is on right now." or "Counting is off right now ...").
    */
   forgetWhat:
-    "This browser keeps a note of your progress: which steps you have opened and done, which parts are ticked, and what a step needs on its way, such as a wallet fingerprint and a payment it waits for. The About page lists it all. The note itself is never sent to us. Opening a step's screen and finishing a step are counted, as the About page says.",
+    "This browser keeps a note of your progress: which steps you have opened and done, which parts are ticked, and what a step needs on its way, such as a wallet fingerprint and a payment it waits for. The About page lists it all. The note itself is never sent to us. While counting is on, opening a step's screen and finishing a step are counted; the About page says whether it is on.",
   /**
    * In its place, when what is stored under the note's key is no note this version can read (damaged, or
    * changed by hand: this page never writes such a value). The sentence above describes a note, and no note was
@@ -89,8 +91,12 @@ export const en = {
     'Every tick and every finished step is erased from what this site keeps in this browser. Your wallet and its coins are not touched, and each step can be done again.',
   forgetYes: 'Forget it',
   forgetNo: 'Keep it',
-  /** Said by the status region, and shown on the list, once the note is gone. Of this site, as above. */
-  forgotten: 'Your "Do it" progress was forgotten. This site keeps none of it now.',
+  /**
+   * Said by the status region, and shown on the list, once the note is gone. Of this site, as above, and of
+   * this browser, as the warning before it: what the button erased is the note stored here. What was counted
+   * when a step's screen was opened or a step was finished is not in this browser, and is not said to be gone.
+   */
+  forgotten: 'Your "Do it" progress was forgotten. This site keeps none of it in this browser now.',
   forgetRefused:
     'This browser did not let this page erase your progress, so it is still kept here. Allow site data for this page, then try again.',
 
@@ -106,7 +112,7 @@ export const en = {
    * stays true until the page looks again.
    */
   noRead:
-    'This browser did not let this page read what it may have stored here, so the page cannot tell whether you have "Do it" progress in this browser, and cannot keep any. That happens when site data is blocked. Allow site data for this page, then reload.',
+    'This browser did not let this page read what it may have stored here, so the page cannot tell whether you have "Do it" progress in this browser, and cannot keep any. That happens when site data is blocked, inside some apps\' built-in browsers, and when the browser\'s own storage is not working. Allow site data for this page, or open this page in your device\'s own browser, then reload.',
 
   // -- Home's short section, and the Overview's one line --
   homeBody:
@@ -356,8 +362,13 @@ export const en = {
   doneOn: 'Done on {date}.',
   // What the reader did and saw, in the past tense (see the top of this file): each is read again on every
   // later visit, when the wallet may be gone, the chain started again, and the pot's coins handed on.
+  //
+  // "Hold some": what the page checked is a number, the block of the wallet's first coin. It cannot know where
+  // the reader read it (the wallet's own transaction screen shows it too), so it does not say that the explorer
+  // showed them anything. What an explorer is for is said of any explorer and any chain: of the practice
+  // explorer and "that block" it would stop being true once the practice chain is started again.
   'done_hold-some':
-    "You got practice coins, and you did not have to take this page's word for it: the explorer showed the same coin in the same block. On Bitcoin it works the same way. Verify, don't trust.",
+    "You got practice coins, and you named the block that took the first of them in. A block explorer shows a chain to anyone who asks, with no wallet at all, so nobody has to take a wallet's word for what is on it. On Bitcoin it works the same way: verify, don't trust.",
   'done_pass-it-on':
     'Your payment got into a block, and the pot took your coins to hand on to a learner who comes after you. The fee was what went in less what came out.',
   'done_no-balances':
@@ -379,9 +390,17 @@ export const en = {
   potCountOne: 'One payment has been passed on to the pot so far.',
   /** Under a done "The seed". {fingerprint} is a wallet fingerprint. */
   seedChecked: 'The three words were checked for the wallet with the wallet fingerprint {fingerprint}.',
-  /** The same place, when another wallet is in this browser now. {here} is its wallet fingerprint. */
+  /**
+   * The same place, when another wallet is in this browser now. {here} is its wallet fingerprint.
+   *
+   * It says what the step's note knows, and no more. The note keeps one wallet fingerprint, that of the wallet
+   * the words were last checked for, so a wallet checked before that one is "another wallet" again when it
+   * comes back: "its paper has not been checked" would be untrue of it. And it speaks of this step, not of the
+   * page: the drill keeps a note of its own paper check, which can name the wallet that is here.
+   */
   seedOther:
-    'Another wallet is in this browser now ({here}). Its paper has not been checked: type three of its words to check it too.',
+    'Another wallet is in this browser now ({here}). This step has no note of a check for it: type three of its words to check it too.',
+  /** After the check was passed again on this screen. Drawn only while the wallet here is the one the note names (Done.svelte). */
   seedRechecked: 'Checked. The three words are now checked for the wallet that is here.',
   /**
    * Under a done "Prove the backup", when the wallet was opened with a passkey before the drill. The card is
@@ -507,7 +526,7 @@ export const es: Record<keyof typeof en, string> = {
   stateFollowing: 'En seguimiento',
   forgetTitle: 'Tu progreso',
   forgetWhat:
-    'Este navegador guarda una nota de tu progreso: qué pasos abriste y cuáles terminaste, qué partes están marcadas, y lo que un paso necesita por el camino, como una huella de la billetera y un pago que espera. La página Acerca de lo enumera todo. La nota en sí nunca se nos envía. Abrir la pantalla de un paso y terminar un paso se cuentan, como dice la página Acerca de.',
+    'Este navegador guarda una nota de tu progreso: qué pasos abriste y cuáles terminaste, qué partes están marcadas, y lo que un paso necesita por el camino, como una huella de la billetera y un pago que espera. La página Acerca de lo enumera todo. La nota en sí nunca se nos envía. Mientras el conteo esté activado, abrir la pantalla de un paso y terminar un paso se cuentan; la página Acerca de dice si está activado.',
   forgetUnreadable:
     'Hay algo guardado donde va la nota de tu progreso de "Hazlo", y esta página no puede leerlo. "Olvidar mi progreso" lo borra.',
   forget: 'Olvidar mi progreso',
@@ -516,7 +535,7 @@ export const es: Record<keyof typeof en, string> = {
     'Cada marca y cada paso terminado se borra de lo que este sitio guarda en este navegador. Tu billetera y sus monedas no se tocan, y cada paso se puede volver a hacer.',
   forgetYes: 'Olvidarlo',
   forgetNo: 'Conservarlo',
-  forgotten: 'Tu progreso de "Hazlo" se olvidó. Este sitio ya no guarda nada de él.',
+  forgotten: 'Tu progreso de "Hazlo" se olvidó. Este sitio ya no guarda nada de él en este navegador.',
   forgetRefused:
     'Este navegador no dejó que esta página borrara tu progreso, así que sigue guardado aquí. Permite los datos del sitio para esta página y vuelve a intentarlo.',
 
@@ -525,7 +544,7 @@ export const es: Record<keyof typeof en, string> = {
   noStorage:
     'Este navegador se niega a guardar cualquier cosa de esta página, así que tu progreso de "Hazlo" no se puede conservar aquí. Pasa en algunas ventanas privadas, y cuando los datos del sitio están bloqueados. Abre esta página en una ventana normal, o permite los datos del sitio, y recarga.',
   noRead:
-    'Este navegador no dejó que esta página leyera lo que pueda tener guardado aquí, así que la página no puede saber si tienes progreso de "Hazlo" en este navegador, y tampoco puede guardarlo. Pasa cuando los datos del sitio están bloqueados. Permite los datos del sitio para esta página y recarga.',
+    'Este navegador no dejó que esta página leyera lo que pueda tener guardado aquí, así que la página no puede saber si tienes progreso de "Hazlo" en este navegador, y tampoco puede guardarlo. Pasa cuando los datos del sitio están bloqueados, dentro del navegador integrado de algunas apps, y cuando el almacenamiento del propio navegador no funciona. Permite los datos del sitio para esta página, o abre esta página en el navegador propio de tu dispositivo, y después recarga.',
 
   homeBody:
     'Pasos cortos que acompañan a los capítulos del Recorrido, cada uno hecho en tu propia billetera de práctica y comprobado contra la cadena de práctica.',
@@ -731,7 +750,7 @@ export const es: Record<keyof typeof en, string> = {
 
   doneOn: 'Hecho el {date}.',
   'done_hold-some':
-    'Recibiste monedas de práctica, y no tuviste que creerle a esta página: el explorador mostró la misma moneda en el mismo bloque. En Bitcoin funciona igual. Verifica, no confíes.',
+    'Recibiste monedas de práctica, y dijiste qué bloque incluyó la primera de ellas. Un explorador de bloques le muestra una cadena a quien pregunte, sin ninguna billetera, así que nadie tiene que creerle a una billetera lo que hay en la cadena. En Bitcoin funciona igual: verifica, no confíes.',
   'done_pass-it-on':
     'Tu pago entró en un bloque, y el fondo común recibió tus monedas para pasarlas a alguien que viene después de ti. La comisión fue lo que entró menos lo que salió.',
   'done_no-balances':
@@ -746,7 +765,7 @@ export const es: Record<keyof typeof en, string> = {
   potCountOne: 'Hasta ahora se ha pasado un pago al fondo común.',
   seedChecked: 'Las tres palabras se comprobaron para la billetera con la huella de la billetera {fingerprint}.',
   seedOther:
-    'Ahora hay otra billetera en este navegador ({here}). Su papel no se ha comprobado: escribe tres de sus palabras para comprobarlo también.',
+    'Ahora hay otra billetera en este navegador ({here}). Este paso no tiene anotada ninguna comprobación para ella: escribe tres de sus palabras para comprobarla también.',
   seedRechecked: 'Comprobado. Las tres palabras quedan comprobadas para la billetera que está aquí.',
   changedTitle: 'Lo que cambió con la restauración',
   changed:
