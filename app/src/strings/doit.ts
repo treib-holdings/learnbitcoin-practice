@@ -151,7 +151,12 @@ export const en = {
     "Chapter 4 says the 12 words are the root of the whole wallet. Here you put this wallet's words on paper, and check that the paper is right.",
   'lede_prove-the-backup':
     "This is chapter 4's drill: remove the wallet, then bring it back from the paper alone. A wallet that comes back with its coins is the only way to know the backup works.",
-  /** The link back to the main site: on the step's screen at all times, and its main button once the step is done. */
+  /**
+   * The link back to the main site. It stands on the step's screen at all times: beside the chapter's name
+   * until the step is done, and on the done card from then on, as its main button, or as its second one
+   * where the main button leads back to the step the reader came for. And it stands on the strip, on the
+   * wallet's own screens: once the step is done, and all along for a step that came from a chapter.
+   */
   back: 'Back to the chapter',
   allSteps: 'All steps',
 
@@ -418,8 +423,13 @@ export const en = {
   changed:
     'When you restored the wallet from its 12 words, this browser began to keep it with those words, not encrypted, and stopped asking for the passkey. The restore did not change the passkey: if you still have it, it opens the same wallet, and if it ever fails, the 12 words bring the wallet back. About says what this browser keeps right now. To go back to the passkey for that wallet, remove the wallet that is in this browser, if there is one, and choose "Open with my passkey".',
   sparrow: 'One more proof: open the same wallet in Sparrow',
-  /** {step} is the next step's title. Only within the same chapter. */
+  /** {step} is the next step's title. Only within the same chapter, and only for a reader who opened the step from the wallet's own list. */
   next: 'Next step: {step}',
+  /**
+   * The way back to a step, named, on a button: on the card of a done step that a need of another step sent
+   * the reader to, in the faucet's result on Receive, and on Send's "Payment sent". {step} is the step's title.
+   */
+  backTo: 'Back to "{step}"',
 
   // -- the strip under the header, on every screen but the followed step's own --
   /** What a screen reader calls the strip. */
@@ -772,6 +782,7 @@ export const es: Record<keyof typeof en, string> = {
     'Cuando restauraste la billetera desde sus 12 palabras, este navegador empezó a guardarla con esas palabras, sin cifrar, y dejó de pedir la llave de acceso (passkey). La restauración no cambió la llave de acceso: si todavía la tienes, abre la misma billetera, y si alguna vez falla, las 12 palabras recuperan la billetera. La página Acerca de dice qué guarda este navegador ahora mismo. Para volver a la llave de acceso con esa billetera, quita la billetera que haya en este navegador, si hay alguna, y elige "Abrir con mi llave de acceso (passkey)".',
   sparrow: 'Una comprobación más: abre la misma billetera en Sparrow',
   next: 'Siguiente paso: {step}',
+  backTo: 'Volver a "{step}"',
 
   stripLabel: 'El paso que estás siguiendo',
   stripPart: 'parte {n} de {m}',

@@ -181,7 +181,7 @@ scenario(
     await page.fill('step-block-answer', String(height));
     await page.click('step-block-check');
 
-    // -- Done: the day, what just happened, and the way back, now with the mark the chapter stamps on --
+    // -- Done: the day, what just happened, and the way back, whose ending now says that the step is done --
     await page.waitFor('step-done');
     assert.equal(await page.waitForStatus(saidDone(STEP)), saidDone(STEP));
     assert.deepEqual(await partsOf(page), ['ticked', 'ticked', 'ticked', 'ticked']);

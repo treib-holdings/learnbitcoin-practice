@@ -11,8 +11,8 @@
 import type { AppConfig, Lang } from '@learnbitcoin/practice-contract';
 import { fill, formatSats, slotNames } from '../../lib/format.ts';
 import { SIX_BLOCKS, type BlockedReason, type PartView, type StepView, type Waited, type WalletTrouble } from '../../lib/doit/judge.ts';
-import type { Progress, Read } from '../../lib/doit/progress.ts';
-import { STEP_DEFS, partCount, partDef, partKey, type Chapter, type Fact, type StepId } from '../../lib/doit/steps.ts';
+import { cameFromChapter, ledBackTo, type Progress, type Read } from '../../lib/doit/progress.ts';
+import { STEP_DEFS, nextStep, partCount, partDef, partKey, type Chapter, type Fact, type StepId } from '../../lib/doit/steps.ts';
 import type { Route } from '../../lib/router.ts';
 import { strings } from '../../strings/index.ts';
 import type { GlossaryTerm } from '../read/read.ts';
@@ -108,8 +108,9 @@ export function chapterHeading(chapter: Chapter, lang: Lang): string {
 /**
  * The address of a chapter on the main site, in the page's language, or
  * null when the settings give no site to build it from. `siteUrl` comes
- * without a slash at its end. (The link back from a step, which carries the
- * step's mark, is chapterLink() in lib/doit/progress.ts.)
+ * without a slash at its end. (The link back from a step, whose address
+ * also names a step and says whether it is done, is chapterLink() in
+ * lib/doit/progress.ts.)
  */
 export function chapterUrl(siteUrl: string, chapter: Chapter, lang: Lang): string | null {
   try {
@@ -365,6 +366,40 @@ export function checkedInSeed(id: StepId, part: number, note: Progress): boolean
   const seed = note.steps['the-seed'];
   if (drill?.parts?.[part] !== true || drill.wallet === undefined) return false;
   return seed?.wallet === drill.wallet && seed.parts?.[partCount('the-seed')] === true;
+}
+
+// -- a done step's ways on ---------------------------------------------------------------------
+
+/** Where the card of a done step leads, beside the link back to the chapter and "All steps". */
+export interface WaysOn {
+  /** The step a need sent the reader here from, while it is not done: the card's main button leads back to it. */
+  led: StepId | null;
+  /** The next step of the same chapter, offered to a reader who opened this step from the wallet's own list. */
+  next: StepId | null;
+}
+
+/**
+ * The ways on from a done step, from the note alone (with a wallet in the
+ * browser or without one). There are three cards:
+ *
+ *   in a detour        a need of another step sent the reader here, and
+ *                      that step is not done: the main button leads back
+ *                      to it, and the link back to the chapter is second.
+ *                      No "Next step": where this step has a next one, it
+ *                      is the step the reader came for, and the main
+ *                      button names it already.
+ *   reached by card    the main button is the link back to the chapter.
+ *                      No "Next step": the reader came from the chapter to
+ *                      do this one step, reads on there, and meets the
+ *                      next card where the chapter has it.
+ *   from the list      the link back to the chapter, then "Next step"
+ *                      where the chapter has one.
+ *
+ * A step that was reached by card once and by a need later is in a detour:
+ * the detour is the later road (progress.ts says why).
+ */
+export function waysOn(id: StepId, progress: Progress): WaysOn {
+  return { led: ledBackTo(progress, id), next: cameFromChapter(progress, id) ? null : nextStep(id) };
 }
 
 // -- starting a step again --------------------------------------------------------------------

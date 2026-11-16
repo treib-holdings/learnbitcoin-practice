@@ -71,14 +71,18 @@
 
   /** Where the step stands, part by part. */
   let view = $derived(doit.view(id, now));
-  let note = $derived(doit.progress.steps[id]);
   let done = $derived(view.state === 'done');
   let followed = $derived(doit.progress.following === id);
   /** "Start this step again" is offered on a step under way, but not while the drill's wallet is out of the browser (view.ts). */
   let restartable = $derived(canRestart(view, doit.kept, wallet.status));
 
-  /** The way back to the step's chapter: the one of its two pages the reader came from, or the one in this page's language. Null when no link can be built. */
-  let back = $derived(chapterLink(wallet.config.siteUrl, id, lang, note));
+  /**
+   * The way back to the chapter, built from the whole note: the one of the chapter's two pages the reader came
+   * from, or the one in this page's language. Where a need of another step sent the reader here, it is the
+   * chapter they left, at the card they pressed there, which need not be this step's own chapter. Null when no
+   * link can be built.
+   */
+  let back = $derived(chapterLink(wallet.config.siteUrl, id, lang, doit.progress));
 
   /**
    * How long the step's payment waited for its block: from the note while
@@ -171,7 +175,8 @@
   const MARK = 'flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-sm font-semibold tabular-nums';
 </script>
 
-<!-- The chapter the step belongs to, and the way back to it. Once the step is done, the way back is the main button of the card below. -->
+<!-- The chapter the step belongs to, and the way back to the chapter the reader came from (the same chapter,
+     unless a need of another step sent them here). Once the step is done, the way back is a button of the card below. -->
 <p class="flex flex-wrap items-baseline gap-x-4 gap-y-1 text-base text-ink-600" data-testid="step-chapter">
   <span>{chapterHeading(def.chapter, lang)}</span>
   {#if back !== null && !done}

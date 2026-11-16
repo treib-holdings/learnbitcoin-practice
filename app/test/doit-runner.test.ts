@@ -427,6 +427,79 @@ test('"Stop following" and the step\'s action link: only the followed step chang
   assert.equal(p.note().following, 'hold-some');
 });
 
+test('a detour is written through the one write, and not under a newer note or a storage that refuses', () => {
+  const CARD = '?from=/journey/how-bitcoin-works';
+  // A reader with no wallet arrives on "Pass it on" by its card in chapter 3, and presses the link of its need,
+  // which leads to "Hold some".
+  const p = page();
+  p.runner.release();
+  p.runner.watch(step('pass-it-on'), CARD);
+  const writes = p.storage.writes;
+  const told = p.published.length;
+  p.runner.detour('hold-some', 'pass-it-on');
+  assert.equal(
+    p.storage.map.get(PROGRESS_KEY),
+    '{"v":1,"following":"pass-it-on","followedAt":1800000000000,"steps":{"hold-some":{"cameFor":"pass-it-on"},"pass-it-on":{"started":true,"from":"/journey/how-bitcoin-works"}}}',
+  );
+  assert.equal(p.storage.writes, writes + 1, 'one write, of the one value');
+  assert.deepEqual([...p.storage.map.keys()], [PROGRESS_KEY]);
+  // The world was looked at again, so the screens are told of the note as it now stands.
+  assert.ok(p.published.length > told);
+  assert.deepEqual(p.published.at(-1)?.progress.steps['hold-some'], { cameFor: 'pass-it-on' });
+  assert.deepEqual(p.runner.shown().progress, p.note());
+  // The same press again writes nothing.
+  p.runner.detour('hold-some', 'pass-it-on');
+  assert.equal(p.storage.writes, writes + 1);
+  // The link is followed: "Hold some" opens, is started and followed, and keeps what the press noted.
+  p.now += 1_000;
+  p.runner.watch(step('hold-some'), '');
+  assert.deepEqual(p.note().steps['hold-some'], { started: true, cameFor: 'pass-it-on' });
+  assert.deepEqual([p.note().following, p.note().followedAt], ['hold-some', NOW + 1_000]);
+  // Nothing of it is counted: no step was finished.
+  assert.deepEqual(p.counted, []);
+
+  // A reader who opened "Pass it on" from the wallet's own list: the press is no change, and nothing is written.
+  const listed = page();
+  listed.runner.watch(step('pass-it-on'), '');
+  const before = listed.storage.writes;
+  listed.runner.detour('hold-some', 'pass-it-on');
+  assert.equal(listed.storage.writes, before);
+  assert.deepEqual(listed.note().steps, { 'pass-it-on': { started: true } });
+
+  // Under a newer version's note nothing is written, as for every change.
+  const kept = new MemoryStorage();
+  const newer = JSON.stringify({ v: 2, following: 'pass-it-on', steps: { 'pass-it-on': { started: true, from: '/journey/how-bitcoin-works' } } });
+  kept.map.set(PROGRESS_KEY, newer);
+  const n = page({ storage: kept });
+  n.runner.release();
+  n.runner.watch(step('pass-it-on'), CARD);
+  n.runner.detour('hold-some', 'pass-it-on');
+  assert.equal(kept.map.get(PROGRESS_KEY), newer);
+  assert.equal(kept.writes, 0);
+  assert.equal(n.runner.shown().kept, 'newer');
+
+  // A browser that refuses the write: the stored note is as it was, and the page says that progress cannot be kept here.
+  const full = new FullStorage();
+  full.full = false;
+  const f = page({ storage: full });
+  f.runner.release();
+  f.runner.watch(step('pass-it-on'), CARD);
+  const stored = full.map.get(PROGRESS_KEY);
+  assert.equal(f.runner.shown().kept, 'yes');
+  full.full = true;
+  f.runner.detour('hold-some', 'pass-it-on');
+  assert.equal(full.map.get(PROGRESS_KEY), stored);
+  assert.equal(f.runner.shown().kept, 'no');
+  // A storage that cannot be read at all: nothing is read, nothing is written, and nothing throws.
+  const blocked = page({ storage: new BlockedStorage() });
+  blocked.runner.release();
+  blocked.runner.watch(step('pass-it-on'), CARD);
+  blocked.runner.detour('hold-some', 'pass-it-on');
+  assert.deepEqual([blocked.runner.shown().read, blocked.runner.shown().kept], ['blocked', 'no']);
+  // And in none of them was anything counted.
+  assert.deepEqual([listed.counted, n.counted, f.counted, blocked.counted], [[], [], [], []]);
+});
+
 test('"Start this step again" unticks the step, keeps its way back, and forgets the wait this page remembered', () => {
   const sent = { txid: txid('a1'), toPot: false, at: NOW - 20_000 };
   const p = page({ wallet: { ...funded(), history: [tx({ tx: 'a1', height: null }), tx({ tx: 'c1', direction: 'received' })] } });

@@ -22,6 +22,7 @@ import {
   arrivedText,
   askButton,
   boxWasWaiting,
+  bringsAnswer,
   failedText,
   faucetRuns,
   offersMore,
@@ -380,6 +381,51 @@ test('what fits the screen under the banner is scrolled to as little as needed, 
   assert.equal(scrollBlock(900, 568, 0), 'start');
   // With no banner known, the whole screen is the room.
   assert.equal(scrollBlock(568, 568, 0), 'nearest');
+});
+
+test('the answer is brought on screen when it follows the reader\'s own tap, and once more when the coins arrive while a step is followed', () => {
+  const here = (phase: FaucetPhase): boolean => phase === 'arrived' || phase === 'confirmed';
+  const answersTap = (phase: FaucetPhase): boolean => phase === 'waiting' || phase === 'on-its-way' || phase === 'failed';
+  // Every pair of phases, asked from this screen or not, with a step followed or without.
+  for (const before of phases) {
+    for (const now of phases) {
+      for (const asked of [true, false]) {
+        for (const followed of [true, false]) {
+          const moves = bringsAnswer(before, now, asked, followed);
+          const what = `${before} to ${now}, ${asked ? 'asked' : 'not asked'}, ${followed ? 'a step followed' : 'no step followed'}`;
+          // Never for a reader who did not ask from this screen, and never when nothing changed.
+          if (!asked || before === now) assert.equal(moves, false, what);
+          // An answer to the reader's own tap: for every reader, whatever came before.
+          else if (answersTap(now)) assert.equal(moves, true, what);
+          // The coins are here: only for a reader who is following a step, and only once.
+          else if (here(now)) assert.equal(moves, followed && !here(before), what);
+          // The phases in between (the check runs, the faucet is asked) move nothing: the card itself
+          // brings its first words on screen at the tap.
+          else assert.equal(moves, false, what);
+        }
+      }
+    }
+  }
+  // The walk of a request that is paid, for a reader who is following a step: the page moves at the
+  // promise, once more when the coins arrive, and not again at their confirmation.
+  const walk: FaucetPhase[] = ['idle', 'checking', 'asking', 'on-its-way', 'arrived', 'confirmed'];
+  const moved = (followed: boolean): FaucetPhase[] => walk.filter((now, at) => at > 0 && bringsAnswer(walk[at - 1]!, now, true, followed));
+  assert.deepEqual(moved(true), ['on-its-way', 'arrived']);
+  // For a reader who follows no step: at the promise alone, as it always was.
+  assert.deepEqual(moved(false), ['on-its-way']);
+  // A coin that confirms before the page has seen it arrive: that is the one move.
+  assert.equal(bringsAnswer('on-its-way', 'confirmed', true, true), true);
+  assert.equal(bringsAnswer('on-its-way', 'confirmed', true, false), false);
+  // A coin that turns up after a request that had failed: here now, and not before.
+  assert.equal(bringsAnswer('failed', 'arrived', true, true), true);
+  assert.equal(bringsAnswer('failed', 'arrived', true, false), false);
+  // The card asks this one function, with the step the strip shows, at each change of phase.
+  const card = readFileSync(new URL('../src/screens/receive/FaucetCard.svelte', import.meta.url), 'utf8');
+  assert.match(
+    card,
+    /if \(now\.phase === last\) return;\s*const before = last;\s*last = now\.phase;\s*(\/\/[^\n]*\n\s*)*if \(bringsAnswer\(before, now\.phase, asked, untrack\(\(\) => followed\) !== null\)\) \{\s*void tick\(\)\.then\(showAnswer\);\s*\}/,
+  );
+  assert.match(card, /let followed = \$derived\(stripStep\(doit\.progress, Date\.now\(\)\)\);/);
 });
 
 // -- the address --------------------------------------------------------------------------

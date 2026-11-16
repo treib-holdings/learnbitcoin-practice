@@ -18,22 +18,30 @@
 // the scenario would show less than a reader's browser sends.
 //
 // About says of these links: they lead to LearnBitcoin in this tab, the
-// address of "Back to the chapter" names the step and whether it is done,
-// and nothing about the wallet travels with either. And the page's own
-// policy is to send no referrer, to which no link is an exception. So:
+// address of "Back to the chapter" names one step and says whether it is
+// done (the step the reader is on or following, or the step they came for
+// when a need sent them on first), once that step is done it also names
+// the other done steps of its chapter, and nothing about the wallet
+// travels with either. And the page's own policy is to send no referrer,
+// to which no link is an exception. So:
 //
 //   1. "Back to the chapter" on a step under way, on a done step's card and
-//      in the strip, and a chapter's name on the list of steps: each brings
+//      in the strip (of a done step, and of a step under way that was
+//      reached by its card), on a done step beside another done step of
+//      its chapter, and on a step that a need of another step sent the
+//      reader to; and a chapter's name on the list of steps: each brings
 //      the main site one request for the chapter's page, with no Referer,
 //      no cookie and nothing that names the practice site or the wallet;
 //      the page the reader arrives at finds no referrer and no cookie, and
-//      its address ends in the step's mark, or in nothing for a chapter's
-//      name. What the request does say of where the reader was is the
-//      browser's own mark, which no page can switch off: that the reader
-//      pressed a link on some host of the same site. It names no host and
-//      no page, and it is pinned here as seen. A link that did ask for a
-//      referrer to be sent would be seen: the last part of the scenario
-//      makes one by hand, and sees it.
+//      its address ends in what names the step or steps, or in nothing
+//      for a chapter's name. That ending is never part of the request: it
+//      is in the address the reader arrives at, where a script of the
+//      main site's page can read it. What the request does say of where
+//      the reader was is the browser's own mark, which no page can switch
+//      off: that the reader pressed a link on some host of the same site.
+//      It names no host and no page, and it is pinned here as seen. A link
+//      that did ask for a referrer to be sent would be seen: the last part
+//      of the scenario makes one by hand, and sees it.
 //
 // It touches nothing of the stand-in practice network, and could run
 // against a real one as it is.
@@ -45,8 +53,8 @@ import { after } from 'node:test';
 import type { EventBody } from '@learnbitcoin/practice-contract';
 import { strings } from '../../app/src/strings/index.ts';
 import { freshRecord, scenario } from './helpers.ts';
-import { hook, loads } from './journey-helpers.ts';
-import { PROGRESS_KEY, begin, ends, hrefOf, noteFor, untilStrip, view } from './doit-helpers.ts';
+import { hook, loads, until } from './journey-helpers.ts';
+import { PROGRESS_KEY, begin, ends, hrefOf, noteFor, stripOf, untilStrip, view } from './doit-helpers.ts';
 
 const en = strings.doit.en;
 const es = strings.doit.es;
@@ -102,8 +110,8 @@ interface Arrival {
 }
 
 scenario(
-  'A link back to the chapter, followed to the main site: "Back to the chapter" on a step under way, on a done step and in the strip, and a chapter\'s name on the list of steps each bring the main site one request for the chapter\'s page, with no Referer, no cookie and nothing that names the practice site or the wallet, and with the browser\'s own mark that it comes from the same site; the address the reader arrives at ends in the step\'s mark, or in nothing for a chapter\'s name',
-  { stack: { vars: { SITE_URL: main.url } }, timeout: 150_000 },
+  'A link back to the chapter, followed to the main site: "Back to the chapter" on a step under way, on a done step and in the strip, on a done step beside another done step of its chapter, in the strip of a step under way that was reached by its card, and on a step that a need sent the reader to, and a chapter\'s name on the list of steps each bring the main site one request for the chapter\'s page, with no Referer, no cookie and nothing that names the practice site or the wallet, and with the browser\'s own mark that it comes from the same site; the address the reader arrives at ends in what names the step or steps, or in nothing for a chapter\'s name',
+  { stack: { vars: { SITE_URL: main.url } }, timeout: 180_000 },
   async (s) => {
     const STEP = 'pass-it-on';
     const OWN = '/journey/how-bitcoin-works';
@@ -205,10 +213,10 @@ scenario(
     );
     const underWay = await follow(() => page.click('step-back'));
     sentOnlyThePage(underWay, OWN, 'a step under way');
-    // The mark is in the address the reader arrives at, where a script of the main site's page can read it. It names the step, and says "not done".
+    // The ending is in the address the reader arrives at, where a script of the main site's page can read it. It names the step, and says "not done".
     assert.equal(underWay.href, `${main.url}${OWN}#do-${STEP}`);
 
-    // -- 2. The same step, done: the main button of the done card. The mark now says "done". --
+    // -- 2. The same step, done: the main button of the done card. The ending now says "done". --
     const at = Date.now();
     const done = { started: true as const, doneAt: at, from: OWN_ES, parts: { 1: true as const, 2: true as const, 3: true as const } };
     await standBy();
@@ -231,7 +239,46 @@ scenario(
     sentOnlyThePage(fromStrip, OWN, 'the strip of a done step');
     assert.equal(fromStrip.href, `${main.url}${OWN}#done=${STEP}`);
 
-    // -- 4. A chapter's name on the list of steps: the chapter's page, and no mark at all --
+    // -- 4. A done step, with another step of its chapter done as well: the ending names both, this one first.
+    //       The request is the same as ever: the chapter's page, and nothing of the ending. --
+    const other = { started: true as const, doneAt: at - 60_000, parts: { 1: true as const, 2: true as const, 3: true as const } };
+    await standBy();
+    await page.store(PROGRESS_KEY, noteFor({ following: null, steps: { [STEP]: { ...done, from: OWN }, 'no-balances': other } }));
+    await open(`/do/${STEP}`, 'step-done');
+    assert.equal(await hrefOf(page, 'step-back'), `${main.url}${OWN}#done=${STEP},no-balances`);
+    const two = await follow(() => page.click('step-back'));
+    sentOnlyThePage(two, OWN, 'a done step beside another done step');
+    assert.equal(two.href, `${main.url}${OWN}#done=${STEP},no-balances`);
+
+    // -- 5. The strip of a step under way that was reached by its card: the way back to the chapter is there
+    //       before the step is done, and names its card. --
+    await standBy();
+    await page.store(PROGRESS_KEY, noteFor({ following: STEP, followedAt: at, steps: { [STEP]: { started: true, from: OWN } } }));
+    await open('/', 'home-do-link');
+    await until(async () => (await stripOf(page))?.step === STEP, 'the strip of the step that is followed');
+    assert.notEqual((await stripOf(page))?.says, 'done');
+    assert.equal(await page.text('strip-chapter'), en.back);
+    await page.page.evaluate(() => window.scrollTo(0, 0));
+    const underWayStrip = await follow(() => page.click('strip-chapter'));
+    sentOnlyThePage(underWayStrip, OWN, 'the strip of a step under way');
+    assert.equal(underWayStrip.href, `${main.url}${OWN}#do-${STEP}`);
+
+    // -- 6. "Hold some", which a need of this step sent the reader to. Its own chapter is chapter 2. "Back to
+    //       the chapter" asks the main site for the page the reader left, chapter 3, and for nothing else, and
+    //       the address names the card they pressed there. --
+    await standBy();
+    await page.store(
+      PROGRESS_KEY,
+      noteFor({ following: 'hold-some', followedAt: at, steps: { 'hold-some': { started: true, cameFor: STEP, parts: { 1: true } }, [STEP]: { started: true, from: OWN } } }),
+    );
+    await open('/do/hold-some', 'step-parts');
+    assert.equal(await page.text('step-back'), en.back);
+    const detour = await follow(() => page.click('step-back'));
+    sentOnlyThePage(detour, OWN, 'a step that a need sent the reader to');
+    assert.equal(detour.href, `${main.url}${OWN}#do-${STEP}`);
+    assert.ok(!main.asked.some((each) => each.path.includes('what-bitcoin-actually-is')), 'the chapter of "Hold some" was never asked for');
+
+    // -- 7. A chapter's name on the list of steps: the chapter's page, and no ending at all --
     await standBy();
     await open('/do', 'do-list');
     const names = await page.page.$$(hook('do-chapter'));
@@ -241,7 +288,7 @@ scenario(
     sentOnlyThePage(byName, OWN, 'a chapter\'s name');
     assert.equal(byName.href, `${main.url}${OWN}`);
 
-    // -- 5. In Spanish, with no way back noted: the chapter's Spanish page --
+    // -- 8. In Spanish, with no way back noted: the chapter's Spanish page --
     await standBy();
     await page.store(PROGRESS_KEY, null);
     await open(`/es/do/${STEP}`, 'step-parts');
@@ -250,7 +297,7 @@ scenario(
     sentOnlyThePage(spanish, OWN_ES, 'the Spanish page');
     assert.equal(spanish.href, `${main.url}${OWN_ES}#do-${STEP}`);
 
-    // -- 6. The stand-in does see a Referer when a link sends one. The same link, made by hand into an
+    // -- 9. The stand-in does see a Referer when a link sends one. The same link, made by hand into an
     //       exception to the page's policy (which the app never makes), tells the main site the practice
     //       site's name. --
     await standBy();
@@ -265,7 +312,7 @@ scenario(
     await standBy();
     await open('/do', 'do-list');
     for (const [path, policy] of policies()) assert.equal(policy, 'no-referrer', path);
-    assert.equal(policies().length, 14, 'seven screens of the app, and seven times the page beside it');
+    assert.equal(policies().length, 20, 'ten screens of the app, and ten times the page beside it');
     await ends(s, reader, counted, { records: [record], words: [words], addresses: [record.firstAddress], txids: [] });
   },
 );

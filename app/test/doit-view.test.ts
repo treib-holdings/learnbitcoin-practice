@@ -15,11 +15,12 @@ import { test } from 'node:test';
 import { LANGS, STEPS, type AppConfig, type StepId } from '@learnbitcoin/practice-contract';
 import { ownAddresses, signPayment, viewPayment, type TxView } from '@learnbitcoin/practice-wallet';
 import { ACCOUNT, POT_ADDRESS, TXID, fundedState, sampleHistory } from '../dev/sample.ts';
-import { stripCount, stripShows, stripSpeaks, stripText, stripView, stepTitle } from '../src/components/doit/strip.ts';
+import { stripCount, stripOffersChapter, stripShows, stripSpeaks, stripText, stripView, stepTitle } from '../src/components/doit/strip.ts';
 import { EXPLAIN_SLOTS, explain } from '../src/lib/doit/explain.ts';
 import { DEFAULT_CONFIG } from '../src/lib/config.ts';
 import { judge, type BlockedReason, type PartView, type StepView, type WalletTrouble } from '../src/lib/doit/judge.ts';
-import { CHAPTERS, STEP_DEFS, partCount, partDef } from '../src/lib/doit/steps.ts';
+import { applyChange, chapterLink, type Progress, type StepNote } from '../src/lib/doit/progress.ts';
+import { CHAPTERS, STEP_DEFS, nextStep, partCount, partDef } from '../src/lib/doit/steps.ts';
 import { fill, slotNames } from '../src/lib/format.ts';
 import { answerKey, positionsAnswered, positionsFor } from '../src/screens/doit/ask.ts';
 import { bitsText, sentenceBits } from '../src/screens/doit/bits.ts';
@@ -43,6 +44,7 @@ import {
   termsOf,
   waitedOf,
   waitedText,
+  waysOn,
 } from '../src/screens/doit/view.ts';
 import { ADDRESS_SLOTS, explainSlots, explained, explainedTerms } from '../src/screens/read/explained.ts';
 import { faucetGlossaryUrl, glossaryUrl } from '../src/screens/read/read.ts';
@@ -385,6 +387,127 @@ test('a chapter\'s heading and its address on the main site, in the page\'s lang
   assert.equal(chapterUrl('not an address', two, 'en'), null);
 });
 
+// -- a done step's ways on ------------------------------------------------------------------------
+
+/** A step's own chapter page, in English: the way back a card of that chapter hands a step. */
+const cardOf = (id: StepId): string => STEP_DEFS[id].chapter.path.en;
+
+/** A done step's note, with whatever else it holds. */
+const doneNote = (id: StepId, extra: StepNote = {}): StepNote => ({ ...started(partCount(id)), doneAt: NOW, ...extra });
+
+test('a done step\'s ways on: back to the step the reader came for, or back to the chapter, and "Next step" only for a reader from the list', () => {
+  // The next step of each, where the chapter has one: what a reader from the list is offered.
+  assert.deepEqual(
+    STEPS.map((id) => nextStep(id)),
+    [null, 'no-balances', 'waiting-room', null, 'prove-the-backup', null],
+  );
+  for (const id of STEPS) {
+    // From the wallet's own list (no way back, no step to lead back to): the card as it always was.
+    for (const own of [doneNote(id), started(1), { started: true as const }, undefined]) {
+      const progress: Progress = { v: 1, following: null, steps: own === undefined ? {} : { [id]: own } };
+      assert.deepEqual(waysOn(id, progress), { led: null, next: nextStep(id) }, `${id}, from the list`);
+    }
+    // Reached by its card, from either of the chapter's two pages: no "Next step". The reader goes back to the chapter.
+    for (const from of Object.values(STEP_DEFS[id].chapter.path)) {
+      assert.deepEqual(waysOn(id, note({ [id]: doneNote(id, { from }) })), { led: null, next: null }, `${id}, by card from ${from}`);
+    }
+    // A way back that is none is no card: the note is then as if the reader had come from the list.
+    assert.deepEqual(waysOn(id, { v: 1, following: null, steps: { [id]: doneNote(id, { from: '/newsletter' }) } }), { led: null, next: nextStep(id) }, id);
+
+    // In a detour: a need of another step sent the reader here, and that step is not done. The card leads
+    // back to it, and offers no "Next step" beside it.
+    for (const cameFor of STEPS) {
+      if (cameFor === id) continue;
+      const sender = started(0, { from: cardOf(cameFor) });
+      assert.deepEqual(waysOn(id, note({ [id]: doneNote(id, { cameFor }), [cameFor]: sender })), { led: cameFor, next: null }, `${id} from ${cameFor}`);
+      // With a way back of the step's own beside the memory, too: the detour is the later road.
+      assert.deepEqual(waysOn(id, note({ [id]: doneNote(id, { from: cardOf(id), cameFor }), [cameFor]: sender })), { led: cameFor, next: null }, `${id} from ${cameFor}, with both`);
+      // The step the reader came for is done by now (a note handed in with the stale field: a read never
+      // leaves one): the detour is over, and the card is what the step's own way back makes it.
+      const over: Progress = { v: 1, following: null, steps: { [id]: doneNote(id, { cameFor }), [cameFor]: doneNote(cameFor, { from: cardOf(cameFor) }) } };
+      assert.deepEqual(waysOn(id, over), { led: null, next: nextStep(id) }, `${id} from ${cameFor}, which is done`);
+      const overByCard: Progress = { v: 1, following: null, steps: { [id]: doneNote(id, { from: cardOf(id), cameFor }), [cameFor]: doneNote(cameFor) } };
+      assert.deepEqual(waysOn(id, overByCard), { led: null, next: null }, `${id} from ${cameFor}, which is done, by card`);
+    }
+    // A memory that names the step itself, or what is no step, is none.
+    for (const cameFor of [id, 'first-payment', '', 7]) {
+      const odd = { v: 1, following: null, steps: { [id]: { ...doneNote(id), cameFor } } } as unknown as Progress;
+      assert.deepEqual(waysOn(id, odd), { led: null, next: nextStep(id) }, `${id}: ${String(cameFor)}`);
+    }
+  }
+  // For the pairs the app's own needs make, the next step of the step a need leads to is, where it has one,
+  // the very step the reader came for: the main button names it, and "Next step" would name it a second time.
+  assert.equal(nextStep('pass-it-on'), 'no-balances');
+  assert.equal(nextStep('the-seed'), 'prove-the-backup');
+  assert.equal(nextStep('hold-some'), null);
+
+  // Walked through the one write function, as the app writes it: "Pass it on" by its card with no wallet,
+  // on to "Hold some", which is done; then "Pass it on" itself.
+  let progress = applyChange({ v: 1, following: null, steps: {} }, { kind: 'open', step: 'pass-it-on', at: NOW, from: '/journey/how-bitcoin-works' });
+  progress = applyChange(progress, { kind: 'detour', step: 'hold-some', cameFor: 'pass-it-on' });
+  progress = applyChange(progress, { kind: 'open', step: 'hold-some', at: NOW + 1, from: null });
+  for (const part of [1, 2, 3, 4]) progress = applyChange(progress, { kind: 'tick', step: 'hold-some', part, at: NOW + 2 });
+  assert.deepEqual(waysOn('hold-some', progress), { led: 'pass-it-on', next: null });
+  // The reader presses the button: the opening of "Pass it on" changes nothing on the card they left.
+  progress = applyChange(progress, { kind: 'open', step: 'pass-it-on', at: NOW + 3, from: null });
+  assert.deepEqual(waysOn('hold-some', progress), { led: 'pass-it-on', next: null });
+  for (const part of [1, 2, 3]) progress = applyChange(progress, { kind: 'tick', step: 'pass-it-on', part, at: NOW + 4 });
+  // "Pass it on" was reached by its card: no "Next step". And "Hold some", which no card ever led to, is a
+  // step from the list again: it leads back to no step, and chapter 2 has no next one to offer.
+  assert.deepEqual(waysOn('pass-it-on', progress), { led: null, next: null });
+  assert.deepEqual(waysOn('hold-some', progress), { led: null, next: null });
+  assert.equal(progress.steps['hold-some']?.cameFor, undefined);
+  // The same steps done from the wallet's own list: "Next step" is offered, as before.
+  let listed = applyChange({ v: 1, following: null, steps: {} }, { kind: 'open', step: 'pass-it-on', at: NOW, from: null });
+  for (const part of [1, 2, 3]) listed = applyChange(listed, { kind: 'tick', step: 'pass-it-on', part, at: NOW + 1 });
+  assert.deepEqual(waysOn('pass-it-on', listed), { led: null, next: 'no-balances' });
+});
+
+test('the strip offers the link back to the chapter for a step that came from a chapter, and once a step is done', () => {
+  for (const id of STEPS) {
+    // Under way, opened from the wallet's own list: the one link, "Back to the step", as it always was.
+    for (const own of [started(0), started(1)]) assert.equal(stripOffersChapter(note({ [id]: own }, id), id), false, `${id}, from the list`);
+    // Under way, reached by its card: the link back, from the start.
+    for (const from of Object.values(STEP_DEFS[id].chapter.path)) {
+      assert.equal(stripOffersChapter(note({ [id]: started(0, { from }) }, id), id), true, `${id}, by card`);
+      assert.equal(stripOffersChapter(note({ [id]: started(1, { from }) }, id), id), true, `${id}, by card`);
+    }
+    // A way back that is none is no card.
+    assert.equal(stripOffersChapter({ v: 1, following: id, followedAt: NOW, steps: { [id]: { started: true, from: '/newsletter' } } }, id), false, id);
+    // Done: both links, however the reader came to the step.
+    for (const own of [doneNote(id), doneNote(id, { from: cardOf(id) })]) assert.equal(stripOffersChapter(note({ [id]: own }, id), id), true, `${id}, done`);
+    // Under way, sent here by a need of another step that is not done: the link back, and it leads to the chapter the reader left.
+    for (const cameFor of STEPS) {
+      if (cameFor === id) continue;
+      const sent = note({ [id]: started(1, { cameFor }), [cameFor]: started(0, { from: cardOf(cameFor) }) }, id);
+      assert.equal(stripOffersChapter(sent, id), true, `${id} from ${cameFor}`);
+      assert.equal(chapterLink(SITE, id, 'en', sent), `${SITE}${cardOf(cameFor)}#do-${cameFor}`, `${id} from ${cameFor}`);
+      // With both a way back of its own and the memory: offered, and the detour decides where it leads.
+      const both = note({ [id]: started(1, { from: cardOf(id), cameFor }), [cameFor]: started(0, { from: cardOf(cameFor) }) }, id);
+      assert.equal(stripOffersChapter(both, id), true);
+      assert.equal(chapterLink(SITE, id, 'en', both), `${SITE}${cardOf(cameFor)}#do-${cameFor}`, `${id} from ${cameFor}, with both`);
+      // The step the reader came for is done (a stale field in a note handed in): no detour, so no link for a step from the list.
+      const over: Progress = { v: 1, following: id, followedAt: NOW, steps: { [id]: started(1, { cameFor }), [cameFor]: doneNote(cameFor) } };
+      assert.equal(stripOffersChapter(over, id), false, `${id} from ${cameFor}, which is done`);
+    }
+    // A step with no note at all (the strip is never drawn for one): nothing to offer.
+    assert.equal(stripOffersChapter({ v: 1, following: null, steps: {} }, id), false);
+  }
+  // The piece asks that one function, and builds the link from the whole note, as the step's own screen does.
+  const piece = readFileSync(new URL('../src/components/doit/Strip.svelte', import.meta.url), 'utf8');
+  assert.match(
+    piece,
+    /let chapter = \$derived\(step !== null && stripOffersChapter\(doit\.progress, step\) \? chapterLink\(wallet\.config\.siteUrl, step, lang, doit\.progress\) : null\);/,
+  );
+  // The two links share one line that does not break inside itself, and "Back to the step" comes first.
+  assert.match(
+    piece,
+    /<div class="order-3 flex w-full items-center gap-x-4 whitespace-nowrap min-\[480px\]:order-2 min-\[480px\]:w-auto">\s*<a href=\{router\.link\(\{ name: 'step', id: step \}\)\} class=\{BACK\} data-testid="strip-back">\{t\.stripBack\}<\/a>\s*\{#if chapter !== null\}\s*<ChapterLink look="strip" href=\{chapter\} data-testid="strip-chapter">\{t\.back\}<\/ChapterLink>\s*\{\/if\}\s*<\/div>/,
+  );
+  // The words on the two links, in both languages: on the narrowest phone the two must fit one line.
+  assert.deepEqual([en.stripBack, en.back, es.stripBack, es.back], ['Back to the step', 'Back to the chapter', 'Volver al paso', 'Volver al capítulo']);
+});
+
 // -- progress kept --------------------------------------------------------------------------------
 
 test('a note counts as kept when one is stored: this version\'s, or a newer one\'s', () => {
@@ -523,6 +646,65 @@ test('the strip names the part, or what stands in its way', () => {
   const unread = stripView(viewOf('no-balances', { chain: coins, history: null, note: note({ 'no-balances': started(1) }, 'no-balances') }));
   assert.deepEqual(unread.says, { kind: 'part' });
   assert.equal(stripText(unread, 'en', NOW), 'Count your coins');
+});
+
+test('a need that is read off the list of transactions is said only where the screen keeps that list read: elsewhere the strip names the part', () => {
+  /** A wallet screen that keeps the coins read and not the list of transactions: Receive, Send, Coins, Backup, Settings. */
+  const elsewhere = { coins: true, list: false };
+  const confirmed = chain(state([{ tx: 'c1', sats: 100_000 }]));
+
+  // "Hold some", part 4, on Receive. The faucet's coin has its block, so part 3 is ticked. The list of
+  // transactions the page holds was read on the step's own screen, before the coin came: it holds no payment.
+  const behind = viewOf('hold-some', { chain: confirmed, history: [], note: note({ 'hold-some': started(3) }, 'hold-some') });
+  assert.deepEqual(behind.parts[3], { state: 'blocked', reason: 'no-coins' }, 'what judge() reads off such a list');
+  // The strip must not say "first: get practice coins" over a coin that is confirmed: it names the part.
+  const onReceive = stripView(behind, elsewhere);
+  assert.deepEqual(onReceive, { step: 'hold-some', part: 4, parts: 4, says: { kind: 'part' } });
+  assert.equal(stripText(onReceive, 'en', NOW), 'See it from outside');
+  assert.equal(stripText(onReceive, 'es', NOW), es['part_hold-some_4']);
+  assert.equal(stripSpeaks(onReceive), false, 'on a phone the strip keeps "4 of 4": it has no need to say');
+  assert.deepEqual(stripView(behind, { coins: false, list: false }).says, { kind: 'part' });
+  // On a screen that keeps the list read, the answer is that list's own, and it is said.
+  assert.deepEqual(stripView(behind, { coins: true, list: true }).says, { kind: 'need', reason: 'no-coins' });
+  assert.deepEqual(stripView(behind).says, { kind: 'need', reason: 'no-coins' });
+  assert.equal(stripText(stripView(behind), 'en', NOW), 'first: get practice coins');
+
+  // "There are no balances": each of its parts rests on a payment the wallet has sent, read off the list. On
+  // Send, where the payment goes out and the list is not read, the strip names the part.
+  for (const part of [1, 2, 3]) {
+    const unsent = viewOf('no-balances', {
+      chain: confirmed,
+      history: [tx({ tx: 'c1', direction: 'received' })],
+      note: note({ 'no-balances': started(part - 1) }, 'no-balances'),
+    });
+    assert.deepEqual(unsent.parts[part - 1], { state: 'blocked', reason: 'nothing-sent' }, `part ${part}`);
+    assert.deepEqual(stripView(unsent, elsewhere), { step: 'no-balances', part, parts: 3, says: { kind: 'part' } }, `part ${part}`);
+    assert.deepEqual(stripView(unsent).says, { kind: 'need', reason: 'nothing-sent' }, `part ${part}`);
+  }
+
+  // A need that is read off the coins, off the note or off the browser's storage is said on every screen, as before.
+  const said = (id: StepId, spec: Parameters<typeof world>[0], reason: BlockedReason): void => {
+    const view = viewOf(id, spec);
+    assert.equal(view.at !== null && view.parts[view.at - 1]?.state, 'blocked', `${id}: ${reason}`);
+    for (const live of [elsewhere, { coins: false, list: false }, { coins: true, list: true }]) {
+      assert.deepEqual(stripView(view, live).says, { kind: 'need', reason }, `${id}: ${reason}`);
+    }
+  };
+  // No coin at all, and a coin that waits for its block: the wallet's coins say so.
+  said('pass-it-on', { note: note({ 'pass-it-on': started() }, 'pass-it-on') }, 'no-coins');
+  said('hold-some', { note: note({ 'hold-some': started(2) }, 'hold-some') }, 'no-coins');
+  said('waiting-room', { chain: chain(state([{ tx: 'c1', sats: 100_000, height: null }])), note: note({ 'waiting-room': started() }, 'waiting-room') }, 'not-spendable-yet');
+  // The coins of "There are no balances" are spent: the list holds the payment, and the coins say that none is left.
+  said('no-balances', { chain: chain(state()), history: [tx({ tx: 'a1' })], note: note({ 'no-balances': started() }, 'no-balances') }, 'no-coins');
+  // After "Send another" the note names no payment: the note says so.
+  said('waiting-room', { chain: confirmed, history: [], note: note({ 'waiting-room': started(1) }, 'waiting-room') }, 'nothing-sent');
+  // No wallet in the browser.
+  assert.deepEqual(stripView(judge('hold-some', noWallet({ note: note({ 'hold-some': started(3) }, 'hold-some') })), elsewhere).says, { kind: 'need', reason: 'no-wallet' });
+
+  // The piece hands the strip what the screen it stands on keeps read.
+  const piece = readFileSync(new URL('../src/components/doit/Strip.svelte', import.meta.url), 'utf8');
+  assert.match(piece, /let live = \$derived\(\{ coins: readsCoins\(watched\), list: readsTransactions\(watched\) \}\);/);
+  assert.match(piece, /let strip = \$derived\(step === null \? null : stripView\(doit\.view\(step, now\), live\)\);/);
 });
 
 test('the strip says how long a payment has waited, that it is lost, and that the step is done', () => {

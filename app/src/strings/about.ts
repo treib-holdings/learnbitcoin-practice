@@ -13,9 +13,11 @@
 //                             worker/src/reader-key.ts (the limit per reader)
 //   a link back to a chapter  src/components/doit/ChapterLink.svelte (this tab, and no referrer: the page's
 //                             own policy in public/_headers holds for it), chapterLink() in
-//                             src/lib/doit/progress.ts (the address of "Back to the chapter": one of the
-//                             chapter's two pages and the step's mark), chapterUrl() in
-//                             src/screens/doit/view.ts (a chapter's name: its page, and no mark)
+//                             src/lib/doit/progress.ts (the address of "Back to the chapter": one of a
+//                             chapter's two pages, and an ending that names one step and says whether it
+//                             is done, and once it is done the other done steps of that chapter),
+//                             chapterUrl() in src/screens/doit/view.ts (a chapter's name: its page, and
+//                             no ending)
 //   what is counted           the contract's EVENTS, src/lib/events.ts, worker/src/events.ts
 //   the faucet's bot check    src/lib/turnstile.ts, worker/src/bot-check.ts, beforeBotCheck in src/lib/wallet-api.ts
 //
@@ -97,13 +99,19 @@ export const en = {
     'For a wallet made without a passkey, and for any wallet restored here from its 12 words: the 12 words, as plain text, not encrypted.',
   keepSo:
     'So anyone who uses this browser can see the wallet. If its 12 words are stored here, they can also spend from it.',
-  // The note of the "Do it" steps: one line for each group of its fields (src/lib/doit/progress.ts, StepNote and Progress).
+  // The note of the "Do it" steps: one line for each group of its fields (src/lib/doit/progress.ts, StepNote and Progress):
+  // started, parts and doneAt; following and followedAt; from; cameFor; wallet and was; tx and sentAt.
   keepNote: 'The note of your "Do it" progress holds:',
   keepNoteSteps: 'Which steps you have opened, which parts of each are ticked, and the time each step was done.',
   keepNoteFollowing: 'Which step you are following, and when you last followed it.',
   // The way back is never free text: for each step it is the English or the Spanish page of the step's own chapter, or nothing (validFrom).
   keepNoteFrom:
     'Whether you came to a step from the English or the Spanish page of its chapter, so that "Back to the chapter" leads to that page.',
+  // Written only on a road that began at a chapter's card, never for a reader who opened a step from the wallet's own
+  // list; one of the six step IDs and nothing else; taken out by the write that finishes the step it names (cameFor).
+  // A later road to the same step takes it out sooner: the step's own card, or a need of a step from the list.
+  keepNoteCameFor:
+    'If you came from a chapter and a step sent you to another step first: the step you came for, so that the other step can lead you back to it and "Back to the chapter" leads to the chapter you came from. It is erased when the step you came for is done.',
   keepNoteWallet:
     'For the two steps about the 12 words: the wallet fingerprint of the wallet they were checked for and, from the drill on, whether this browser opened that wallet with a passkey or with its words.',
   keepNotePayment:
@@ -175,9 +183,15 @@ export const en = {
   serverCloudflare:
     "The server runs on Cloudflare's network. Cloudflare stores those lines for a short time. Beside each one it keeps the web address that was asked for, the time and IDs that Cloudflare gives the request, and no IP address. For a line written while something on our side is broken, that web address can hold a wallet address or a transaction ID. Cloudflare also keeps logs of its own, and those can hold the IP address.",
   // The links that lead back to the main site, in this tab (ChapterLink.svelte). They send no referrer. What they
-  // carry is their address: a chapter's page and, for "Back to the chapter", "#do-<step>" or "#done=<step>".
+  // carry is their address: a chapter's page and, for "Back to the chapter", an ending. Until the step it names is
+  // done the ending is "#do-<step>". From then on it is "#done=<step>" followed by the other done steps of the same
+  // chapter, with commas between them. The step named first is the one the link is shown for (on its own screen, or
+  // on the strip while it is followed) or, while a need of another step has sent the reader there, the step at the
+  // start of that road: one that some step's note holds as the step the reader came for (chapterLink in
+  // src/lib/doit/progress.ts). What follows "#" is not sent with the request for the page; a script of the main
+  // site's page can read it, so the sentence says what the address names and promises nothing about who reads it.
   serverBack:
-    '"Back to the chapter", and a chapter\'s name on the Do it screen, lead to LearnBitcoin in this tab. The address of "Back to the chapter" names the step and whether it is done. Nothing about the wallet travels with either.',
+    '"Back to the chapter", and a chapter\'s name on the Do it screen, lead to LearnBitcoin in this tab. The address of "Back to the chapter" names one step and says whether it is done: the step you are on or following, or a step that the note of your progress holds as the one you came for. Once the step it names is done, the address also names the other steps of that chapter that you have done. Nothing about the wallet travels with either.',
 
   // -- what is counted --
   countTitle: 'What is counted',
@@ -283,6 +297,8 @@ export const es: Record<keyof typeof en, string> = {
   keepNoteFollowing: 'Qué paso estás siguiendo, y cuándo lo seguiste por última vez.',
   keepNoteFrom:
     'Desde cuál de las dos páginas de su capítulo llegaste a un paso, la que está en inglés o la que está en español, para que "Volver al capítulo" lleve a esa página.',
+  keepNoteCameFor:
+    'Si llegaste desde un capítulo y un paso te envió primero a otro paso: el paso por el que venías, para que el otro paso pueda llevarte de vuelta a él y "Volver al capítulo" lleve al capítulo del que venías. Se borra cuando el paso por el que venías se termina.',
   keepNoteWallet:
     'En los dos pasos sobre las 12 palabras: la huella de la billetera para la que se comprobaron y, desde el ejercicio en adelante, si este navegador abría esa billetera con llave de acceso o con sus palabras.',
   keepNotePayment:
@@ -321,7 +337,7 @@ export const es: Record<keyof typeof en, string> = {
   serverCloudflare:
     'El servidor funciona en la red de Cloudflare. Cloudflare guarda esas líneas por poco tiempo. Junto a cada una guarda la dirección web que se pidió, la hora y los identificadores que Cloudflare le da a la solicitud, y ninguna dirección IP. En una línea anotada mientras algo de nuestro lado está fallando, esa dirección web puede contener una dirección de la billetera o un txid. Cloudflare también lleva sus propios registros, y esos sí pueden contener la dirección IP.',
   serverBack:
-    '"Volver al capítulo", y el nombre de un capítulo en la pantalla Hazlo, llevan a LearnBitcoin en esta pestaña. La dirección de "Volver al capítulo" nombra el paso y dice si está terminado. Con ninguno de los dos viaja nada de la billetera.',
+    '"Volver al capítulo", y el nombre de un capítulo en la pantalla Hazlo, llevan a LearnBitcoin en esta pestaña. La dirección de "Volver al capítulo" nombra un paso y dice si está terminado: el paso en el que estás o que estás siguiendo, o un paso que la nota de tu progreso guarda como el paso por el que venías. Cuando el paso que nombra está terminado, la dirección nombra también los otros pasos de ese capítulo que ya terminaste. Con ninguno de los dos viaja nada de la billetera.',
 
   countTitle: 'Qué se cuenta',
   countBody:

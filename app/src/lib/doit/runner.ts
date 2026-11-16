@@ -113,6 +113,13 @@ export interface Runner {
   release(): void;
   /** The step's action link was used: the step is the one followed. */
   follow(step: StepId): void;
+  /**
+   * The link of a need that leads to another step was pressed: `to` is the
+   * step it leads to, `cameFor` the step whose need it is. The note of `to`
+   * then names `cameFor`, if the reader came to that step from a chapter
+   * (the change "detour" in progress.ts says when). Nothing is counted.
+   */
+  detour(to: StepId, cameFor: StepId): void;
   /** "Stop following", and the strip closed. */
   stop(step: StepId): void;
   /** "Send another": the payment the step waits for is cleared from its note. */
@@ -288,6 +295,13 @@ export function makeRunner(deps: RunnerDeps): Runner {
 
     follow(step) {
       write({ kind: 'follow', step, at: deps.now() });
+      run();
+    },
+
+    detour(to, cameFor) {
+      // Through the one write, like every change: under a newer version's note, and where the browser
+      // refuses, nothing is written. The world is looked at again, so that the screens are told.
+      write({ kind: 'detour', step: to, cameFor });
       run();
     },
 

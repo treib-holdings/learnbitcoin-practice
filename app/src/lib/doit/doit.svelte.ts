@@ -109,6 +109,7 @@ export function makeDoit(deps: DoitDeps): Doit {
     },
 
     follow: (step) => runner.follow(step),
+    detour: (to, cameFor) => runner.detour(to, cameFor),
     stop: (step) => runner.stop(step),
     sendAnother: (step) => runner.sendAnother(step),
     restart: (step) => runner.restart(step),

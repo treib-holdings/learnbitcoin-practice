@@ -18,21 +18,26 @@
   // for a link the reader pressed), because the wallet's host and the main
   // site's are two hosts of one site. It tells the main site's server that
   // the reader followed a link on some host of that site. It names no
-  // host and no page. (And the mark in the address says as much anyway.)
+  // host and no page. (And the address the link leads to says as much anyway.)
   // e2e/scenarios/doit-chapter.test.ts follows the link to a stand-in on
   // the same site, and reads that header there.
   //
   // What the link itself carries is its address and nothing else: a
-  // chapter's page and, on "Back to the chapter", the mark that names the
-  // step and says whether it is done (chapterLink in lib/doit/progress.ts).
-  // About says so to the reader, and test/info-text.test.ts holds that
-  // sentence to this file.
+  // chapter's page and, on "Back to the chapter", an ending that names one
+  // step and says whether it is done, and once it is done the other done
+  // steps of the same chapter (chapterLink in lib/doit/progress.ts). What
+  // follows "#" in an address is not sent with the request for the page; a
+  // script of the main site's page can read it. About says to the reader
+  // what the address names, and test/info-text.test.ts holds that sentence
+  // to this file.
   //
-  //   link     a link in a line of text
-  //   heading  a chapter's name as a heading of the list of steps: the
-  //            heading's own colour, underlined so that it reads as a link
-  //   primary  the main button of a step that is done
-  //   strip    a small link in the strip under the header
+  //   link       a link in a line of text
+  //   heading    a chapter's name as a heading of the list of steps: the
+  //              heading's own colour, underlined so that it reads as a link
+  //   primary    the main button of a step that is done
+  //   secondary  the second button of a done step whose main button leads
+  //              back to the step the reader came for
+  //   strip      a small link in the strip under the header
 
   import type { Snippet } from 'svelte';
   import { BUTTON, FOCUS, LINK } from '../styles.ts';
@@ -40,7 +45,7 @@
   interface Props {
     /** The whole address, as chapterLink() built and checked it. */
     href: string;
-    look?: 'link' | 'heading' | 'primary' | 'strip';
+    look?: 'link' | 'heading' | 'primary' | 'secondary' | 'strip';
     class?: string;
     children: Snippet;
     [key: `data-${string}`]: string | undefined;
@@ -53,6 +58,7 @@
     heading: `rounded-sm underline decoration-ink-300 underline-offset-4 hover:text-orange-600 hover:decoration-orange-400 ${FOCUS}`,
     // As Button draws a link that looks like a button: never wider than what holds it.
     primary: `inline-block max-w-full text-center ${BUTTON.primary} ${FOCUS}`,
+    secondary: `inline-block max-w-full text-center ${BUTTON.secondary} ${FOCUS}`,
     strip: `rounded-sm font-semibold text-ink-800 underline underline-offset-2 hover:text-orange-700 ${FOCUS}`,
   } as const;
 </script>

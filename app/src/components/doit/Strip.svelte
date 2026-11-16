@@ -10,8 +10,19 @@
   // own, for as long as the step is followed (and for 24 hours after it was
   // last followed: lib/doit/progress.ts, stripStep).
   //
-  //   wide     Do it | the step | part 2 of 3: the part's name | Back to the step | Stop following
-  //   narrow   the step | 2 of 3 | Back to the step | (a small cross that stops following)
+  //   wide     Do it | the step | part 2 of 3: the part's name | Back to the step | Back to the chapter | Stop following
+  //   narrow   the step | 2 of 3 | (a small cross that stops following)
+  //            Back to the step | Back to the chapter
+  //
+  // "Back to the chapter" is the link back to the main site. It stands
+  // beside "Back to the step" for a step that came from a chapter (the
+  // reader pressed its card there, or a need of another step sent them
+  // here), from the first screen on: that reader is in the wallet to do one
+  // thing a chapter asked for, and the way back to the chapter has to be in
+  // view. For a step opened from the wallet's own list it comes only once
+  // the step is done (stripOffersChapter in strip.ts). Where a need sent
+  // the reader here, the link leads to the chapter they left, which need
+  // not be this step's own (chapterLink in lib/doit/progress.ts).
   //
   // Where the part cannot be done yet, or waits for a block, the strip
   // says that in the place of the part's name: "first: get practice coins",
@@ -22,10 +33,14 @@
   // would lead them astray. (The wait is said on the
   // screens where the wallet goes on reading what the wait is read from,
   // its coins or its list of transactions: on the others the strip names
-  // the part.) Once the step is done the
+  // the part. So it does for what is missing, where that is read off the
+  // list of transactions: on a screen that does not read the list, a list
+  // read earlier can be behind what the reader has just done there.) Once
+  // the step is done the
   // strip says so, in both forms and once through the status region, and
-  // offers the way back to the chapter beside the way back to the step. It
-  // then stays until the reader opens the step or closes the strip.
+  // offers the way back to the chapter beside the way back to the step,
+  // whichever way the reader came to the step. It then stays until the
+  // reader opens the step or closes the strip.
   //
   // The strip knows nothing itself. Which step, and where it stands, come
   // from the note and from judge() (through useDoit()), so it is the same
@@ -47,7 +62,7 @@
   import { announce } from '../status.svelte.ts';
   import { FOCUS } from '../styles.ts';
   import ChapterLink from './ChapterLink.svelte';
-  import { stepTitle, stripCount, stripShows, stripSpeaks, stripText, stripView } from './strip.ts';
+  import { stepTitle, stripCount, stripOffersChapter, stripShows, stripSpeaks, stripText, stripView } from './strip.ts';
 
   const wallet = useWallet();
   const doit = useDoit();
@@ -80,8 +95,12 @@
   /** On a narrow screen: the words in the place of "2 of 3", where the reader has to know them here. */
   let speaks = $derived(strip !== null && stripSpeaks(strip));
 
-  /** The way back to the chapter, offered once the step is done: it carries the mark the chapter stamps on. */
-  let chapter = $derived(step !== null && done ? chapterLink(wallet.config.siteUrl, step, lang, doit.progress.steps[step]) : null);
+  /**
+   * The way back to the chapter: for a step that came from a chapter, and for every step once it is done.
+   * Its address is built from the whole note, as on the step's own screen: until the step is done it names
+   * the card to come back to, and once it is done the steps of the chapter to mark as done.
+   */
+  let chapter = $derived(step !== null && stripOffersChapter(doit.progress, step) ? chapterLink(wallet.config.siteUrl, step, lang, doit.progress) : null);
 
   // A clock is outside Svelte, so an effect follows it: every second while
   // the strip counts the time since a payment was sent, and now and then
@@ -134,7 +153,7 @@
     class="border-b border-orange-200 bg-orange-50 text-sm leading-snug text-ink-700"
   >
     <!-- On a phone: the words and the cross on one line, the links on the next. Two lines, never
-         three: with the cross after the links, a done strip's two links wrapped inside themselves
+         three: with the cross after the links, the strip's two links wrapped inside themselves
          on the narrowest screen. From 480 px it is one line: the words, the links, "Stop following". -->
     <div class="mx-auto flex max-w-6xl flex-wrap items-center gap-x-5 gap-y-1 px-6 py-2">
       <p class="min-w-0 flex-1 text-pretty">

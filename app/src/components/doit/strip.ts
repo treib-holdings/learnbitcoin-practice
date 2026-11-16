@@ -6,10 +6,14 @@
 // Whether there is a strip at all, and for which step, is the note's to
 // say (stripStep in lib/doit/progress.ts: the step that is followed, for 24
 // hours after it was last followed). Where that step stands is judge()'s.
-// This file turns the two into words.
+// This file turns the two into words, and says which links the strip
+// carries: "Back to the step" always, and "Back to the chapter" beside it
+// once the step is done, and all along for a reader who came to the step
+// from a chapter (stripOffersChapter).
 
 import type { Lang } from '@learnbitcoin/practice-contract';
 import type { BlockedReason, StepView } from '../../lib/doit/judge.ts';
+import { cameFromChapter, type Progress } from '../../lib/doit/progress.ts';
 import { STEP_DEFS, partCount, partDef, partKey, type StepId } from '../../lib/doit/steps.ts';
 import { fill, formatElapsed } from '../../lib/format.ts';
 import { strings } from '../../strings/index.ts';
@@ -54,6 +58,20 @@ export interface StripLive {
 const EVERYTHING: StripLive = { coins: true, list: true };
 
 /**
+ * True for a need that judge() reads off the wallet's list of transactions
+ * and off nothing else: that no transaction in a block has paid the wallet
+ * yet (the question of "Hold some" is about the first one that has), and
+ * that the wallet has sent no payment of its own (every part of "There are
+ * no balances" rests on one). `part` is the number of the part that is
+ * open, from 1.
+ */
+function readOffList(id: StepId, part: number, reason: BlockedReason): boolean {
+  const fact = partDef(id, part)?.on;
+  if (fact === 'block-height') return reason === 'no-coins';
+  return (fact === 'coins-opened' || fact === 'coin-count' || fact === 'payment-read') && reason === 'nothing-sent';
+}
+
+/**
  * What the strip shows for the step it follows, from where that step stands.
  *
  * "Waiting for a block" is read from the wallet's coins (a coin that waits
@@ -62,6 +80,14 @@ const EVERYTHING: StripLive = { coins: true, list: true };
  * on saying it, and counting the seconds, after the block had come: there
  * it says which part is next, and no more. `live` says which readings the
  * screen keeps up.
+ *
+ * The same holds for a need that is read off the list of transactions. On
+ * a screen that does not keep the list read, the list the page holds can
+ * be older than what the reader has just done there: on Receive the
+ * faucet's coin gets its block, and a list read before the coin came still
+ * holds no payment to the wallet. The strip would then say "first: get
+ * practice coins" over the very coins. So such a need is said only where
+ * the list is kept read. Elsewhere the strip names the part.
  */
 export function stripView(view: StepView, live: StripLive = EVERYTHING): StripView {
   const parts = partCount(view.id);
@@ -71,8 +97,9 @@ export function stripView(view: StepView, live: StripLive = EVERYTHING): StripVi
   if (view.at === null) return { step: view.id, part: null, parts, says: { kind: 'part' } };
   const open = view.parts[view.at - 1];
   let says: StripSays = { kind: 'part' };
-  if (open?.state === 'blocked') says = { kind: 'need', reason: open.reason };
-  else if (open?.state === 'unknown') {
+  if (open?.state === 'blocked') {
+    if (live.list || !readOffList(view.id, view.at, open.reason)) says = { kind: 'need', reason: open.reason };
+  } else if (open?.state === 'unknown') {
     // The list of transactions is read on the screens that show it and on a step's own, and
     // the strip stands on all the others. Where the list is not there, or is older than the
     // payment the step waits for, the strip knows only which part is next, and says that.
@@ -92,6 +119,21 @@ export function stripView(view: StepView, live: StripLive = EVERYTHING): StripVi
 /** False for a strip that has neither a part to name nor a done step to report: it is not drawn. */
 export function stripShows(strip: StripView): boolean {
   return strip.part !== null || strip.says.kind === 'done';
+}
+
+/**
+ * Whether the strip carries the link back to the chapter beside "Back to
+ * the step". It does once the step is done, for every reader. And it does
+ * all along for a step that came from a chapter: the reader pressed its
+ * card there, or a need of another step sent them here on a road that
+ * began at a card. That reader is on the wallet's own screens to do one
+ * thing a chapter asked for, and the way back to the chapter must be in
+ * view there, not two presses away. A reader who opened the step from the
+ * wallet's own list did not come from a chapter: for them the strip of a
+ * step under way has the one link.
+ */
+export function stripOffersChapter(progress: Progress, step: StepId): boolean {
+  return progress.steps[step]?.doneAt !== undefined || cameFromChapter(progress, step);
 }
 
 /**

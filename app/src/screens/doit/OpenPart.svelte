@@ -19,6 +19,17 @@
   // The link into the wallet tells the steps that it was used: the step is
   // then the one being followed, and what the reader does on the wallet's
   // screen counts for it.
+  //
+  // A link to another step (a need that another step meets, and the step
+  // where a paper copy is made) tells the steps too, by its press: for a
+  // reader who came from a chapter, the step they are sent to then leads
+  // them back to this one, and to their chapter (doit.detour). The link's
+  // address is the other step's screen and nothing more. No step is named
+  // in a query string: after the faucet's bot check every move loads a
+  // page, and what stands in an address then reaches the server. So the
+  // press is all that can tell, and it tells however the link is used:
+  // also by the middle button and from the browser's own menu, which open
+  // the other step in a new tab (tells, below).
 
   import Button from '../../components/Button.svelte';
   import Checkbox from '../../components/Checkbox.svelte';
@@ -102,6 +113,31 @@
     return to.part === 'faucet' ? faucetLink(address) : address;
   }
 
+  /**
+   * What a link to another step is handed, so that the steps are told
+   * however the reader uses it:
+   *
+   *   onclick        a tap or a click, the keyboard, and a click with a key
+   *                  held down for a new tab
+   *   onauxclick     the middle button, which opens the link in a new tab
+   *   oncontextmenu  the browser's own menu on the link (a right click, or
+   *                  a long press on a phone whose browser tells the page
+   *                  of it), which offers a new tab as well
+   *
+   * The tab that opens the other step, whichever it is, then finds the
+   * step the reader came for in the note. Nothing here stops what the
+   * browser does with the press. And telling the steps does no harm when
+   * the reader then does not follow the link: it starts no step, follows
+   * none, and puts nothing into an address. (A browser that opens a link in
+   * a new tab without telling the page of any of the three leaves the note
+   * as it is: the new tab then shows the other step as it is for a reader
+   * who opened it from the list.)
+   */
+  function tells(to: StepId): { onclick: () => void; onauxclick: () => void; oncontextmenu: () => void } {
+    const told = (): void => doit.detour(to, id);
+    return { onclick: told, onauxclick: told, oncontextmenu: told };
+  }
+
   /** "Send another": the payment the step waited for is cleared from its note. */
   function sendAnother(): void {
     doit.sendAnother(id);
@@ -154,13 +190,16 @@
       {#if need.link !== null}
         <div>
           {#if need.link.kind === 'step'}
+            {@const to = need.link.step}
+            <!-- The press is remembered for a reader who came from a chapter: the step it leads to then leads back here. -->
             <Button
               variant="primary"
               class="w-full sm:w-auto"
               data-testid="step-need-link"
-              href={router.link({ name: 'step', id: need.link.step })}
+              href={router.link({ name: 'step', id: to })}
+              {...tells(to)}
             >
-              {fill(t.actStep, { step: t[stepDef(need.link.step).title] })}
+              {fill(t.actStep, { step: t[stepDef(to).title] })}
             </Button>
           {:else}
             <Button
@@ -235,8 +274,9 @@
         <p class="text-pretty text-sm leading-relaxed text-ink-600" data-testid="step-paper">
           {fillFrom(t[paper.text], { step: t[stepDef('the-seed').title] })}
           {#if paper.link.kind === 'step'}
-            <TextLink href={router.link({ name: 'step', id: paper.link.step })} data-testid="step-paper-link">
-              {fill(t.actStep, { step: t[stepDef(paper.link.step).title] })}
+            {@const to = paper.link.step}
+            <TextLink href={router.link({ name: 'step', id: to })} data-testid="step-paper-link" {...tells(to)}>
+              {fill(t.actStep, { step: t[stepDef(to).title] })}
             </TextLink>
           {:else}
             <TextLink href={hrefOf(paper.link.action)} data-testid="step-paper-link" onclick={() => doit.follow(id)}>

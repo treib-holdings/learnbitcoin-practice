@@ -14,7 +14,10 @@
   //           under the words, what this browser now keeps and who can
   //           look and spend. Then the sheet to write the words on, and
   //           "I have written them down", which ends the step; so does
-  //           leaving it any other way.
+  //           leaving it any other way. The button leads to the wallet's
+  //           overview, or, for a reader who is following a "Do it" step,
+  //           straight back to that step: they made the wallet because the
+  //           step asked for one (keys/backup-flow.ts, afterWritten).
   //   ask     At any other time: why this page is the one exception to
   //           chapter 4's rule, what to know before the words are on
   //           screen, and "Show the 12 words".
@@ -54,16 +57,20 @@
   import WordsList from '../components/wallet/WordsList.svelte';
   import { SAFARI_KEEPS_DAYS } from '../components/wallet/frame.ts';
   import type { Unlocked } from '../components/wallet/unlock-flow.ts';
+  import { useDoit } from '../lib/doit/doit-context.ts';
+  import { stripStep } from '../lib/doit/progress.ts';
   import { fill } from '../lib/format.ts';
   import { focusHeading, navigate, router } from '../lib/router.svelte.ts';
   import { useWallet } from '../lib/wallet-context.ts';
   import { strings } from '../strings/index.ts';
   import PracticeCard from './keys/PracticeCard.svelte';
-  import { afterUnlock, backupView, chapterUrl, mustDropWords, showPlan, takenByAnotherTab } from './keys/backup-flow.ts';
+  import { afterUnlock, afterWritten, backupView, chapterUrl, mustDropWords, showPlan, takenByAnotherTab } from './keys/backup-flow.ts';
   import { siteHost } from './keys/card-form.ts';
   import { isRepeatTap } from './keys/taps.ts';
 
   const wallet = useWallet();
+  /** The "Do it" steps: only to know, at the press of "I have written them down", whether the reader follows one. */
+  const doit = useDoit();
 
   /** For the ids that tie a warning to the button it is about. */
   const id = $props.id();
@@ -232,11 +239,14 @@
     focusHeading();
   }
 
-  /** "I have written them down": the "Wallet made" step is over, and the wallet's overview is next. */
+  /**
+   * "I have written them down": the "Wallet made" step is over. Next is the "Do it" step the reader is
+   * following, if they follow one at this moment, and the wallet's overview if they follow none.
+   */
   function written(): void {
     drop();
     wallet.ackCreated();
-    navigate(router.link({ name: 'wallet' }));
+    navigate(router.link(afterWritten(stripStep(doit.progress, Date.now()))));
   }
 
   // Leaving the screen any other way ends the "Wallet made" step too, and

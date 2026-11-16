@@ -1,7 +1,8 @@
 // What the Backup screen decides (src/screens/keys/backup-flow.ts): which
 // step shows, what "Show the 12 words" leads to, what follows each way an
 // unlock can end, when words on screen must leave it and whether the screen
-// then says why, and the address of chapter 4.
+// then says why, where "I have written them down" leads, and the address of
+// chapter 4.
 //
 // These are tests of the plain helpers. They say nothing about whether
 // Backup.svelte calls them as it should: that is what the browser scenarios
@@ -9,12 +10,14 @@
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { LANGS } from '@learnbitcoin/practice-contract';
+import { LANGS, STEPS } from '@learnbitcoin/practice-contract';
 import type { Unlocked } from '../src/components/wallet/unlock-flow.ts';
 import { DEFAULT_CONFIG } from '../src/lib/config.ts';
+import { pathFor } from '../src/lib/router.ts';
 import {
   CHAPTER_PATH,
   afterUnlock,
+  afterWritten,
   backupView,
   chapterUrl,
   mustDropWords,
@@ -256,6 +259,21 @@ test('the helpers together, "Wallet made" without a passkey: the words at once, 
   s.written();
   s.show();
   assert.equal(s.view(), 'shown');
+});
+
+// -- where "I have written them down" leads ---------------------------------------------------
+
+test('afterWritten: back to the followed step, or to the overview', () => {
+  // No step is followed: the wallet's overview, as it always was.
+  assert.deepEqual(afterWritten(null), { name: 'wallet' });
+  assert.equal(pathFor(afterWritten(null), 'en'), '/wallet');
+  assert.equal(pathFor(afterWritten(null), 'es'), '/es/wallet');
+  // A step is followed: that step's own screen, in the language of the page, with nothing else in the address.
+  for (const id of STEPS) {
+    assert.deepEqual(afterWritten(id), { name: 'step', id });
+    assert.equal(pathFor(afterWritten(id), 'en'), `/do/${id}`);
+    assert.equal(pathFor(afterWritten(id), 'es'), `/es/do/${id}`);
+  }
 });
 
 // -- the address of chapter 4 ----------------------------------------------------------------

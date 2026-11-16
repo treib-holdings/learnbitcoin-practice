@@ -89,13 +89,15 @@ fails on any console error, any violation of the page's security policy and
 any request to another host. `--wallet` chooses what the browser holds:
 `none`, `empty`, `funded` or `passkey`.
 
-`pnpm e2e` runs 223 scenarios in about three minutes. Each gets a
+`pnpm e2e` runs 230 scenarios in about three minutes. Each gets a
 world of its own: the built app, the Worker's handler, a stand-in network,
 and pages in Chrome. Most files hold the scenarios of one screen. The files
 named `doit-*` hold the "Do it" steps: one file for each step, and one each
 for the note of progress, the strip, the reading of a transaction, the
-edges, and the link back to the chapter, which is followed to a stand-in
-for the main site. The files
+edges, the hand-over between a chapter and the wallet (a reader who came
+from a chapter's card finds the way back to it from every screen), and the
+link back to the chapter, which is followed to a stand-in for the main
+site. The files
 named `journey-*` cross the screens: a wallet made with a passkey from Home
 to its last payment, the faucet and its bot check, a wallet without a
 passkey in Spanish on a phone, restore in a second browser, a stored record
@@ -278,13 +280,19 @@ app's About screen, and comes to this:
   code runs in the page, so it could also read the stored record: the
   wallet's public key, and with it every address of the wallet. It could
   read the note of the "Do it" steps too.
-- "Back to the chapter" on a step, and a chapter's name on the list of
-  steps, lead to the main site in the same tab. They send no referrer: the
-  app's pages are served with `Referrer-Policy: no-referrer`, and no link is
-  an exception to it. The address of "Back to the chapter" names the step
-  and says whether it is done (`#do-<step>` or `#done=<step>`), and the page
-  it leads to is one of the two pages of the step's own chapter, English or
-  Spanish. Nothing about the wallet is in it.
+- "Back to the chapter", on a step's screen and on the strip, and a
+  chapter's name on the list of steps, lead to the main site in the same
+  tab. They send no referrer: the app's pages are served with
+  `Referrer-Policy: no-referrer`, and no link is an exception to it. The
+  address of "Back to the chapter" names one step and says whether it is
+  done: `#do-<step>` until it is, and from then on `#done=<step>` followed
+  by the other done steps of the same chapter (`#done=<step>,<step>`; never
+  more than six steps or 200 characters). The step is the one the link is
+  shown for, or the step that the note holds as the one the reader came for
+  (`cameFor` in `app/src/lib/doit/progress.ts`). The page is one of the two
+  pages of the named step's chapter, English or Spanish. Nothing about the
+  wallet is in it. What follows `#` is not sent with the request for the
+  page; scripts of the main site's page can read it.
 
 ## Known limits
 

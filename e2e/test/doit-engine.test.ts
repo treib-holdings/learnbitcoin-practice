@@ -320,7 +320,7 @@ test('the six steps, from a browser that holds nothing to all six done, on the r
     });
     // No wallet: the first part is the one to do, and it can be done now.
     assert.deepEqual(doit.view('hold-some'), { id: 'hold-some', state: 'started', parts: [now(), LATER, LATER, LATER], at: 1 });
-    assert.equal(chapterLink(SITE, 'hold-some', 'en', doit.world().note.steps['hold-some']), `${SITE}/journey/what-bitcoin-actually-is#do-hold-some`);
+    assert.equal(chapterLink(SITE, 'hold-some', 'en', doit.world().note), `${SITE}/journey/what-bitcoin-actually-is#do-hold-some`);
 
     // The reader makes a wallet, with a passkey. The engine publishes it, and the part ticks in the same task.
     doit.go({ name: 'new' });
@@ -390,8 +390,9 @@ test('the six steps, from a browser that holds nothing to all six done, on the r
     assert.equal(answerBlock(doit.world(), String(coinHeight)), 'not-now', 'a done step asks nothing');
     const done = readProgress(page.storage as Storage).progress;
     assert.deepEqual(done.steps['hold-some'], { started: true, doneAt: s.clock.ms, from: '/journey/what-bitcoin-actually-is', parts: { 1: true, 2: true, 3: true, 4: true } });
-    // Done: the way back now carries the mark the chapter stamps on. The step is followed until the reader has seen that.
-    assert.equal(chapterLink(SITE, 'hold-some', 'en', done.steps['hold-some']), `${SITE}/journey/what-bitcoin-actually-is#done=hold-some`);
+    // Done: the way back now ends in what the chapter marks its card on. It names this step, and would name the
+    // other done steps of chapter 2 after it: there are none. The step is followed until the reader has seen that.
+    assert.equal(chapterLink(SITE, 'hold-some', 'en', done), `${SITE}/journey/what-bitcoin-actually-is#done=hold-some`);
     assert.deepEqual([done.following, stripStep(done, s.clock.ms)], ['hold-some', 'hold-some']);
     doit.go(holdSome);
     assert.equal(readProgress(page.storage as Storage).progress.following, null, 'seen on its own screen: let go');
@@ -404,8 +405,8 @@ test('the six steps, from a browser that holds nothing to all six done, on the r
     // A confirmed coin is here, so the first part ticks as the step opens.
     assert.deepEqual(doit.view('pass-it-on'), { id: 'pass-it-on', state: 'started', parts: [TICKED, now(), LATER], at: 2 });
     // Opened with no "?from=": the way back is the step's own chapter, in the page's language.
-    assert.equal(chapterLink(SITE, 'pass-it-on', 'en', doit.world().note.steps['pass-it-on']), `${SITE}/journey/how-bitcoin-works#do-pass-it-on`);
-    assert.equal(chapterLink(SITE, 'pass-it-on', 'es', doit.world().note.steps['pass-it-on']), `${SITE}/es/recorrido/como-funciona-bitcoin#do-pass-it-on`);
+    assert.equal(chapterLink(SITE, 'pass-it-on', 'en', doit.world().note), `${SITE}/journey/how-bitcoin-works#do-pass-it-on`);
+    assert.equal(chapterLink(SITE, 'pass-it-on', 'es', doit.world().note), `${SITE}/es/recorrido/como-funciona-bitcoin#do-pass-it-on`);
 
     /** Plans, signs and sends a payment from the Send screen, as the reader would. */
     const pay = async (request: PaymentRequest): Promise<string> => {

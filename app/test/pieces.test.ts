@@ -169,6 +169,11 @@ test('a link that leaves the site: the hidden words keep their space, and the ar
   // Svelte drops white space at the start of an element. Written as plain text, the space before
   // "(opens in a new tab)" was lost, and a screen reader ran the two together.
   assert.match(link, /<span class="sr-only">\{' '\}\{t\.opensNewTab\}<\/span>/);
+  // A link whose own words say that it opens a new tab leaves the hidden words out: said twice otherwise.
+  // Every other link keeps them (the default is to say it).
+  assert.match(link, /\{#if !saysNewTab\}<span class="sr-only">\{' '\}\{t\.opensNewTab\}<\/span>\{\/if\}<\/a/);
+  assert.match(link, /saysNewTab = false,/);
+  assert.equal(link.match(/t\.opensNewTab/g)?.length, 1);
   // With `text`: everything up to the last word, then the last word and the arrow as one piece that
   // does not break. So a line ends before that word or after the arrow, never between the two.
   assert.match(link, /let cut = \$derived\(text === undefined \? 0 : text\.lastIndexOf\(' '\) \+ 1\);/);
@@ -191,6 +196,30 @@ test('a link that leaves the site: the hidden words keep their space, and the ar
   const withoutText = uses.filter(({ tag }) => !/\btext=\{/.test(tag));
   assert.deepEqual(withoutText.map(({ name }) => name), ['screens/About.svelte']);
   assert.match(withoutText[0]!.tag, /href=\{wallet\.config\.explorerUrl\} class="break-all"/);
+});
+
+test('the footer\'s link to the main site says what it is, a new tab, and does not read as the way back to a chapter', () => {
+  const { en, es } = strings.common;
+  assert.equal(en.linkSite, 'LearnBitcoin.com, in a new tab');
+  assert.equal(es.linkSite, 'LearnBitcoin.com, en otra pestaña');
+  // No "Back": a reader who came from a chapter to do a step would take it for the way back, and it opens
+  // the main site's home page in a second tab. The way back is "Back to the chapter", on the step and the strip.
+  for (const text of [en.linkSite, es.linkSite]) assert.doesNotMatch(text, /\bback\b|\bvolver\b|\bregresar\b|\breturn\b/i, text);
+  assert.match(en.linkSite, /\bin a new tab$/);
+  assert.match(es.linkSite, /\ben otra pestaña$/);
+  // The same words the hidden line uses for every other link that leaves the site.
+  assert.match(en.opensNewTab, /\bin a new tab\b/);
+  assert.match(es.opensNewTab, /\ben otra pestaña\b/);
+  // So this one link says it once: its words name the tab, and the hidden words are left out for it.
+  const footer = code('components/Footer.svelte');
+  assert.match(footer, /<li><OutLink quiet saysNewTab href=\{siteHome\(wallet\.config\.siteUrl, router\.lang\)\} text=\{t\.linkSite\} data-testid="footer-site" \/><\/li>/);
+  // And it alone: every other link that leaves the site is still said to open a new tab.
+  const uses = [...svelteFiles('components'), ...svelteFiles('screens')].flatMap(({ name, text }) =>
+    (text.match(/<OutLink\b[^>]*>/g) ?? []).filter((tag) => /\bsaysNewTab\b/.test(tag)).map(() => name),
+  );
+  assert.deepEqual(uses, ['components/Footer.svelte']);
+  // It still leaves the site as every such link does: a tab of its own, no referrer, no handle on this tab.
+  assert.match(code('components/OutLink.svelte'), /<a \{\.\.\.rest\} \{href\} \{\.\.\.OUTSIDE\}/);
 });
 
 // -- boxes, cards and values --------------------------------------------------------

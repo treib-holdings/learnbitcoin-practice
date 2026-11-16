@@ -13,15 +13,29 @@
   // says "1 confirmation." through the status region when the wallet
   // announces it, and the status region is not drawn: what it says has to
   // show here as well.) Nothing is asked once the payment is confirmed.
+  //
+  // A reader who is following a "Do it" step whose part this payment was
+  // (the step has a part that sends a payment, and that part is ticked) is
+  // offered the way back to the step, by its name, under the sentences on
+  // what happens next: the step sent them here to pay, and its next part
+  // is read on the step's own screen. While that button shows it is the
+  // screen's main one, and "See this transaction" is drawn as a second
+  // button. The button follows the note: the tick is written a moment
+  // after this view opens, and the button comes with it. For a reader who
+  // follows no step, or a step that takes no payment, the view is as it
+  // is without the steps.
 
   import { onDestroy, untrack } from 'svelte';
   import Actions from '../../components/Actions.svelte';
   import Amount from '../../components/Amount.svelte';
   import Button from '../../components/Button.svelte';
+  import BackToStep from '../../components/doit/BackToStep.svelte';
   import Mono from '../../components/Mono.svelte';
   import Prose from '../../components/Prose.svelte';
   import Row from '../../components/Row.svelte';
   import Rows from '../../components/Rows.svelte';
+  import { useDoit } from '../../lib/doit/doit-context.ts';
+  import { paidStep } from '../../lib/doit/progress.ts';
   import { fill, formatSats } from '../../lib/format.ts';
   import { router } from '../../lib/router.svelte.ts';
   import { useWallet } from '../../lib/wallet-context.ts';
@@ -42,9 +56,16 @@
   let { txid, facts, pot, blockSeconds, onanother }: Props = $props();
 
   const wallet = useWallet();
+  const doit = useDoit();
 
   let t = $derived(strings.send[router.lang]);
   let w = $derived(strings.wallet[router.lang]);
+
+  /**
+   * The followed "Do it" step that a payment is a part of, once that part is ticked, or null. Worked out again
+   * whenever the note changes; no clock is kept for it.
+   */
+  let step = $derived(paidStep(doit.progress, Date.now()));
 
   // -- following the payment ----------------------------------------------------------
 
@@ -103,6 +124,11 @@
     {#if pot}<p data-testid="sent-pot">{t.sentPot}</p>{/if}
   </Prose>
 
+  {#if step !== null}
+    <!-- The payment was the followed step's part: the way back to the step, before the figures. -->
+    <div><BackToStep {step} data-testid="sent-step" /></div>
+  {/if}
+
   <Rows>
     {#if facts !== null}
       <Row name={t.planTo} data-testid="sent-to"><Mono value={facts.to} /></Row>
@@ -114,7 +140,8 @@
   </Rows>
 
   <Actions>
-    <Button variant="primary" class={WIDE} href={router.link({ name: 'tx', txid })} data-testid="sent-link">{t.sentLink}</Button>
+    <!-- The screen's main button, unless the way back to a followed step stands above: a screen has one main button. -->
+    <Button variant={step === null ? 'primary' : 'secondary'} class={WIDE} href={router.link({ name: 'tx', txid })} data-testid="sent-link">{t.sentLink}</Button>
     <Button class={WIDE} data-testid="send-another" onclick={onanother}>{t.sentAnother}</Button>
   </Actions>
 </div>

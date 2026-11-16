@@ -4,11 +4,13 @@
 // The note says which steps the reader has started and finished, which
 // parts of each are ticked, and which step they are following. It holds
 // public things only: ticks, times, which of a chapter's two pages the
-// reader came from, a wallet fingerprint, a transaction ID. Never one of the
-// 12 words, never a key, never an answer the reader typed. And no free
-// text: every field is a tick, a time, one of a few fixed values, or hex
-// characters of a fixed length (8 for a wallet fingerprint, 64 for a
-// transaction ID).
+// reader came from, the step a reader from a chapter came for when that
+// step sent them to another one first, a wallet fingerprint, a transaction
+// ID. Never one of the 12 words, never a key, never an answer the reader
+// typed. And no free text: every field is a tick, a time, one of a few
+// fixed values (one of a chapter's two pages, one of the six steps, one of
+// the two ways a wallet is kept), or hex characters of a fixed length (8
+// for a wallet fingerprint, 64 for a transaction ID).
 //
 // The rules this file keeps:
 //
@@ -38,7 +40,23 @@
 //   - Removing the wallet does not touch the note. The last step depends on
 //     that: it removes the wallet and has to know afterwards which one.
 //
-// Any change to the note's shape raises `v`.
+// `v` is raised by a change to the note's shape that a page of an earlier
+// version would read wrongly. A field may be added without raising it only
+// when all four of these hold: a page of the earlier version drops the
+// field when it reads the note; that page takes the field out of the
+// stored text at its next write; it reads nothing else of the note
+// wrongly; and the field holds one of a few fixed values, never text of
+// anybody's choosing. `cameFor` (StepNote) was added that way, and `v`
+// stayed 1. A 2 would have switched the steps off in every browser that
+// met a page of the earlier version afterwards (a tab still open from
+// before, or the earlier version put back): that page reads a higher
+// number as "newer", writes nothing, and leaves no way out but clearing
+// the site's data, which also removes a wallet kept with its words. What
+// staying at 1 costs is in that same earlier page, and it is two things.
+// The page drops the field at its next write of any kind, so the reader
+// then meets that page's own screens and links. And until that write the
+// stored text holds a field that the earlier page's About does not list:
+// one of the six step IDs, which no screen of that page shows.
 //
 // Nothing here touches the page: the Storage is handed in, so node --test
 // runs every rule on a Map. This file and the wallet's key store are the
@@ -65,6 +83,20 @@ export interface StepNote {
    * The latest valid one.
    */
   from?: string;
+  /**
+   * The step the reader came for: the step whose need sent them to this
+   * one ("Pass it on" needs coins, and sends a reader who has none to "Hold
+   * some"). One of the six step IDs, never this step's own, and nothing
+   * else. This step leads back to it when it is done, and until then its
+   * "Back to the chapter" leads to the chapter the reader left (ledBackTo,
+   * roadStart). It is written only for a reader who came from a chapter
+   * (the change "detour"), and it counts only while the step it names is
+   * not done: the write that finishes that step takes it out. A later road
+   * to this step takes it out as well: the step's own card (the change
+   * "open"), and a need of a step that did not come from a chapter (the
+   * change "detour").
+   */
+  cameFor?: StepId;
   /** A wallet fingerprint: the wallet whose words were checked (the-seed), or the one to remove and restore (prove-the-backup). */
   wallet?: string;
   /** How this browser kept that wallet when the drill began: with a passkey, or with its words. */
@@ -165,6 +197,9 @@ function soundNote(id: StepId, value: unknown): StepNote | null {
   // and the next write of any kind takes it out of the stored text (writeProgress).
   const from = has('from') ? validFrom(id, fields.from) : null;
   if (from !== null) note.from = from;
+  // The step the reader came for: one of the six, and never this step itself. Whether it still counts is
+  // for soundProgress to say, which has all six notes: it goes once the step it names is done.
+  if (has('cameFor') && isStepId(fields.cameFor) && fields.cameFor !== id) note.cameFor = fields.cameFor;
   if (has('wallet') && typeof fields.wallet === 'string' && FINGERPRINT.test(fields.wallet)) note.wallet = fields.wallet;
   if (has('was') && (fields.was === 'passkey' || fields.was === 'words')) note.was = fields.was;
   if (has('tx') && typeof fields.tx === 'string' && TXID_PATTERN.test(fields.tx)) note.tx = fields.tx;
@@ -189,6 +224,11 @@ function soundNote(id: StepId, value: unknown): StepNote | null {
  * A note with only what a note may hold: the six steps, the listed fields,
  * each under its check, as a fresh object in one fixed order. `value` must
  * be an object; what in it fails a check is left out by itself.
+ *
+ * One check needs all six notes, and is made last: a step's `cameFor`
+ * counts only while the step it names is not done. Every read and every
+ * write ends here, so the write that finishes a step is also the write
+ * that takes that step's name out of every other step's note.
  */
 function soundProgress(value: object): Progress {
   const has = (field: string): boolean => Object.hasOwn(value, field);
@@ -204,6 +244,14 @@ function soundProgress(value: object): Progress {
       const note = soundNote(id, (steps as Record<string, unknown>)[id]);
       if (note !== null) progress.steps[id] = note;
     }
+  }
+  // The step a reader came for is remembered until that step is done, and no longer.
+  for (const id of STEPS) {
+    const note = progress.steps[id];
+    if (note?.cameFor === undefined || progress.steps[note.cameFor]?.doneAt === undefined) continue;
+    delete note.cameFor;
+    // A note that held nothing else (the step itself was never opened) is not there any more.
+    if (Object.keys(note).length === 0) delete progress.steps[id];
   }
   return progress;
 }
@@ -279,9 +327,28 @@ export type Change =
    * way back if it is a valid one (one of the two pages of the step's own
    * chapter: validFrom), and the step is the one followed, unless it is
    * done: a done step that was still followed is let go instead (the
-   * reader has now seen that it is done).
+   * reader has now seen that it is done). An opening with a valid `from`
+   * is an arrival by the step's own card in its chapter: the step the
+   * reader came for on an earlier road (`cameFor`) is deleted from this
+   * step's note, because the card is the later road. An opening without
+   * one leaves it alone.
    */
   | { kind: 'open'; step: StepId; at: number; from: string | null }
+  /**
+   * The reader pressed the link of a need that leads to another step:
+   * `step` is the step the link leads to, `cameFor` the step whose need it
+   * is. It is remembered only for a reader who came from a chapter: when
+   * `cameFor` is one of the six and not `step`, is started and not done,
+   * and was itself reached by its card or by a need. Then `cameFor` is
+   * written into the note of `step`, and nothing else is: `step` is not
+   * started by it and not followed, and no time is noted. A later press
+   * takes the place of an earlier one. That holds for a later press that
+   * is not remembered, too: when `cameFor` is started and not done and did
+   * not come from a chapter, what the note of `step` holds of another step
+   * the reader came for on an earlier road is deleted, so that `step` does
+   * not lead the reader back to a step they are not on the way from.
+   */
+  | { kind: 'detour'; step: StepId; cameFor: StepId }
   /** The step's tab came back into view, or its action link was used: it is the one followed, unless it is done or was never started. */
   | { kind: 'follow'; step: StepId; at: number }
   /** "Stop following", the strip closed, or a done step seen on its own screen: nothing is followed. Only if `step` is the one followed. */
@@ -353,7 +420,12 @@ export function applyChange(progress: Progress, change: Change): Progress {
       opened.started = true;
       // The latest valid way back: one of this step's two chapter pages. An opening without one leaves the earlier one alone.
       const from = validFrom(id, change.from);
-      if (from !== null) opened.from = from;
+      if (from !== null) {
+        opened.from = from;
+        // The reader pressed this step's own card: that is the road they are on now, and it leads back to
+        // this step's chapter. What an earlier road noted of the step they came for goes.
+        delete opened.cameFor;
+      }
       next.steps[id] = opened;
       if (opened.doneAt === undefined) {
         next.following = id;
@@ -361,6 +433,25 @@ export function applyChange(progress: Progress, change: Change): Progress {
       } else if (next.following === id) {
         next.following = null;
         delete next.followedAt;
+      }
+      break;
+    }
+
+    case 'detour': {
+      const sender = change.cameFor;
+      // Only a step that is under way sends a reader anywhere, and only a reader who came from a chapter is
+      // remembered: one who opened the step from the wallet's own list meets the screens as they are without this.
+      if (!isStepId(sender) || sender === id) break;
+      const sent = next.steps[sender];
+      if (sent?.started !== true || sent.doneAt !== undefined) break;
+      if (cameFromChapter(next, sender)) {
+        // The one field, in a note that is made for it if the step has none: the step is not started by this.
+        next.steps[id] = { ...note, cameFor: sender };
+      } else if (note?.cameFor !== undefined && note.cameFor !== sender) {
+        // This press is not remembered, and it is the reader's later road all the same. What an earlier road left
+        // here names another step: left standing, it would lead the reader back to that step, and to its chapter,
+        // from a trip they began somewhere else. (A note that held nothing else is taken out by soundProgress.)
+        delete note.cameFor;
       }
       break;
     }
@@ -424,9 +515,11 @@ export function applyChange(progress: Progress, change: Change): Progress {
 
     case 'restart': {
       if (!open || note === undefined || !isTime(change.at)) break;
-      // The reader is on the step's screen, so it starts again at once: started, followed, the same way back.
+      // The reader is on the step's screen, so it starts again at once: started, followed, the same way back,
+      // and the same step to lead back to if a need sent the reader here.
       const again: StepNote = { started: true };
       if (note.from !== undefined) again.from = note.from;
+      if (note.cameFor !== undefined) again.cameFor = note.cameFor;
       next.steps[id] = again;
       next.following = id;
       next.followedAt = change.at;
@@ -532,33 +625,149 @@ function onSite(siteUrl: string, address: string): string | null {
   }
 }
 
+// How a reader came to a step. There are three ways, and the note says which:
+//
+//   by card    the reader pressed the step's card in its chapter: the note
+//              of the step holds a way back that counts (`from`). The note
+//              keeps the latest one for good, so this is a fact about the
+//              browser, not about one visit.
+//   by a need  a need of another step sent the reader here: the note of the
+//              step holds a `cameFor` that counts. That trip is the detour,
+//              and it lasts for as long as the `cameFor` counts.
+//   from the   neither: the reader opened the step from the wallet's own
+//   list       list of steps, by a bookmark, or by "Next step".
+//
+// The first two together are "from a chapter". A step can have been
+// reached by card once and by a need later, and then hold both fields: the
+// detour is the later road (an arrival by the card deletes the `cameFor`),
+// so where the two differ the detour decides.
+
+/** True when the reader came to this step by its own card in its chapter: its note holds a way back that counts. */
+export function cameByCard(progress: Progress, id: StepId): boolean {
+  return validFrom(id, progress.steps[id]?.from) !== null;
+}
+
 /**
- * The link back to the main site for a step: "Back to the chapter".
+ * The step this step leads back to, or null: the step whose need sent the
+ * reader here, while that counts. The three checks of the note are made
+ * once more, so a note handed in from anywhere cannot choose the step: it
+ * is one of the six, it is not this step itself, and it is not done.
+ */
+export function ledBackTo(progress: Progress, id: StepId): StepId | null {
+  const to = progress.steps[id]?.cameFor;
+  return isStepId(to) && to !== id && progress.steps[to]?.doneAt === undefined ? to : null;
+}
+
+/** True when the reader came to this step from a chapter: by its own card, or sent by a need of another step. */
+export function cameFromChapter(progress: Progress, id: StepId): boolean {
+  return cameByCard(progress, id) || ledBackTo(progress, id) !== null;
+}
+
+/**
+ * The step at the start of the road that led to this one: the step itself
+ * when no need sent the reader here, else the step that sent them, or the
+ * one that sent them to that one, and so on. On a road this page wrote it
+ * is the step whose card the reader pressed. No step is passed twice, so a
+ * ring of steps that name each other (a note changed by hand) ends: the
+ * answer is then the last step before the ring would close.
+ */
+export function roadStart(progress: Progress, id: StepId): StepId {
+  const passed: StepId[] = [id];
+  let at = id;
+  for (;;) {
+    const to = ledBackTo(progress, at);
+    if (to === null || passed.includes(to)) return at;
+    passed.push(to);
+    at = to;
+  }
+}
+
+/** The most steps a done ending names: the main site reads no more than that in one ending. */
+export const DONE_MOST = 6;
+
+/** The most characters a done ending has, "#done=" and the commas included: the main site reads no longer one. */
+export const DONE_LONGEST = 200;
+
+/**
+ * The step IDs an ending may name, from a list of them: the first
+ * DONE_MOST at the most, and then as many fewer, from the end, as it takes
+ * for "#done=" and the IDs with their commas to be no longer than
+ * DONE_LONGEST. The first always stays: it is the step being left. Today's
+ * six IDs reach neither limit (three steps to a chapter at the most); the
+ * limits are kept here all the same, so that neither rests on that table.
+ */
+export function endingIds<Id extends string>(ids: readonly Id[]): Id[] {
+  const kept = ids.slice(0, DONE_MOST);
+  while (kept.length > 1 && `#done=${kept.join(',')}`.length > DONE_LONGEST) kept.pop();
+  return kept;
+}
+
+/**
+ * The steps the link back of a done step names: this step first, then
+ * every other step of the same chapter that is done, in the contract's
+ * order, and nothing else. This step comes first because the main site
+ * brings the first card named into view, and marks each card named.
+ */
+export function doneWith(progress: Progress, id: StepId): StepId[] {
+  const chapter = STEP_DEFS[id].chapter.number;
+  const others = STEPS.filter((other) => other !== id && STEP_DEFS[other].chapter.number === chapter && progress.steps[other]?.doneAt !== undefined);
+  return endingIds([id, ...others]);
+}
+
+/**
+ * The link back to the main site for a step: "Back to the chapter". It is
+ * built from the whole note, so that no caller can leave out the other
+ * done steps of the chapter, or the step the reader came for.
  *
- * The page is always the step's own chapter: the one of its two pages the
- * reader came from (the note's `from`), or, with no such note, the one in
- * the language of this page. Until the step is done the address ends
- * "#do-<id>": the chapter scrolls to the step's card and nothing is
- * stamped. Once it is done it ends "#done=<id>", which is what the main
- * site stamps on.
+ * The page is where the reader's road began. For a step that no need sent
+ * the reader to, that is the step's own chapter: the one of its two pages
+ * the reader came from (the note's `from`) or, with no such note, the one
+ * in the language of this page. For a step that a need sent the reader to,
+ * it is the page of the step at the start of that road (roadStart), found
+ * in the same way: the reader pressed a card there, and is led back there,
+ * not to the chapter of the step they were sent to.
  *
- * That is all the address holds: the main site's own address, one of the
- * chapter's two paths, and the mark. The mark names the step and says
- * whether it is done (About says so to the reader). Nothing of the wallet
- * is in it, and the link sends no referrer (ChapterLink.svelte).
+ * The ending says what the main site does on arrival:
+ *
+ *   #do-<step>          the page scrolls to that step's card, and nothing
+ *                       is marked. The step is the one at the start of the
+ *                       road: this step itself, or during a detour the step
+ *                       whose card the reader pressed.
+ *   #done=<step>,...    this step is done, and it is a step of the chapter
+ *                       the link leads to: the page marks the card of each
+ *                       step named, and scrolls to the first. Named are
+ *                       this step, then the other done steps of its
+ *                       chapter (doneWith).
+ *
+ * A step that is done and belongs to another chapter than the one the link
+ * leads to ("Hold some", when a need of a step of chapter 3 or 4 sent the
+ * reader to it) keeps the first ending until the detour is over: that page
+ * holds no card for it, so a done ending would mark nothing there and open
+ * the page at its top.
+ *
+ * That is all the address holds: the main site's own address, one of a
+ * chapter's two paths, and the ending. The ending names one step and says
+ * whether it is done, and once it is done the other done steps of the same
+ * chapter (About says so to the reader). Nothing of the wallet is in it,
+ * and the link sends no referrer (ChapterLink.svelte). What follows "#" is
+ * not part of the request for the page; a script of the main site's page
+ * can read it.
  *
  * `siteUrl` is the main site's address from the settings, with no slash at
- * its end. The way back is checked once more here (validFrom), so a note
- * handed in from anywhere cannot choose the page. The built address is used
- * only if its origin is the main site's: null means that it cannot be built
- * from these settings, so the screen shows no link.
+ * its end. The way back and the step the reader came for are checked once
+ * more here (validFrom, ledBackTo), so a note handed in from anywhere
+ * cannot choose the page or the step. The built address is used only if
+ * its origin is the main site's: null means that it cannot be built from
+ * these settings, so the screen shows no link.
  */
-export function chapterLink(siteUrl: string, id: StepId, lang: Lang, note: StepNote | undefined): string | null {
+export function chapterLink(siteUrl: string, id: StepId, lang: Lang, progress: Progress): string | null {
   const site = siteUrl.replace(/\/+$/, '');
-  const mark = note?.doneAt === undefined ? `#do-${id}` : `#done=${id}`;
-  // One of the chapter's two pages, whatever the note holds: the one the reader came from, or this page's language.
-  const path = validFrom(id, note?.from) ?? STEP_DEFS[id].chapter.path[lang];
-  return onSite(site, `${site}${path}${mark}`);
+  const start = roadStart(progress, id);
+  // One of the two pages of the chapter the road began in, whatever the note holds: the one the reader came from, or this page's language.
+  const path = validFrom(start, progress.steps[start]?.from) ?? STEP_DEFS[start].chapter.path[lang];
+  const marked = progress.steps[id]?.doneAt !== undefined && STEP_DEFS[id].chapter.number === STEP_DEFS[start].chapter.number;
+  const ending = marked ? `#done=${doneWith(progress, id).join(',')}` : `#do-${start}`;
+  return onSite(site, `${site}${path}${ending}`);
 }
 
 // -- what the wallet is told ---------------------------------------------------------
@@ -596,4 +805,20 @@ export function stripStep(progress: Progress, now: number): StepId | null {
   // written by this page, and the strip has nothing true to say of such a step.
   if (progress.steps[following]?.started !== true) return null;
   return now - followedAt < STRIP_MS ? following : null;
+}
+
+/**
+ * The step that the result of a payment leads back to at `now`, or null:
+ * the step the strip shows, if one of its parts is the sending of a payment
+ * and that part is ticked. Send's "Payment sent" offers the way back to it
+ * there, where the reader is looking. It is given for a done step too,
+ * while the strip still shows it: a payment's block can come while the
+ * reader is still on that screen. For a followed step that takes no
+ * payment it is null: a payment is then not that step's part.
+ */
+export function paidStep(progress: Progress, now: number): StepId | null {
+  const step = stripStep(progress, now);
+  if (step === null) return null;
+  const send = sendPart(step);
+  return send !== null && progress.steps[step]?.parts?.[send] === true ? step : null;
 }

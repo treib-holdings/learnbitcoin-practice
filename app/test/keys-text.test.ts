@@ -744,7 +744,18 @@ test('the passkey\'s whole name is built nowhere in these screens: the wallet ha
 
 test('"Wallet made" is acknowledged by its button, and by leaving the screen any other way', () => {
   const backup = source('Backup.svelte');
-  assert.match(backup, /function written\(\): void \{\s*drop\(\);\s*wallet\.ackCreated\(\);\s*navigate\(router\.link\(\{ name: 'wallet' \}\)\);/);
+  // The button drops the words, ends the step, and then moves on: to the "Do it" step the reader is following
+  // at the moment of the press (the step the strip shows), or to the wallet's overview when they follow none.
+  assert.match(
+    backup,
+    /function written\(\): void \{\s*drop\(\);\s*wallet\.ackCreated\(\);\s*navigate\(router\.link\(afterWritten\(stripStep\(doit\.progress, Date\.now\(\)\)\)\)\);\s*\}/,
+  );
+  assert.match(backup, /<Button variant="primary" data-testid="words-written" onclick=\{written\}>\{t\.written\}<\/Button>/);
+  // It is the one place of the screen that moves the reader on, and the one place that asks the steps anything.
+  assert.equal(code(backup).match(/\bnavigate\(/g)?.length, 1);
+  assert.equal(code(backup).match(/\bdoit\./g)?.length, 1);
+  // Its words are as they were.
+  assert.deepEqual([strings.backup.en.written, strings.backup.es.written], ['I have written them down', 'Ya las escribí']);
   assert.match(backup, /onDestroy\(\(\) => \{\s*left = true;\s*drop\(\);\s*if \(wallet\.created !== null\) wallet\.ackCreated\(\);/);
 });
 

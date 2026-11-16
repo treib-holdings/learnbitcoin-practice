@@ -55,6 +55,14 @@ export interface Doit {
 
   /** The step's action link was used: the step is the one followed. Call it from the link's click. */
   follow(step: StepId): void;
+  /**
+   * The link of a need that leads to another step was pressed: `to` is the
+   * step it leads to, `cameFor` the step whose screen it stands on. For a
+   * reader who came from a chapter, the step they are sent to then leads
+   * back to the step they came for, and to their chapter. Call it from the
+   * link's click: the link's address carries nothing of it.
+   */
+  detour(to: StepId, cameFor: StepId): void;
   /** "Stop following", and the strip closed. */
   stop(step: StepId): void;
   /** "Send another": the payment the step waits for is cleared from its note. */

@@ -26,7 +26,7 @@ import { ACCOUNT_PATH, REGTEST } from '@learnbitcoin/practice-wallet';
 import { splitLead } from '../src/components/text.ts';
 import { DEFAULT_CONFIG } from '../src/lib/config.ts';
 import { slotNames } from '../src/lib/format.ts';
-import { PROGRESS_KEY, chapterLink } from '../src/lib/doit/progress.ts';
+import { DONE_LONGEST, DONE_MOST, PROGRESS_KEY, applyChange, chapterLink, emptyProgress, type Progress, type StepNote } from '../src/lib/doit/progress.ts';
 import { CHAPTERS, STEP_DEFS } from '../src/lib/doit/steps.ts';
 import { RECORD_KEY, loadRecord, makeRecord } from '../src/lib/keystore.ts';
 import { TURNSTILE_SCRIPT, faucetWidgetOptions } from '../src/lib/turnstile.ts';
@@ -709,17 +709,29 @@ test("About, \"the faucet's bot check\": Cloudflare's script, loaded from the on
   assert.match(headers, /connect-src 'self';/);
 });
 
-test('About, "what our server sees": a link back to a chapter stays in this tab, sends no referrer, and its address names the step and whether it is done', () => {
+test('About, "what our server sees": a link back to a chapter stays in this tab, sends no referrer, and its address names one step, says whether it is done, and then names the other done steps of that chapter', () => {
   const { en, es } = strings.about;
-  // The sentence, in both languages: where the two kinds of link lead, what the address of one of them says, and what travels with neither.
+  // The sentence, in both languages: where the two kinds of link lead, which step the address of one of them
+  // names and what it says of it, what else it names once that step is done, and what travels with neither.
   assert.equal(
     en.serverBack,
-    '"Back to the chapter", and a chapter\'s name on the Do it screen, lead to LearnBitcoin in this tab. The address of "Back to the chapter" names the step and whether it is done. Nothing about the wallet travels with either.',
+    '"Back to the chapter", and a chapter\'s name on the Do it screen, lead to LearnBitcoin in this tab. The address of "Back to the chapter" names one step and says whether it is done: the step you are on or following, or a step that the note of your progress holds as the one you came for. Once the step it names is done, the address also names the other steps of that chapter that you have done. Nothing about the wallet travels with either.',
   );
   assert.equal(
     es.serverBack,
-    '"Volver al capítulo", y el nombre de un capítulo en la pantalla Hazlo, llevan a LearnBitcoin en esta pestaña. La dirección de "Volver al capítulo" nombra el paso y dice si está terminado. Con ninguno de los dos viaja nada de la billetera.',
+    '"Volver al capítulo", y el nombre de un capítulo en la pantalla Hazlo, llevan a LearnBitcoin en esta pestaña. La dirección de "Volver al capítulo" nombra un paso y dice si está terminado: el paso en el que estás o que estás siguiendo, o un paso que la nota de tu progreso guarda como el paso por el que venías. Cuando el paso que nombra está terminado, la dirección nombra también los otros pasos de ese capítulo que ya terminaste. Con ninguno de los dos viaja nada de la billetera.',
   );
+  // It says what the address names, and promises nothing about who reads it: what follows "#" is not sent
+  // with the request for the page, and a script of the main site's page can read it. So neither this sentence
+  // nor the line about the step a reader came for says that the address or the step's name stays in the
+  // browser, reaches no server, or is seen by nobody.
+  for (const lang of LANGS) {
+    for (const key of ['serverBack', 'keepNoteCameFor', 'keepNoteFrom', 'shortRest'] as const) {
+      const said = strings.about[lang][key];
+      assert.doesNotMatch(said, /stays in (this|your|the) browser|never leaves?|is not sent|reaches no|nobody (sees|reads)|cannot be read/i, `about.${lang}.${key}`);
+      assert.doesNotMatch(said, /se queda en (este|tu|el) navegador|nunca sale|no se envía|no llega a|nadie (ve|lee)|no se puede leer/i, `about.${lang}.${key}`);
+    }
+  }
   // It names the link by the words on the link, and the screen by its own name.
   assert.deepEqual([strings.doit.en.back, strings.doit.es.back], ['Back to the chapter', 'Volver al capítulo']);
   assert.deepEqual([strings.doit.en.name, strings.doit.es.name], ['Do it', 'Hazlo']);
@@ -807,26 +819,103 @@ test('About, "what our server sees": a link back to a chapter stays in this tab,
     assert.doesNotMatch(code(readFileSync(new URL(name, root), 'utf8')), /ChapterLink|\bt\.back\b|doit\[[a-z.]+\]\.back\b/, name);
   }
 
-  // -- The address of "Back to the chapter": the main site, one of the chapter's two pages, and the mark that
-  //    names the step and says whether it is done. Nothing else, whatever the step's note holds. --
+  // -- The address of "Back to the chapter": the main site, one of a chapter's two pages, and the ending that
+  //    names one step, says whether it is done, and once it is done names the other done steps of that chapter.
+  //    Nothing else, whatever the note holds. In each of the five states a step can be in: --
   const SITE = 'https://www.learnbitcoin.com';
   const doneAt = Date.UTC(2026, 10, 15, 12);
+  const pagesOf = (id: (typeof STEPS)[number]): string[] => Object.values(STEP_DEFS[id].chapter.path);
+  const chapterOf = (id: (typeof STEPS)[number]): number => STEP_DEFS[id].chapter.number;
+  /** A link's address in its parts, held to what it may hold: the site, one path, an ending, and nothing else. */
+  const partsOf = (link: string | null, where: string): { page: string; ending: string } => {
+    const address = new URL(link ?? '');
+    assert.deepEqual([address.origin, address.search, address.username, address.password, address.port], [SITE, '', '', '', ''], where);
+    assert.equal(link, `${SITE}${address.pathname}${address.hash}`, `${where}: nothing but the site, the page and the ending`);
+    assert.match(address.hash, /^#do-[a-z-]+$|^#done=[a-z-]+(,[a-z-]+){0,5}$/, where);
+    return { page: address.pathname, ending: address.hash };
+  };
+  /** A note with everything a step's note can hold: a wallet fingerprint, how the wallet was kept, a payment. */
+  const full = (extra: StepNote): StepNote => ({ started: true, wallet: '73c5da0a', was: 'passkey', tx: 'ab'.repeat(32), sentAt: doneAt - 60_000, parts: { 1: true }, ...extra });
+  const alone = (id: (typeof STEPS)[number], step?: StepNote): Progress => ({ v: 1, following: null, steps: step === undefined ? {} : { [id]: step } });
+
   for (const id of STEPS) {
     for (const lang of LANGS) {
       const page = STEP_DEFS[id].chapter.path[lang];
-      assert.equal(chapterLink(SITE, id, lang, undefined), `${SITE}${page}#do-${id}`);
-      assert.equal(chapterLink(SITE, id, lang, { started: true }), `${SITE}${page}#do-${id}`);
-      assert.equal(chapterLink(SITE, id, lang, { started: true, doneAt }), `${SITE}${page}#done=${id}`);
-      // A note with everything a step's note can hold: a wallet fingerprint, how the wallet was kept, a payment.
-      const full = { started: true as const, doneAt, from: STEP_DEFS[id].chapter.path.es, wallet: '73c5da0a', was: 'passkey' as const, tx: 'ab'.repeat(32), sentAt: doneAt - 60_000, parts: { 1: true as const } };
-      const address = new URL(chapterLink(SITE, id, lang, full) ?? '');
-      assert.deepEqual(
-        [address.origin, address.pathname, address.search, address.hash, address.username, address.password],
-        [SITE, STEP_DEFS[id].chapter.path.es, '', `#done=${id}`, '', ''],
-        `${id}, ${lang}`,
-      );
-      assert.doesNotMatch(address.href, /73c5da0a|abab|passkey|[0-9]{6}/, `${id}, ${lang}: nothing about the wallet, and no time, is in the address`);
+      // 1. In no detour, not done: "the step you are on or following", and that it is not done.
+      assert.equal(chapterLink(SITE, id, lang, alone(id)), `${SITE}${page}#do-${id}`);
+      assert.equal(chapterLink(SITE, id, lang, alone(id, { started: true })), `${SITE}${page}#do-${id}`);
+      // 2. In no detour, done: the same step, that it is done, and the other done steps of its chapter (here: none).
+      assert.equal(chapterLink(SITE, id, lang, alone(id, { started: true, doneAt })), `${SITE}${page}#done=${id}`);
+      const whole = partsOf(chapterLink(SITE, id, lang, alone(id, full({ doneAt, from: STEP_DEFS[id].chapter.path.es }))), `${id}, ${lang}`);
+      assert.deepEqual(whole, { page: STEP_DEFS[id].chapter.path.es, ending: `#done=${id}` }, `${id}, ${lang}`);
+      // "The other steps of that chapter that you have done": every step done, in a note that holds all a note can.
+      const all: Progress = { v: 1, following: id, followedAt: doneAt, steps: Object.fromEntries(STEPS.map((each) => [each, full({ doneAt, from: STEP_DEFS[each].chapter.path[lang] })])) };
+      const marked = partsOf(chapterLink(SITE, id, lang, all), `${id}, ${lang}, all done`);
+      const named = marked.ending.slice('#done='.length).split(',');
+      assert.equal(marked.page, page);
+      assert.equal(named[0], id, 'the step the link is shown for comes first');
+      assert.deepEqual([...named].sort(), STEPS.filter((each) => chapterOf(each) === chapterOf(id)).sort(), `${id}: the done steps of its own chapter, and of no other`);
+      assert.ok(named.length <= DONE_MOST && marked.ending.length <= DONE_LONGEST);
+
+      // During a detour: "a step that the note of your progress holds as the one you came for". A need of
+      // `cameFor` sent the reader to this step, and `cameFor` is not done.
+      for (const cameFor of STEPS) {
+        if (cameFor === id) continue;
+        const from = STEP_DEFS[cameFor].chapter.path.es;
+        const where = `${id} from ${cameFor}, ${lang}`;
+        // 3. Not done: the page the reader left, and the card they pressed there. The note of this step is
+        //    what holds that step's name.
+        const under: Progress = { v: 1, following: id, followedAt: doneAt, steps: { [id]: full({ cameFor }), [cameFor]: full({ from }) } };
+        assert.equal(under.steps[id]?.cameFor, cameFor);
+        assert.deepEqual(partsOf(chapterLink(SITE, id, lang, under), where), { page: from, ending: `#do-${cameFor}` }, where);
+        // 4. and 5. Done: marked where the reader's page holds this step's card (the two are steps of one
+        //    chapter), and else the card they pressed, still.
+        const over: Progress = { v: 1, following: null, steps: { [id]: full({ doneAt, cameFor }), [cameFor]: full({ from }) } };
+        const expected = chapterOf(id) === chapterOf(cameFor) ? `#done=${id}` : `#do-${cameFor}`;
+        assert.deepEqual(partsOf(chapterLink(SITE, id, lang, over), where), { page: from, ending: expected }, where);
+      }
     }
+  }
+  // In every one of those addresses: nothing about the wallet, and no time.
+  for (const id of STEPS) {
+    for (const cameFor of STEPS) {
+      const steps: Progress['steps'] = cameFor === id ? { [id]: full({ doneAt }) } : { [id]: full({ doneAt, cameFor }), [cameFor]: full({ from: STEP_DEFS[cameFor].chapter.path.en }) };
+      const link = chapterLink(SITE, id, 'en', { v: 1, following: id, followedAt: doneAt, steps }) ?? '';
+      assert.doesNotMatch(link, /73c5da0a|abab|passkey|[0-9]{6}/, `${id}, ${cameFor}: ${link}`);
+    }
+  }
+  // The note that holds a step as "the one you came for" is written by the press of a need's link, and only for
+  // a reader who came from a chapter: so the step it names is one whose card they pressed, or were led on from.
+  let pressed: Progress = applyChange(emptyProgress(), { kind: 'open', step: 'pass-it-on', at: doneAt, from: '/journey/how-bitcoin-works' });
+  pressed = applyChange(pressed, { kind: 'detour', step: 'hold-some', cameFor: 'pass-it-on' });
+  assert.deepEqual(pressed.steps['hold-some'], { cameFor: 'pass-it-on' });
+  assert.equal(chapterLink(SITE, 'hold-some', 'es', pressed), `${SITE}/journey/how-bitcoin-works#do-pass-it-on`);
+
+  // -- The README says the same of the address, as the code builds it: both forms of the ending, the two
+  //    limits, which step is named, and that a script of the main site's page can read what follows "#". --
+  const readme = source('../README.md').replace(/\s*\n\s*/g, ' ');
+  const bullet = readme.slice(readme.indexOf('- "Back to the chapter", on a step\'s screen and on the strip'), readme.indexOf('## Known limits'));
+  assert.ok(bullet.length > 400, 'the README has the bullet on the link back');
+  assert.match(bullet, /`#do-<step>` until it is, and from then on `#done=<step>` followed by the other done steps of the same chapter \(`#done=<step>,<step>`; never more than six steps or 200 characters\)\./);
+  assert.deepEqual([DONE_MOST, DONE_LONGEST], [6, 200]);
+  assert.match(bullet, /The step is the one the link is shown for, or the step that the note holds as the one the reader came for \(`cameFor` in `app\/src\/lib\/doit\/progress\.ts`\)\./);
+  assert.match(bullet, /What follows `#` is not sent with the request for the page; scripts of the main site's page can read it/);
+  // And there the bullet ends. What the main site's pages do with the ending, and what they say about it, is
+  // the main site's: it changes there, and until the chapters' cards are live no page of it says anything of
+  // an ending. So this file promises nothing about what another site's pages say.
+  assert.match(bullet, /scripts of the main site's page can read it\.\s*$/);
+  assert.doesNotMatch(readme, /main site's own pages say|say what they do with it/);
+  assert.match(bullet, /They send no referrer: the app's pages are served with `Referrer-Policy: no-referrer`, and no link is an exception to it\./);
+  // The two forms are the ones chapterLink() gives: a step under way, and a done step with another done step of its chapter.
+  const forms: Progress = { v: 1, following: null, steps: { 'pass-it-on': { started: true, doneAt }, 'no-balances': { started: true, doneAt }, 'waiting-room': { started: true } } };
+  assert.equal(chapterLink(SITE, 'waiting-room', 'en', forms)?.split('#')[1], 'do-waiting-room');
+  assert.equal(chapterLink(SITE, 'pass-it-on', 'en', forms)?.split('#')[1], 'done=pass-it-on,no-balances');
+  // Neither the README nor a comment of the pieces that build or draw the link says that the ending reaches
+  // no server, or that nothing new leaves the browser: they say what the address names.
+  const claims = /reaches no server|never reaches (a|the|our|any) server|nothing new leaves the browser|is never sent anywhere|(ending|address|mark)[^.]{0,60}stays in (the|this) browser/i;
+  assert.doesNotMatch(readme, claims, 'README.md');
+  for (const file of ['src/lib/doit/progress.ts', 'src/components/doit/ChapterLink.svelte', 'src/components/doit/Strip.svelte', 'src/components/doit/strip.ts', 'src/screens/doit/Done.svelte', 'src/screens/doit/StepBody.svelte', 'src/screens/doit/OpenPart.svelte', 'src/strings/about.ts', 'src/strings/doit.ts']) {
+    assert.doesNotMatch(source(file).replace(/\s*\n\s*(\/\/|\*)\s*/g, ' '), claims, file);
   }
   // A chapter's name on the Do it screen leads to the chapter's page, with no mark and nothing else.
   for (const chapter of CHAPTERS) {

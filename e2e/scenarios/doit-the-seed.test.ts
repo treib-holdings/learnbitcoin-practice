@@ -555,8 +555,11 @@ scenario(
     assert.equal(await page.text('step-seed-wallet'), fill(es.seedChecked, { fingerprint: record.fingerprint }));
     assert.equal(await page.text('step-back'), es.back);
     assert.equal(await hrefOf(page, 'step-back'), `${site}${CAPITULO}#done=${STEP}`);
-    assert.equal(await page.text('step-next'), fill(es.next, { step: es['title_prove-the-backup'] }));
-    assert.equal(await hrefOf(page, 'step-next'), '/es/do/prove-the-backup');
+    // The reader came by the step's card in chapter 4: the card offers no "Next step". Its main button is the
+    // way back to the chapter, where the next card stands. (A reader who opened the step from the wallet's
+    // own list is offered the next step: doit-handover.test.ts.)
+    assert.equal(await countOf(page, 'step-next'), 0);
+    assert.equal(await page.text('step-list'), es.allSteps);
     assert.deepEqual(await partWords(page), [es.proofOpened, es.proofSaid, es.proofChecked]);
     await fits('the step, done');
 

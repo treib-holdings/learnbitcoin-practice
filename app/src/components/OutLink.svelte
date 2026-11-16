@@ -5,7 +5,10 @@
   // sends no referrer: the other site is not sent the address of the page
   // the reader was on (styles.ts, OUTSIDE, says what a browser still
   // sends). A small arrow marks it, and a screen reader is told that a new
-  // tab opens.
+  // tab opens: hidden words after the link's own say so. A link whose own
+  // words already say that it opens a new tab (the footer's link to the
+  // main site) sets `saysNewTab`, and the hidden words are left out: a
+  // screen reader would say it twice.
   //
   //   <OutLink href={url} text={t.chapterLink} />
   //
@@ -38,12 +41,14 @@
     quiet?: boolean;
     /** For a row of navigation links: no underline and no colour of its own. */
     plain?: boolean;
+    /** The link's own words say that it opens a new tab: the hidden words that say so to a screen reader are left out. */
+    saysNewTab?: boolean;
     class?: string;
     /** The link's words, for what `text` cannot carry. */
     children?: Snippet;
   }
 
-  let { href, text, quiet = false, plain = false, class: extra = '', children, ...rest }: Props = $props();
+  let { href, text, quiet = false, plain = false, saysNewTab = false, class: extra = '', children, ...rest }: Props = $props();
 
   let t = $derived(strings.common[router.lang]);
 
@@ -69,8 +74,9 @@
      just fill the one before. With `text` it cannot: the last word and the
      arrow are one piece that does not break, so a line ends before that
      word or after the arrow. The hidden words start with a space of their
-     own: a screen reader must not run them into the link's last word. -->
+     own: a screen reader must not run them into the link's last word. They
+     are left out where the link's own words say the same (saysNewTab). -->
 <a {...rest} {href} {...OUTSIDE} class={[plain ? `rounded-sm ${FOCUS}` : quiet ? QUIET_LINK : LINK, extra]}
   >{#if text !== undefined}{text.slice(0, cut)}<span class="whitespace-nowrap">{text.slice(cut)}{@render arrow()}</span
-    >{:else}{@render children?.()}{@render arrow()}{/if}<span class="sr-only">{' '}{t.opensNewTab}</span></a
+    >{:else}{@render children?.()}{@render arrow()}{/if}{#if !saysNewTab}<span class="sr-only">{' '}{t.opensNewTab}</span>{/if}</a
 >

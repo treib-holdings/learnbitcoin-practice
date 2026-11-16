@@ -16,8 +16,10 @@
 //      own chapter page, in English or in Spanish, and ignored, without a
 //      word, when it is anything else; a reader who came from the English
 //      chapter goes back to it from the Spanish wallet too; the link
-//      carries "#do-<step>" until the step is done and "#done=<step>" from
-//      then on
+//      ends "#do-<step>" until the step is done, and from then on
+//      "#done=<step>", followed by the other done steps of the same
+//      chapter where there are any (doit-handover.test.ts has those,
+//      and the link of a step that a need of another step led to)
 //   3. "Forget my progress": the question, "Keep it", an answer pressed too
 //      soon, and the note gone; the wallet is untouched, and a step done
 //      again is counted again
@@ -421,7 +423,8 @@ scenario(
       assert.ok(!((await noteText(page)) ?? '').includes('from'), `${planted}: the note that was written back has no way back in it`);
     }
 
-    // -- A step that is done: the same way back, now with the mark the chapter stamps on --
+    // -- A step that is done: the same way back, and its ending now says that the step is done (it names no
+    //    other step: no other step of chapter 3 is done here) --
     const done = { started: true as const, doneAt: at, parts: { 1: true as const, 2: true as const, 3: true as const } };
     await page.store(PROGRESS_KEY, noteFor({ following: null, steps: { [STEP]: { ...done, from: OWN_ES } } }));
     assert.deepEqual(await arrive('', { fresh: false }), { href: `${site}${OWN_ES}#done=${STEP}`, from: OWN_ES });

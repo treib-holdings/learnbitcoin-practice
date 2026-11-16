@@ -8,6 +8,15 @@
   // The addresses of the main site and of the source come from the
   // wallet's settings, so a local run can point somewhere else.
   //
+  // The link to the main site opens its home page in a new tab, and its
+  // words say exactly that ("LearnBitcoin.com, in a new tab"). It is not
+  // the way back to a chapter a reader came from to do a "Do it" step:
+  // that is "Back to the chapter", on the step's screen and on the strip
+  // under the header, which leads to the chapter in this tab. So the
+  // footer's link must not read as a way back. Its words name the new tab
+  // themselves, and the hidden words that say so for a screen reader are
+  // left out for it (saysNewTab).
+  //
   // A Spanish page links to the main site's Spanish home page. The source
   // code has no Spanish page, so there the link says "(in English)" in its
   // text and carries hreflang="en", as the main site does for a page it has
@@ -42,7 +51,7 @@
       </div>
       <nav aria-label={t.navFooter}>
         <ul class="flex flex-wrap items-center gap-x-5 gap-y-2">
-          <li><OutLink quiet href={siteHome(wallet.config.siteUrl, router.lang)} text={t.linkSite} /></li>
+          <li><OutLink quiet saysNewTab href={siteHome(wallet.config.siteUrl, router.lang)} text={t.linkSite} data-testid="footer-site" /></li>
           <li><a href={router.link({ name: 'about' })} class={QUIET_LINK}>{t.linkAbout}</a></li>
           <li><a href={router.link({ name: 'sparrow' })} class={QUIET_LINK}>{t.linkSparrow}</a></li>
           <li><OutLink quiet href={wallet.config.explorerUrl} text={t.linkExplorer} data-testid="footer-explorer" /></li>

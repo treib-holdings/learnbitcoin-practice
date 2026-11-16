@@ -9,12 +9,31 @@
   // say what is true of Bitcoin whatever happens here. None says what the
   // wallet, the chain, the pot or this browser holds now (strings/doit.ts).
   //
-  // The main way on is back to the chapter the step belongs to. The link
-  // carries the mark the chapter stamps its card on ("#done=<step>"), which
-  // it carries only for a step that is done (chapterLink in
-  // lib/doit/progress.ts). The next step is offered only when it belongs to
-  // the same chapter: a reader who has finished a chapter's last step has
-  // not read the next chapter yet.
+  // The ways on depend on how the reader came to the step, which the note
+  // says (waysOn in view.ts):
+  //
+  //   by the step's card in its chapter
+  //       The main button is the link back to the chapter, and there is no
+  //       "Next step": the reader came from the chapter to do this one
+  //       thing, reads on there, and meets the next card where the chapter
+  //       has it.
+  //   sent here by a need of another step, which is not done yet
+  //       The main button leads back to that step, by name: it is the step
+  //       the reader came for. The link back to the chapter is second, and
+  //       leads to the chapter the reader left, which need not be this
+  //       step's own ("Hold some" belongs to chapter 2, and the steps that
+  //       send a reader to it to chapters 3 and 4).
+  //   from the wallet's own list of steps
+  //       The link back to the chapter, then the next step where it
+  //       belongs to the same chapter: a reader who has finished a
+  //       chapter's last step has not read the next chapter yet.
+  //
+  // The address of the link back is built from the whole note (chapterLink
+  // in lib/doit/progress.ts). Where it leads to this step's own chapter it
+  // ends "#done=" and then this step and the other done steps of the
+  // chapter, which the chapter's page marks as done. Where it leads to
+  // another chapter (the second case above, for "Hold some") it ends with
+  // the card the reader pressed there, and marks nothing.
   //
   // Three steps add a line of their own:
   //
@@ -50,6 +69,7 @@
   //                     the wallet.
 
   import { onMount, untrack } from 'svelte';
+  import BackToStep from '../../components/doit/BackToStep.svelte';
   import ChapterLink from '../../components/doit/ChapterLink.svelte';
   import Button from '../../components/Button.svelte';
   import Card from '../../components/Card.svelte';
@@ -59,14 +79,14 @@
   import { useDoit } from '../../lib/doit/doit-context.ts';
   import { seedWallet } from '../../lib/doit/judge.ts';
   import { chapterLink } from '../../lib/doit/progress.ts';
-  import { nextStep, stepDef, type StepId } from '../../lib/doit/steps.ts';
+  import { stepDef, type StepId } from '../../lib/doit/steps.ts';
   import { fill, formatDate, formatSats } from '../../lib/format.ts';
   import { router } from '../../lib/router.svelte.ts';
   import { useWallet } from '../../lib/wallet-context.ts';
   import { strings } from '../../strings/index.ts';
   import AskWords from './AskWords.svelte';
   import Sentence from './Sentence.svelte';
-  import { asksPotCount, doneKey } from './view.ts';
+  import { asksPotCount, doneKey, waysOn } from './view.ts';
 
   interface Props {
     id: StepId;
@@ -84,8 +104,10 @@
 
   let note = $derived(doit.progress.steps[id]);
   let day = $derived(note?.doneAt === undefined ? '' : fill(t.doneOn, { date: formatDate(note.doneAt / 1000, lang) }));
-  let back = $derived(chapterLink(wallet.config.siteUrl, id, lang, note));
-  let next = $derived(nextStep(id));
+  /** The link back to the chapter: built from the whole note. Null when no link can be built from the settings. */
+  let back = $derived(chapterLink(wallet.config.siteUrl, id, lang, doit.progress));
+  /** The step this one leads back to, when a need of that step sent the reader here; and the next step, for a reader from the list. */
+  let ways = $derived(waysOn(id, doit.progress));
 
   // -- Pass it on: the pot's count -------------------------------------------------
 
@@ -180,14 +202,19 @@
       </p>
     {/if}
 
-    <!-- One group: on a phone the buttons stand one under the other, at one width. -->
+    <!-- One group: on a phone the buttons stand one under the other, at one width. One of them is the main
+         button: the way back to the step the reader came for, where a need of that step sent them here, and
+         the link back to the chapter otherwise. -->
     <div class="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
-      {#if back !== null}
-        <ChapterLink look="primary" class="w-full sm:w-auto" href={back} data-testid="step-back">{t.back}</ChapterLink>
+      {#if ways.led !== null}
+        <BackToStep step={ways.led} data-testid="step-led" />
       {/if}
-      {#if next !== null}
-        <Button class="w-full sm:w-auto" href={router.link({ name: 'step', id: next })} data-testid="step-next">
-          {fill(t.next, { step: t[stepDef(next).title] })}
+      {#if back !== null}
+        <ChapterLink look={ways.led === null ? 'primary' : 'secondary'} class="w-full sm:w-auto" href={back} data-testid="step-back">{t.back}</ChapterLink>
+      {/if}
+      {#if ways.next !== null}
+        <Button class="w-full sm:w-auto" href={router.link({ name: 'step', id: ways.next })} data-testid="step-next">
+          {fill(t.next, { step: t[stepDef(ways.next).title] })}
         </Button>
       {/if}
       <Button class="w-full sm:w-auto" href={router.link({ name: 'do' })} data-testid="step-list">{t.allSteps}</Button>

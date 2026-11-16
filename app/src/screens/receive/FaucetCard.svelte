@@ -23,6 +23,16 @@
   // whenever it shows, because then it waits for the reader. A reader who
   // cannot see the box is told through the status region.
   //
+  // A reader who is following a "Do it" step came here because the step
+  // sent them for coins. For them the answer holds one thing more once the
+  // coins are here: a button back to the step, by its name (the card hands
+  // the followed step to FaucetState, which draws it). And the card brings
+  // the answer on screen once more at that moment: the address card above
+  // has just grown by the notice that coins arrived, and has pushed the
+  // answer, with that button, down the page (bringsAnswer in faucet.ts).
+  // A reader who follows no step sees no such button, and the page does
+  // not move for them when coins arrive.
+  //
   // With no site key in the server's settings there is no bot check, and
   // the faucet is closed: the card says so and has a Reload button in place
   // of the faucet's, because the settings are read when the page loads.
@@ -46,13 +56,15 @@
   import Waiting from '../../components/Waiting.svelte';
   import { FAUCET_PART, satsText } from '../../components/wallet/frame.ts';
   import ReloadButton from '../../components/wallet/ReloadButton.svelte';
+  import { useDoit } from '../../lib/doit/doit-context.ts';
+  import { stripStep } from '../../lib/doit/progress.ts';
   import { fill } from '../../lib/format.ts';
   import { router } from '../../lib/router.svelte.ts';
   import type { ReceiveView, TokenSource } from '../../lib/wallet-api.ts';
   import { useWallet } from '../../lib/wallet-context.ts';
   import { strings } from '../../strings/index.ts';
   import { makeBotCheck } from './bot-check.ts';
-  import { BOX_SAY_MS, askButton, boxWasWaiting, offersMore } from './faucet.ts';
+  import { BOX_SAY_MS, askButton, boxWasWaiting, bringsAnswer, offersMore } from './faucet.ts';
   import FaucetState from './FaucetState.svelte';
   import { bringIntoView } from './view.ts';
 
@@ -66,10 +78,17 @@
   const about = $props.id();
 
   const wallet = useWallet();
+  const doit = useDoit();
 
   let lang = $derived(router.lang);
   let t = $derived(strings.receive[lang]);
   let e = $derived(strings.errors[lang]);
+
+  /**
+   * The "Do it" step the reader is following, or null: the step the strip shows. Worked out again whenever
+   * the note changes (a part ticked here is such a change); no clock is kept for it.
+   */
+  let followed = $derived(stripStep(doit.progress, Date.now()));
 
   let view = $derived(wallet.faucet);
   /** No site key, no bot check: the faucet is closed. */
@@ -243,11 +262,14 @@
   $effect(() => {
     const now = view;
     if (now.phase === last) return;
+    const before = last;
     last = now.phase;
     // An answer to the reader's own tap is brought on screen: refused for
-    // now, promised, failed. Not the coins arriving or their confirmation:
-    // those come by themselves, perhaps while the reader reads something else.
-    if (asked && (now.phase === 'waiting' || now.phase === 'on-its-way' || now.phase === 'failed')) {
+    // now, promised, failed. The coins arriving or their confirmation come
+    // by themselves, perhaps while the reader reads something else: for
+    // them the page moves only for a reader who is following a step, once,
+    // when the coins are here and the answer holds the way back to the step.
+    if (bringsAnswer(before, now.phase, asked, untrack(() => followed) !== null)) {
       void tick().then(showAnswer);
     }
     if (now.phase !== 'on-its-way') return;
@@ -317,7 +339,7 @@
     <div bind:this={answer} class="scroll-mb-4">
       {#if view.phase !== 'idle'}
         <div class="mt-5">
-          <FaucetState bind:this={line} {view} {more} {boxWaited} />
+          <FaucetState bind:this={line} {view} {more} {boxWaited} step={followed} />
         </div>
       {/if}
 

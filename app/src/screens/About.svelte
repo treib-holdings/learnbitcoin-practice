@@ -158,6 +158,7 @@
         <li>{t.keepNoteSteps}</li>
         <li>{t.keepNoteFollowing}</li>
         <li>{t.keepNoteFrom}</li>
+        <li>{t.keepNoteCameFor}</li>
         <li>{t.keepNoteWallet}</li>
         <li>{t.keepNotePayment}</li>
       </ul>
@@ -190,7 +191,7 @@
       <p>{t.serverLimit}</p>
       <p>{t.serverLog}</p>
       <p>{t.serverCloudflare}</p>
-      <!-- What goes to LearnBitcoin's main site when the reader follows a link back to a chapter. -->
+      <!-- What the address of a link back to a chapter names, for when the reader follows one to LearnBitcoin's main site. -->
       <p data-testid="about-link-back">{t.serverBack}</p>
     </Prose>
   </Section>

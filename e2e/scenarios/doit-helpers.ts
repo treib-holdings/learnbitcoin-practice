@@ -399,7 +399,7 @@ export const noteFor = (progress: Omit<Progress, 'v'>): string => JSON.stringify
 
 /** The fields a stored note may have, and the fields of one step in it (SPEC-A3 section 4). */
 const NOTE_FIELDS = ['v', 'following', 'followedAt', 'steps'];
-const STEP_FIELDS = ['started', 'doneAt', 'from', 'wallet', 'was', 'tx', 'sentAt', 'parts'];
+const STEP_FIELDS = ['started', 'doneAt', 'from', 'cameFor', 'wallet', 'was', 'tx', 'sentAt', 'parts'];
 
 /** The words of a text, in lower case: runs of letters, with everything else as their borders. */
 const tokensOf = (text: string): Set<string> => new Set(text.toLowerCase().split(/[^a-z]+/).filter((token) => token !== ''));
@@ -413,16 +413,20 @@ const isTime = (value: unknown): boolean => typeof value === 'number' && Number.
 
 /**
  * A stored note holds public things only: ticks, times, which of a
- * chapter's two pages the reader came from, a wallet fingerprint, a
- * transaction ID. Never a word of the 12, never a key, never an address,
- * never an answer, and no text of anybody's choosing.
+ * chapter's two pages the reader came from, the step the reader came for
+ * when a need of that step sent them to another one first, a wallet
+ * fingerprint, a transaction ID. Never a word of the 12, never a key,
+ * never an address, never an answer, and no text of anybody's choosing.
  *
  * The note is held to its closed shape first: the listed fields and no
  * others, each of the kind it must be. A shape that has no field for an
  * answer or an address keeps none. A step's way back (`from`) is the
  * English or the Spanish page of the step's own chapter, character for
  * character, or it is not there: whatever a scenario's address said after
- * "from=", nothing else may have reached the note. Then, all the same, its
+ * "from=", nothing else may have reached the note. The step a reader came
+ * for (`cameFor`) is one of the six step IDs and never the step's own,
+ * and it names no step that is done: the write that finishes a step
+ * takes its name out of every other step's note. Then, all the same, its
  * text is searched: for anything that looks like an address or a key, for
  * a transaction ID anywhere but in a step's `tx`, for every secret the
  * scenario knows by value, and for the 12 words (two in a row never; one
@@ -445,6 +449,14 @@ export function noteIsPublic(text: string, secrets: Secrets): void {
     assert.ok(step.doneAt === undefined || isTime(step.doneAt), text);
     assert.ok(step.sentAt === undefined || isTime(step.sentAt), text);
     assert.ok(step.from === undefined || Object.values(stepDef(id as StepId).chapter.path).includes(step.from as string), `the note of ${id} names a way back that is not its own chapter: ${JSON.stringify(step.from)}`);
+    assert.ok(
+      step.cameFor === undefined || (STEPS.includes(step.cameFor as StepId) && step.cameFor !== id),
+      `the note of ${id} names a step the reader came for that is none of the other five: ${JSON.stringify(step.cameFor)}`,
+    );
+    assert.ok(
+      step.cameFor === undefined || steps[step.cameFor as string]?.doneAt === undefined,
+      `the note of ${id} still names ${JSON.stringify(step.cameFor)} as the step the reader came for, and that step is done`,
+    );
     assert.ok(step.wallet === undefined || (typeof step.wallet === 'string' && /^[0-9a-f]{8}$/.test(step.wallet)), text);
     assert.ok(step.was === undefined || step.was === 'passkey' || step.was === 'words', text);
     assert.ok(step.tx === undefined || (typeof step.tx === 'string' && /^[0-9a-f]{64}$/.test(step.tx)), text);

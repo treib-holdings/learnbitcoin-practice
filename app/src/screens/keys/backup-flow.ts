@@ -2,10 +2,11 @@
 // can check every one: which of its steps shows, what a press on "Show the
 // 12 words" leads to, what follows each way an unlock can end, when words
 // that are on screen must leave it and whether the screen then says why,
-// and the address of chapter 4.
+// where "I have written them down" leads, and the address of chapter 4.
 
-import type { Lang } from '@learnbitcoin/practice-contract';
+import type { Lang, StepId } from '@learnbitcoin/practice-contract';
 import type { Unlocked } from '../../components/wallet/unlock-flow.ts';
+import type { Route } from '../../lib/router.ts';
 
 /**
  * The steps of the Backup screen. One shows at a time, and each swaps in
@@ -101,6 +102,20 @@ export function mustDropWords(owner: WordsOwner): boolean {
  */
 export function takenByAnotherTab(owner: WordsOwner): boolean {
   return owner.shownFor !== null && owner.wallet !== owner.shownFor;
+}
+
+/**
+ * Where "I have written them down" leads, once it has ended the "Wallet
+ * made" step: back to the "Do it" step the reader is following, when they
+ * follow one, and to the wallet's overview when they follow none.
+ * `followed` is the step the strip shows at that moment, or null.
+ *
+ * A reader who follows a step made this wallet because the step asked for
+ * one. The overview would be one screen more between them and the step,
+ * with nothing on it that the step needs.
+ */
+export function afterWritten(followed: StepId | null): Route {
+  return followed === null ? { name: 'wallet' } : { name: 'step', id: followed };
 }
 
 /**

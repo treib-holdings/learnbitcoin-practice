@@ -4,15 +4,22 @@
 // A step's parts are done on Receive, on Send, on Backup, on Settings, and
 // nothing on those screens knows about the step. The strip is what holds the
 // two together: it names the step and the part that is next, leads back to
-// the step, and can be told to go away. The step scenarios meet it on the
-// way (and across the page load after the bot check: doit-hold-some.test.ts).
-// These follow the strip itself:
+// the step and, for a reader who came from a chapter, back to the chapter,
+// and can be told to go away. The step scenarios meet it on the way (and
+// across the page load after the bot check: doit-hold-some.test.ts). What
+// decides whether it carries the link back to the chapter while a step is
+// under way, and where that link leads when a need of another step sent
+// the reader on, is in doit-handover.test.ts. These follow the strip
+// itself:
 //
-//   1. it is on every screen of the app but the followed step's own; "Stop
-//      following" takes it off all of them, and from then on what the
-//      reader does counts for no step; the step's action link follows the
-//      step again; when the step is done on another screen the strip says
-//      so, once, with the way back to the chapter, until it is closed
+//   1. it is on every screen of the app but the followed step's own, and
+//      for a step that was reached by its card in a chapter it carries
+//      the way back to that chapter from the start; "Stop following"
+//      takes it off all of them, and from then on what the reader does
+//      counts for no step; the step's action link follows the step
+//      again; when the step is done on another screen the strip says so,
+//      once, and its way back to the chapter now says that the step is
+//      done, until it is closed
 //   2. it shows for 24 hours after the step was last followed, and is back
 //      when a part of that step is ticked
 //   3. with two tabs on two steps, the step that is followed is the one of
@@ -75,7 +82,7 @@ const WORDS = TEST_WORDS.split(' ');
 const SOMEBODY = testRecord(OTHER_WORDS).firstAddress;
 
 scenario(
-  'The strip is on every screen but the followed step\'s own; "Stop following" takes it off them all, and a payment sent while no step is followed counts for none; the step\'s action link follows it again; done on another screen, the strip says so once, with the way back to the chapter, until it is closed',
+  'The strip is on every screen but the followed step\'s own, with the way back to the chapter beside the way back to the step for a step that was reached by its card; "Stop following" takes it off them all, and a payment sent while no step is followed counts for none; the step\'s action link follows it again; done on another screen, the strip says so once, with the way back to the chapter, until it is closed',
   { localOnly: true, timeout: 200_000 },
   async (s) => {
     const site = s.stack.config.siteUrl;
@@ -89,7 +96,8 @@ scenario(
     assert.equal(await stripOf(page), null, 'the step\'s own screen carries no strip');
     const documents = documentsOf(page);
 
-    // -- Into the wallet by the step's action: the strip names the step, how far it is, the part, and the two things to do --
+    // -- Into the wallet by the step's action: the strip names the step, how far it is, the part, and the things to do.
+    //    The reader came by the step's card in chapter 3, so the way back to the chapter stands beside the way back to the step. --
     await act(page, '/wallet/send');
     const onSend = await untilStrip(page, STEP, 'part');
     assert.equal(onSend.words, partName(STEP, 1));
@@ -98,7 +106,7 @@ scenario(
     const count = { n: '1', m: '3' };
     assert.equal(
       await page.text('strip'),
-      `${en.name} ${titleOf(STEP)} ${fill(en.stripShort, count)} ${fill(en.stripPart, count)}: ${partName(STEP, 1)} ${en.stripBack} ${en.stripStop}`,
+      `${en.name} ${titleOf(STEP)} ${fill(en.stripShort, count)} ${fill(en.stripPart, count)}: ${partName(STEP, 1)} ${en.stripBack} ${en.back} ${en.stripStop}`,
     );
     assert.equal(
       await page.page.$eval(hook('strip-says'), (says) => getComputedStyle(says.parentElement!).display !== 'none'),
@@ -106,12 +114,15 @@ scenario(
       'on a wide screen the part is named',
     );
     assert.equal(await hrefOf(page, 'strip-back'), `/do/${STEP}`);
+    // The step is not done: the link back names its card on the chapter's page the reader came from, and marks nothing.
+    assert.equal(await hrefOf(page, 'strip-chapter'), `${site}${FROM}#do-${STEP}`);
 
     // -- Every screen of the wallet in turn, then Home, About, the Sparrow page and the list of steps --
     for (const path of SECTIONS) {
       if (path === '/wallet/send') continue;
       await toSection(page, path);
       assert.equal((await untilStrip(page, STEP, 'part')).words, partName(STEP, 1), path);
+      assert.equal(await hrefOf(page, 'strip-chapter'), `${site}${FROM}#do-${STEP}`, path);
     }
     await goHome(page);
     assert.equal((await untilStrip(page, STEP, 'part')).words, partName(STEP, 1), 'Home');
@@ -187,7 +198,8 @@ scenario(
     assert.equal(done.words, fill(en.stripDone, { step: titleOf(STEP) }));
     assert.equal(await page.waitForStatus(saidDone(STEP)), saidDone(STEP));
     assert.equal(await page.text('strip'), `${en.name} ${fill(en.stripDone, { step: titleOf(STEP) })} ${en.stripBack} ${en.back} ${en.stripClose}`);
-    // The way back to the chapter, with the mark the chapter stamps on: the chapter's page the reader came from.
+    // The way back to the chapter, which now says that the step is done (and would name the other done steps
+    // of chapter 3 after it: there are none): the chapter's page the reader came from.
     // It stays in this tab, and nothing on it asks for a referrer to be sent: the page's own policy sends none.
     assert.equal(await hrefOf(page, 'strip-chapter'), `${site}${FROM}#done=${STEP}`);
     assert.deepEqual(

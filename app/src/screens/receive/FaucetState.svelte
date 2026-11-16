@@ -24,9 +24,18 @@
   // These words stand under the button, which on a phone can be below the
   // screen's edge. The card that holds this piece brings them on screen
   // when they answer the reader's own tap.
+  //
+  // Once the coins are here (arrived or confirmed, with a payment record
+  // or without one), a reader who is following a "Do it" step is offered
+  // the way back to it, by its name, straight after the first sentence:
+  // the step sent them here for coins, and this is where they are looking
+  // when the coins come. The card says which step is followed, and brings
+  // the box on screen at that moment. With no step followed there is no
+  // such button.
 
-  import type { FaucetPayment } from '@learnbitcoin/practice-contract';
+  import type { FaucetPayment, StepId } from '@learnbitcoin/practice-contract';
   import Countdown from '../../components/Countdown.svelte';
+  import BackToStep from '../../components/doit/BackToStep.svelte';
   import Mono from '../../components/Mono.svelte';
   import Notice from '../../components/Notice.svelte';
   import Row from '../../components/Row.svelte';
@@ -48,9 +57,11 @@
     more: boolean;
     /** True when the last bot check ran out of time while its box stood on screen, waiting to be ticked. */
     boxWaited?: boolean;
+    /** The "Do it" step the reader is following, or null: once the coins are here, the way back to it is offered. */
+    step?: StepId | null;
   }
 
-  let { view, more, boxWaited = false }: Props = $props();
+  let { view, more, boxWaited = false, step = null }: Props = $props();
 
   const wallet = useWallet();
 
@@ -102,6 +113,13 @@
   {/if}
 {/snippet}
 
+<!-- The coins are here, and the reader is following a step: the way back to it, where they are looking. -->
+{#snippet back()}
+  {#if step !== null}
+    <div><BackToStep {step} data-testid="faucet-step" /></div>
+  {/if}
+{/snippet}
+
 <!-- tabindex="-1": it takes focus from code only, never from the Tab key, so it shows no outline. -->
 <div bind:this={root} tabindex="-1" class="outline-none" data-testid="faucet-state" data-phase={view.phase}>
   {#if view.phase === 'checking'}
@@ -135,9 +153,11 @@
             minutes: String(BITCOIN_BLOCK_MINUTES),
           })}
         </p>
+        {@render back()}
         {@render record(view.payment, true)}
       {:else}
         <p>{t.stateArrivedNoRecord}</p>
+        {@render back()}
       {/if}
       {@render once()}
     </div>
@@ -145,9 +165,11 @@
     <div class={BOX}>
       {#if view.payment !== null}
         <p>{fill(t.stateConfirmed, { amount: paid(view.payment) })}</p>
+        {@render back()}
         {@render record(view.payment, true)}
       {:else}
         <p>{t.stateConfirmedNoRecord}</p>
+        {@render back()}
       {/if}
       {@render once()}
     </div>

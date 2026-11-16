@@ -164,7 +164,7 @@ scenario(
     const strip = await untilStrip(page, STEP, 'done');
     assert.equal(strip.words, fill(en.stripDone, { step: en['title_no-balances'] }));
     assert.equal(await page.waitForStatus(saidDone(STEP)), saidDone(STEP));
-    // The strip of a done step: the way back to the chapter, with the mark it stamps on, and "Close".
+    // The strip of a done step: the way back to the chapter, whose ending now says that the step is done, and "Close".
     assert.equal(await hrefOf(page, 'strip-chapter'), `${site}${CHAPTER}#done=${STEP}`);
     assert.equal(await page.text('strip-stop'), en.stripClose);
     assert.equal(await hrefOf(page, 'strip-back'), `/do/${STEP}`);

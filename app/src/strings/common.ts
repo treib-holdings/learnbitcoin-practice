@@ -62,7 +62,13 @@ export const en = {
   linkSparrow: 'Practice network in Sparrow',
   /** The practice network's own block explorer: another site, opened in a tab of its own. */
   linkExplorer: 'Block explorer',
-  linkSite: 'Back to LearnBitcoin.com',
+  /**
+   * The footer's link to the main site's home page. Its words say what it is: another site, in a new tab. It
+   * is not the way back to a chapter a reader came from (that is "Back to the chapter", on a step and on
+   * the strip), so it does not read as one. The words say "new tab" themselves, so the link leaves out
+   * the hidden words that say it for a screen reader (OutLink, saysNewTab).
+   */
+  linkSite: 'LearnBitcoin.com, in a new tab',
   /**
    * The source is in English only. The Spanish text says so, as the main
    * site does for a link from a Spanish page to an English one.
@@ -179,7 +185,7 @@ export const es: Record<keyof typeof en, string> = {
   linkAbout: 'Acerca de',
   linkSparrow: 'La red de práctica en Sparrow',
   linkExplorer: 'Explorador de bloques',
-  linkSite: 'Volver a LearnBitcoin.com',
+  linkSite: 'LearnBitcoin.com, en otra pestaña',
   linkSource: 'Código fuente (en inglés)',
   navMain: 'Principal',
   navFooter: 'Pie de página',

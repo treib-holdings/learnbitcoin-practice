@@ -1,8 +1,8 @@
 // What the Receive screen decides, as plain functions so that "node --test"
 // can check them: what the button does in each phase of a faucet request,
-// which sentence a failure gets and what the screen adds to it, when
-// "Show a new address" is offered and when it has to wait, and where an
-// address sits in the wallet.
+// when the page moves to show the faucet's answer, which sentence a failure
+// gets and what the screen adds to it, when "Show a new address" is offered
+// and when it has to wait, and where an address sits in the wallet.
 //
 // The words themselves are in strings/receive.ts, and the sentence of every
 // failure is in strings/errors.ts. What is here picks among them.
@@ -97,6 +97,35 @@ export function askButton(phase: FaucetPhase): 'ready' | 'busy' | 'done' {
     case 'confirmed':
       return 'done';
   }
+}
+
+/**
+ * Whether the page moves to bring the faucet's answer on screen, when the
+ * request's phase changes from `before` to `now`. The answer stands under
+ * the button, which on a phone is often below the screen's edge.
+ *
+ * Only for a reader who asked from this screen (`asked`), and only when
+ * the phase has changed. Then one of two holds:
+ *
+ *   - The new phase answers the reader's own tap: refused for now
+ *     ("waiting"), promised ("on-its-way"), or failed. For every reader.
+ *   - The coins are here ("arrived", or "confirmed" at once), and the
+ *     reader is following a "Do it" step (`followed`). The answer then
+ *     holds the way back to that step, and at the same moment the address
+ *     card above it grows by a notice that pushes the answer down the
+ *     page: without the move, the reader's next button is below the screen.
+ *     Once: the confirmation that follows an arrival does not move the page
+ *     again.
+ *
+ * For a reader who follows no step, coins that arrive or confirm do not
+ * move the page: they come by themselves, perhaps while the reader reads
+ * something else.
+ */
+export function bringsAnswer(before: FaucetPhase, now: FaucetPhase, asked: boolean, followed: boolean): boolean {
+  if (!asked || now === before) return false;
+  if (now === 'waiting' || now === 'on-its-way' || now === 'failed') return true;
+  const here = (phase: FaucetPhase): boolean => phase === 'arrived' || phase === 'confirmed';
+  return followed && here(now) && !here(before);
 }
 
 /**

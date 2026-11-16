@@ -78,8 +78,20 @@ function doitSources(): { name: string; text: string }[] {
   ];
 }
 
-/** The screens that gained a sentence or a line from this phase. */
-const GAINED = ['src/screens/Home.svelte', 'src/screens/Overview.svelte', 'src/screens/Settings.svelte', 'src/screens/keys/RemoveWallet.svelte'];
+/**
+ * The screens outside the steps' own folders that ask the steps something. Four gained a sentence or a line
+ * about the note that is kept. Three lead a reader who is following a step back to it: "Wallet made" by its
+ * button, the faucet's card by its result, and Send's sent view.
+ */
+const GAINED = [
+  'src/screens/Home.svelte',
+  'src/screens/Overview.svelte',
+  'src/screens/Settings.svelte',
+  'src/screens/keys/RemoveWallet.svelte',
+  'src/screens/Backup.svelte',
+  'src/screens/receive/FaucetCard.svelte',
+  'src/screens/send/Sent.svelte',
+];
 
 /** The sentences of a text, split after a full stop that a capital, an opening mark or a quote follows. */
 function sentences(text: string): string[] {
@@ -205,6 +217,12 @@ test('the reader-facing name is "Do it", in Spanish "Hazlo", and never "lab"', (
   assert.equal(en.stop, 'Stop following');
   assert.equal(en.stripStop, 'Stop following');
   assert.equal(en.stripBack, 'Back to the step');
+  // The way back to a step, on a button, names the step: where it stands, nothing else in view does.
+  assert.equal(en.backTo, 'Back to "{step}"');
+  assert.equal(es.backTo, 'Volver a "{step}"');
+  for (const lang of LANGS) assert.deepEqual(slotNames(strings.doit[lang].backTo), ['step'], lang);
+  assert.equal(en.next, 'Next step: {step}');
+  assert.equal(en.allSteps, 'All steps');
   assert.equal(en.forget, 'Forget my progress');
   assert.equal(en.sendAnother, 'Send another');
 });
@@ -466,6 +484,8 @@ test('what the list says of what is sent agrees with what is counted: the note s
     { kind: 'tick', step: 'waiting-room', part: 1, at: NOW, tx: txid('a1'), sentAt: NOW },
     { kind: 'open', step: 'prove-the-backup', at: NOW, from: null },
     { kind: 'tick', step: 'prove-the-backup', part: 1, at: NOW, wallet: FP, was: 'passkey' },
+    // A need of "The waiting room", which was reached by its card, sends the reader to "Hold some".
+    { kind: 'detour', step: 'hold-some', cameFor: 'waiting-room' },
     { kind: 'open', step: 'hold-some', at: NOW, from: null },
     ...[1, 2, 3, 4].map((part) => ({ kind: 'tick', step: 'hold-some', part, at: NOW })),
   ] as Parameters<typeof applyChange>[1][]) {
@@ -476,8 +496,13 @@ test('what the list says of what is sent agrees with what is counted: the note s
   // fingerprint" (wallet) and "a payment it waits for" (tx, sentAt), as two of the things a step needs on its way.
   for (const field of ['started', 'doneAt', 'parts', 'wallet', 'tx', 'sentAt']) assert.ok(held.has(field), field);
   // "Such as": the two it names are not all of them, and the sentence does not say they are. About lists the rest:
-  // how the wallet was kept, which of the chapter's pages the reader came from, and the step that is followed.
-  assert.deepEqual([...held].sort(), ['doneAt', 'from', 'parts', 'sentAt', 'started', 'tx', 'wallet', 'was']);
+  // how the wallet was kept, which of the chapter's pages the reader came from, the step they came for when
+  // another step sent them on first, and the step that is followed.
+  assert.deepEqual([...held].sort(), ['cameFor', 'doneAt', 'from', 'parts', 'sentAt', 'started', 'tx', 'wallet', 'was']);
+  assert.equal(whole.steps['hold-some']?.cameFor, 'waiting-room');
+  // "The note itself is never sent to us" stays true with that field in it: the note is not sent. What a link
+  // back to a chapter carries in its address is another matter, and About says it (test/info-text.test.ts).
+  for (const lang of LANGS) assert.match(strings.doit[lang].forgetWhat, lang === 'en' ? /The note itself is never sent to us\./ : /La nota en sí nunca se nos envía\./, lang);
   assert.match(en.forgetWhat ?? '', /such as a wallet fingerprint and a payment it waits for\. The About page lists it all\./);
   assert.match(es.forgetWhat ?? '', /como una huella de la billetera y un pago que espera\. La página Acerca de lo enumera todo\./);
   assert.doesNotMatch(en.forgetWhat ?? '', /\bonly\b|\bnothing else\b/);
@@ -763,8 +788,9 @@ test('"Forget my progress" speaks of this site, not of the whole browser; over a
   assert.doesNotMatch(en.forgotten ?? '', /keeps none of it now\b/);
   assert.doesNotMatch(es.forgotten ?? '', /nada de él\.$/);
   // Never of the browser as a whole. "Forget my progress" deletes one value of this site's own storage. The
-  // link back to a chapter carries "#done=<step>", which is what the main site stamps a step's card on: that
-  // mark is the main site's, in its own storage in the same browser, where this site cannot reach.
+  // link back of a done step ends "#done=" and then the done steps of its chapter, which is what the main site
+  // marks those steps' cards on: that mark is the main site's, in its own storage in the same browser, where
+  // this site cannot reach.
   assert.doesNotMatch(en.forgetWarn ?? '', /erased from this browser\b/);
   assert.doesNotMatch(en.forgotten ?? '', /This browser keeps none\b/);
   assert.doesNotMatch(es.forgetWarn ?? '', /se borra de este navegador\b/);
@@ -944,12 +970,14 @@ test('About, "what this browser keeps": the note of the steps holds the fields t
   apply({ kind: 'tick', step: 'waiting-room', part: 1, at: NOW, tx: txid('a1'), sentAt: NOW });
   apply({ kind: 'open', step: 'prove-the-backup', at: NOW, from: null });
   apply({ kind: 'tick', step: 'prove-the-backup', part: 1, at: NOW, wallet: FP, was: 'passkey' });
+  // The reader came from chapter 3 for "The waiting room", and a need of that step sends them to "Hold some" first.
+  apply({ kind: 'detour', step: 'hold-some', cameFor: 'waiting-room' });
   apply({ kind: 'open', step: 'hold-some', at: NOW, from: null });
   for (const part of [1, 2, 3, 4]) apply({ kind: 'tick', step: 'hold-some', part, at: NOW });
   const stored = parseProgress(JSON.stringify(progress)).progress;
   assert.deepEqual(Object.keys(stored).sort(), ['followedAt', 'following', 'steps', 'v'], 'what a note holds changed: read About, "What this browser keeps", again');
   const fields = new Set(Object.values(stored.steps).flatMap((note) => Object.keys(note ?? {})));
-  assert.deepEqual([...fields].sort(), ['doneAt', 'from', 'parts', 'sentAt', 'started', 'tx', 'wallet', 'was'], 'what a step\'s note holds changed: read About, "What this browser keeps", again');
+  assert.deepEqual([...fields].sort(), ['cameFor', 'doneAt', 'from', 'parts', 'sentAt', 'started', 'tx', 'wallet', 'was'], 'what a step\'s note holds changed: read About, "What this browser keeps", again');
 
   // The page says each of them, in its own words.
   const about = strings.about.en;
@@ -984,6 +1012,41 @@ test('About, "what this browser keeps": the note of the steps holds the fields t
       assert.doesNotMatch(text, /The page of LearnBitcoin you came|La página de LearnBitcoin desde la que llegaste/, `about.${lang}.${key}`);
     }
   }
+  // cameFor: the step the reader came for. The line, word for word, in both languages.
+  assert.equal(
+    about.keepNoteCameFor,
+    'If you came from a chapter and a step sent you to another step first: the step you came for, so that the other step can lead you back to it and "Back to the chapter" leads to the chapter you came from. It is erased when the step you came for is done.',
+  );
+  assert.equal(
+    strings.about.es.keepNoteCameFor,
+    'Si llegaste desde un capítulo y un paso te envió primero a otro paso: el paso por el que venías, para que el otro paso pueda llevarte de vuelta a él y "Volver al capítulo" lleve al capítulo del que venías. Se borra cuando el paso por el que venías se termina.',
+  );
+  // It names the link by the words on the link.
+  for (const lang of LANGS) assert.ok(strings.about[lang].keepNoteCameFor.includes(`"${strings.doit[lang].back}"`), lang);
+  // "The step you came for": the note of the step the reader was sent to names it, and it is one of the six steps and nothing else.
+  assert.equal(stored.steps['hold-some']?.cameFor, 'waiting-room');
+  for (const id of STEPS) {
+    const said = [...STEPS, 'first-payment', 'The waiting room', '/journey/how-bitcoin-works', 'anything a link might carry', 7, null, true];
+    for (const cameFor of said) {
+      const read = parseProgress(JSON.stringify({ v: 1, following: null, steps: { [id]: { started: true, cameFor } } })).progress.steps[id];
+      const counts = (STEPS as readonly unknown[]).includes(cameFor) && cameFor !== id;
+      assert.deepEqual(read, counts ? { started: true, cameFor } : { started: true }, `${id}: ${String(cameFor)}`);
+    }
+  }
+  // "If you came from a chapter": for a reader who opened the step from the wallet's own list, nothing is noted.
+  let listed: Progress = applyChange(emptyProgress(), { kind: 'open', step: 'waiting-room', at: NOW, from: null });
+  listed = applyChange(listed, { kind: 'detour', step: 'hold-some', cameFor: 'waiting-room' });
+  assert.deepEqual(listed.steps, { 'waiting-room': { started: true } });
+  assert.doesNotMatch(JSON.stringify(listed), /cameFor/);
+  // "It is erased when the step you came for is done": by the write that finishes that step.
+  let ended = progress;
+  for (const part of [2, 3]) {
+    assert.equal(ended.steps['hold-some']?.cameFor, 'waiting-room', `before part ${part}`);
+    ended = applyChange(ended, { kind: 'tick', step: 'waiting-room', part, at: NOW + part });
+  }
+  assert.ok(ended.steps['waiting-room']?.doneAt !== undefined);
+  assert.equal(ended.steps['hold-some']?.cameFor, undefined);
+  assert.doesNotMatch(JSON.stringify(ended), /cameFor/);
   // wallet, was
   // "From the drill on": the note keeps how the wallet was opened after the drill is done, for the card that says what the restore changed.
   assert.match(about.keepNoteWallet, /the wallet fingerprint of the wallet they were checked for and, from the drill on, whether this browser opened that wallet with a passkey or with its words\.$/);
@@ -1000,7 +1063,7 @@ test('About, "what this browser keeps": the note of the steps holds the fields t
   const screen = source('src/screens/About.svelte');
   assert.match(
     screen,
-    /<p data-testid="about-note">\{t\.keepNote\}<\/p>\s*<ul data-testid="about-note-fields">\s*<li>\{t\.keepNoteSteps\}<\/li>\s*<li>\{t\.keepNoteFollowing\}<\/li>\s*<li>\{t\.keepNoteFrom\}<\/li>\s*<li>\{t\.keepNoteWallet\}<\/li>\s*<li>\{t\.keepNotePayment\}<\/li>\s*<\/ul>\s*<p data-testid="about-note-never">\{t\.keepNoteNever\}<\/p>/,
+    /<p data-testid="about-note">\{t\.keepNote\}<\/p>\s*<ul data-testid="about-note-fields">\s*<li>\{t\.keepNoteSteps\}<\/li>\s*<li>\{t\.keepNoteFollowing\}<\/li>\s*<li>\{t\.keepNoteFrom\}<\/li>\s*<li>\{t\.keepNoteCameFor\}<\/li>\s*<li>\{t\.keepNoteWallet\}<\/li>\s*<li>\{t\.keepNotePayment\}<\/li>\s*<\/ul>\s*<p data-testid="about-note-never">\{t\.keepNoteNever\}<\/p>/,
   );
 });
 
@@ -1104,6 +1167,7 @@ test('every test hook of the spec is in the markup of the piece that draws it', 
     'step-send-another': 'src/screens/doit/WaitingBlock.svelte',
     'step-done': 'src/screens/doit/Done.svelte',
     'step-back': 'src/screens/doit/StepBody.svelte',
+    'step-led': 'src/screens/doit/Done.svelte',
     'step-next': 'src/screens/doit/Done.svelte',
     'step-restart': 'src/screens/doit/StepBody.svelte',
     'step-stop': 'src/screens/doit/StepBody.svelte',
@@ -1122,8 +1186,11 @@ test('every test hook of the spec is in the markup of the piece that draws it', 
     'strip-chapter': 'src/components/doit/Strip.svelte',
     'strip-stop': 'src/components/doit/Strip.svelte',
     'tx-explained': 'src/screens/read/Explained.svelte',
+    // The way back to a followed step, where a part of it was just done on a wallet screen.
+    'faucet-step': 'src/screens/receive/FaucetState.svelte',
+    'sent-step': 'src/screens/send/Sent.svelte',
   };
-  assert.equal(Object.keys(hooks).length, 35);
+  assert.equal(Object.keys(hooks).length, 38);
   for (const [hook, file] of Object.entries(hooks)) {
     const text = source(file);
     // As an attribute of its own, as the heading's hook, or in the table a piece picks its hooks from.
@@ -1131,13 +1198,142 @@ test('every test hook of the spec is in the markup of the piece that draws it', 
     assert.ok(there, `${hook} is not in ${file}`);
   }
   // "Back to the chapter" is one element at a time: a link in the chapter's line until the step is
-  // done, and the main button of the done card from then on.
+  // done, and a button of the done card from then on. There it is the main button, unless the card's
+  // main button leads back to the step the reader came for: then it is the second.
   assert.match(source('src/screens/doit/StepBody.svelte'), /\{#if back !== null && !done\}\s*<ChapterLink href=\{back\} data-testid="step-back">/);
-  assert.match(source('src/screens/doit/Done.svelte'), /<ChapterLink look="primary" class="w-full sm:w-auto" href=\{back\} data-testid="step-back">/);
+  assert.match(
+    source('src/screens/doit/Done.svelte'),
+    /<ChapterLink look=\{ways\.led === null \? 'primary' : 'secondary'\} class="w-full sm:w-auto" href=\{back\} data-testid="step-back">\{t\.back\}<\/ChapterLink>/,
+  );
+  assert.equal(source('src/screens/doit/Done.svelte').match(/data-testid="step-back"/g)?.length, 1);
+  assert.equal(source('src/screens/doit/StepBody.svelte').match(/data-testid="step-back"/g)?.length, 1);
   // The heading takes its hook through the page's frame.
   assert.match(source('src/components/Page.svelte'), /data-testid=\{titleHook\}/);
   // The transaction screen draws "What just happened" for the transaction it shows.
   assert.match(source('src/screens/Tx.svelte'), /<Explained view=\{shows\.view\} \/>/);
+});
+
+// -- the ways back to a step ----------------------------------------------------------------------------
+
+test('the two links from a need to another step tell the steps that they were used, and the three places that lead back to a step draw one piece', () => {
+  // -- The press of a link that leads to another step is what remembers the step the reader came for. --
+  const part = source('src/screens/doit/OpenPart.svelte');
+  // What such a link is handed: one function that hands the steps the step the link leads to and the step it
+  // stands on, for each of the three ways a reader can use a link. A plain press (the keyboard's, and one with
+  // a key held down for a new tab) is a click; the middle button, which opens the link in a new tab, is told as
+  // "auxclick"; and the browser's own menu on the link, which offers a new tab, as "contextmenu". Without the
+  // last two, the tab they open would show the other step with no memory of the step the reader came for.
+  assert.match(
+    code(part),
+    /function tells\(to: StepId\): \{ onclick: \(\) => void; onauxclick: \(\) => void; oncontextmenu: \(\) => void \} \{\s*const told = \(\): void => doit\.detour\(to, id\);\s*return \{ onclick: told, onauxclick: told, oncontextmenu: told \};\s*\}/,
+  );
+  // The button of a need that another step meets: its address is that step's screen and nothing more, and it
+  // is handed those three.
+  assert.match(
+    part,
+    /\{#if need\.link\.kind === 'step'\}\s*\{@const to = need\.link\.step\}\s*(<!--[^>]*-->\s*)?<Button\s+variant="primary"\s+class="w-full sm:w-auto"\s+data-testid="step-need-link"\s+href=\{router\.link\(\{ name: 'step', id: to \}\)\}\s+\{\.\.\.tells\(to\)\}\s*>/,
+  );
+  // The text link to the step where a paper copy is made: the same.
+  assert.match(
+    part,
+    /\{#if paper\.link\.kind === 'step'\}\s*\{@const to = paper\.link\.step\}\s*<TextLink href=\{router\.link\(\{ name: 'step', id: to \}\)\} data-testid="step-paper-link" \{\.\.\.tells\(to\)\}>/,
+  );
+  // Those two, and no other: every link into the wallet's own screens tells the steps that the step is followed, as before.
+  assert.equal(code(part).match(/doit\.detour\(/g)?.length, 1);
+  assert.equal(code(part).match(/\{\.\.\.tells\(to\)\}/g)?.length, 2);
+  assert.equal(code(part).match(/\btells\(/g)?.length, 3, 'the function, and the two links');
+  assert.equal(code(part).match(/onclick=\{\(\) => doit\.follow\(id\)\}/g)?.length, 6);
+  // The two pieces that draw such a link put what they are handed on the link itself: the button keeps the
+  // click for itself (a link that is switched off takes none) and hands on the rest, the text link all three.
+  assert.match(source('src/components/Button.svelte'), /interface Props extends Omit<HTMLAttributes<HTMLElement>, 'class' \| 'children' \| 'onclick'> \{/);
+  assert.match(source('src/components/Button.svelte'), /<a\s+\{\.\.\.rest\}\s+href=\{disabled \? undefined : href\}[^>]*\sonclick=\{click\}\s*>/);
+  assert.match(source('src/components/TextLink.svelte'), /interface Props extends Omit<HTMLAnchorAttributes, 'class' \| 'children' \| 'href'> \{/);
+  assert.match(source('src/components/TextLink.svelte'), /<a \{\.\.\.rest\} \{href\} class=\{\[LINK, extra\]\}>/);
+  // No other piece of the app writes it: beside this one there are only the steps' own files, which hand the
+  // press on to the one write function.
+  const all = readdirSync(new URL('../src/', import.meta.url), { recursive: true, encoding: 'utf8' }).filter((name) => /\.(ts|svelte)$/.test(name));
+  for (const name of all) {
+    if (['screens/doit/OpenPart.svelte', 'lib/doit/doit.svelte.ts', 'lib/doit/doit-context.ts', 'lib/doit/runner.ts', 'lib/doit/progress.ts'].includes(name)) continue;
+    assert.doesNotMatch(code(readFileSync(new URL(`../src/${name}`, import.meta.url), 'utf8')), /\.detour\(|kind: 'detour'/, name);
+  }
+  // What is remembered travels in no address. A step's screen is /do/<step>, and the one thing these screens
+  // ever read from a query string is the way back from the main site ("from"), never a step.
+  for (const { name, text } of doitSources()) {
+    assert.doesNotMatch(code(text), /URLSearchParams|location\.search|router\.search|\?cameFor|[?&]for=|[?&]step=/, name);
+  }
+  assert.equal(code(source('src/lib/doit/runner.ts')).match(/fromOfSearch\(/g)?.length, 2, 'the query string is read for the way back, where a step is opened');
+  assert.doesNotMatch(code(source('src/lib/doit/progress.ts')).replace(/new URLSearchParams\(search\)\.get\('from'\)/, ''), /URLSearchParams|\.get\('/);
+
+  // -- The one piece that leads back to a step, by its name. --
+  const piece = source('src/components/doit/BackToStep.svelte');
+  assert.match(
+    piece,
+    /<Button \{\.\.\.rest\} variant="primary" class="w-full sm:w-auto" href=\{router\.link\(\{ name: 'step', id: step \}\)\}>\s*\{fill\(t\.backTo, \{ step: t\[STEP_DEFS\[step\]\.title\] \}\)\}\s*<\/Button>\s*$/,
+  );
+  // It is handed the step and reads nothing of the note itself; it has no link element of its own, and what
+  // it can be handed beside the step are test hooks.
+  assert.doesNotMatch(code(piece), /useDoit|useWallet|<a\s|target=|rel=|onclick/);
+  assert.match(piece, /interface Props \{\s*\/\*\*[^*]*\*\/\s*step: StepId;\s*\[key: `data-\$\{string\}`\]: string \| undefined;\s*\}/);
+  // Its words name the step, in both languages, for every step.
+  for (const lang of LANGS) {
+    for (const id of STEPS) {
+      const title = strings.doit[lang][STEP_DEFS[id].title];
+      const said = strings.doit[lang].backTo.replace('{step}', title);
+      assert.equal(said, lang === 'en' ? `Back to "${title}"` : `Volver a "${title}"`);
+    }
+  }
+  // The three places that draw it, each under its own hook, and no other place in the app.
+  const drawn: [file: string, tag: RegExp][] = [
+    ['src/screens/doit/Done.svelte', /\{#if ways\.led !== null\}\s*<BackToStep step=\{ways\.led\} data-testid="step-led" \/>\s*\{\/if\}/],
+    ['src/screens/receive/FaucetState.svelte', /\{#snippet back\(\)\}\s*\{#if step !== null\}\s*<div><BackToStep \{step\} data-testid="faucet-step" \/><\/div>\s*\{\/if\}\s*\{\/snippet\}/],
+    ['src/screens/send/Sent.svelte', /\{#if step !== null\}\s*(<!--[^>]*-->\s*)?<div><BackToStep \{step\} data-testid="sent-step" \/><\/div>\s*\{\/if\}/],
+  ];
+  for (const [file, tag] of drawn) {
+    assert.match(source(file), tag, file);
+    assert.equal(source(file).match(/<BackToStep\b/g)?.length, 1, `${file}: drawn in one place`);
+  }
+  for (const name of all) {
+    if (drawn.some(([file]) => file === `src/${name}`) || name === 'components/doit/BackToStep.svelte') continue;
+    assert.doesNotMatch(code(readFileSync(new URL(`../src/${name}`, import.meta.url), 'utf8')), /BackToStep|\.backTo\b/, name);
+  }
+
+  // -- The done card: the three rows, in this order. --
+  const card = source('src/screens/doit/Done.svelte');
+  assert.match(card, /let back = \$derived\(chapterLink\(wallet\.config\.siteUrl, id, lang, doit\.progress\)\);/);
+  assert.match(card, /let ways = \$derived\(waysOn\(id, doit\.progress\)\);/);
+  const buttons = card.slice(card.lastIndexOf('<div class="flex flex-col gap-3'));
+  const order = ['data-testid="step-led"', 'data-testid="step-back"', 'data-testid="step-next"', 'data-testid="step-list"'].map((hook) => buttons.indexOf(hook));
+  assert.ok(order.every((at) => at > 0) && order.join() === [...order].sort((a, b) => a - b).join(), `the buttons stand in the order led, back, next, list: ${order.join()}`);
+  assert.match(buttons, /\{#if ways\.next !== null\}\s*<Button class="w-full sm:w-auto" href=\{router\.link\(\{ name: 'step', id: ways\.next \}\)\} data-testid="step-next">/);
+  // No "Next step" of the card's own making: the one that is offered is the one waysOn gives.
+  assert.doesNotMatch(code(card), /nextStep\(/);
+
+  // -- The faucet's result: once the coins are here, with a payment record or without one, and in no other phase. --
+  const state = source('src/screens/receive/FaucetState.svelte');
+  assert.equal(state.match(/\{@render back\(\)\}/g)?.length, 4);
+  for (const phase of ['arrived', 'confirmed']) {
+    const from = state.indexOf(`{:else if view.phase === '${phase}'}`);
+    const box = state.slice(from, state.indexOf('{:else if view.phase', from + 1));
+    // Straight after the box's first sentence, and before the transaction's row and the line on how to get more coins.
+    assert.match(box, /<\/p>\s*\{@render back\(\)\}\s*\{@render record\(view\.payment, true\)\}\s*\{:else\}\s*<p>\{t\.state(Arrived|Confirmed)NoRecord\}<\/p>\s*\{@render back\(\)\}\s*\{\/if\}\s*\{@render once\(\)\}/, phase);
+  }
+  const early = state.slice(state.indexOf("{#if view.phase === 'checking'}"), state.indexOf("{:else if view.phase === 'arrived'}"));
+  assert.doesNotMatch(early, /\{@render back\(\)\}/, 'not while the request runs, and not for a promise');
+  assert.doesNotMatch(state.slice(state.indexOf("{:else if view.phase === 'failed'}")), /\{@render back\(\)\}/, 'not after a failure');
+  // The card says which step is followed: the step the strip shows, worked out again whenever the note changes.
+  const faucet = source('src/screens/receive/FaucetCard.svelte');
+  assert.match(faucet, /let followed = \$derived\(stripStep\(doit\.progress, Date\.now\(\)\)\);/);
+  assert.match(faucet, /<FaucetState bind:this=\{line\} \{view\} \{more\} \{boxWaited\} step=\{followed\} \/>/);
+  assert.doesNotMatch(code(state), /useDoit/);
+
+  // -- "Payment sent": for the followed step whose payment part is ticked, and then it is the screen's main button. --
+  const sent = source('src/screens/send/Sent.svelte');
+  assert.match(sent, /let step = \$derived\(paidStep\(doit\.progress, Date\.now\(\)\)\);/);
+  assert.match(sent, /<Button variant=\{step === null \? 'primary' : 'secondary'\} class=\{WIDE\} href=\{router\.link\(\{ name: 'tx', txid \}\)\} data-testid="sent-link">\{t\.sentLink\}<\/Button>/);
+  // After the sentences on what happens next, and before the rows of figures.
+  assert.ok(sent.indexOf('</Prose>') < sent.indexOf('data-testid="sent-step"') && sent.indexOf('data-testid="sent-step"') < sent.indexOf('<Rows>'));
+  // No clock is kept for either: the step is worked out from the note as it stands.
+  for (const text of [faucet, sent]) assert.doesNotMatch(code(text), /setInterval\(/);
 });
 
 // -- the way back to the chapter ------------------------------------------------------------------------
