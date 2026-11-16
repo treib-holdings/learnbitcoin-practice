@@ -115,7 +115,7 @@ test('ticks come from the note and stay: live facts decide only the first part t
 test('the state of a step, from its note alone: never opened, under way, done', () => {
   assert.equal(stepState(undefined), 'not-started');
   assert.equal(stepState({}), 'not-started');
-  assert.equal(stepState({ from: '/journey/x' }), 'not-started');
+  assert.equal(stepState({ from: '/journey/what-bitcoin-actually-is' }), 'not-started');
   assert.equal(stepState({ started: true }), 'started');
   assert.equal(stepState(started(2)), 'started');
   assert.equal(stepState(started(3, { doneAt: NOW })), 'done');

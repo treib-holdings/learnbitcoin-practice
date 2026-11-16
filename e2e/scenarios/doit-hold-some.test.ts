@@ -94,11 +94,12 @@ scenario(
     assert.deepEqual(await partsOf(page), ['now', 'later', 'later', 'later']);
     assert.deepEqual(await partWords(page), [en.partNow, en.partLater, en.partLater, en.partLater]);
     assert.equal(await page.text('step-guide'), en['guide_hold-some_1']);
-    // The way back is the page the reader came from, with the card's mark and no stamp.
+    // The way back is the chapter's page the reader came from, with the card's mark and no stamp. It stays in
+    // this tab, and nothing on it asks for a referrer to be sent: the page's own policy sends none.
     assert.equal(await hrefOf(page, 'step-back'), `${site}${CHAPTER}#do-${STEP}`);
     assert.deepEqual(
-      await page.page.$eval(hook('step-back'), (link) => [link.getAttribute('referrerpolicy'), link.getAttribute('target')]),
-      ['origin', null],
+      await page.page.$eval(hook('step-back'), (link) => [link.getAttribute('referrerpolicy'), link.getAttribute('rel'), link.getAttribute('target')]),
+      [null, null, null],
     );
     // Opening the step's screen is what starts it: the note is written now, and it is the one being followed.
     const opened = await noteOf(page);
@@ -195,7 +196,7 @@ scenario(
     assert.equal(await page.text('step-done-on'), `Done on ${formatDate(note.doneAt / 1000, 'en', 'utc')}.`);
     assert.equal(await page.text('step-done-text'), en['done_hold-some']);
     assert.equal(await hrefOf(page, 'step-back'), `${site}${CHAPTER}#done=${STEP}`);
-    assert.equal(await page.page.$eval(hook('step-back'), (link) => link.getAttribute('referrerpolicy')), 'origin');
+    assert.equal(await page.page.$eval(hook('step-back'), (link) => link.getAttribute('referrerpolicy')), null);
     // The chapter's last step offers no next one: the reader has not read the next chapter.
     assert.equal(await countOf(page, 'step-next'), 0);
     for (const gone of ['step-restart', 'step-stop', 'step-block-answer']) assert.equal(await countOf(page, gone), 0, gone);
@@ -330,7 +331,6 @@ scenario(
         doIt('/es/do/hold-some', STEP),
       ],
       { records: [record], words: [words], addresses: [address], txids: [faucetTxid] },
-      { from: [CAPITULO] },
     );
   },
 );

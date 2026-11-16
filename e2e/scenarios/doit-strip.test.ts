@@ -187,11 +187,12 @@ scenario(
     assert.equal(done.words, fill(en.stripDone, { step: titleOf(STEP) }));
     assert.equal(await page.waitForStatus(saidDone(STEP)), saidDone(STEP));
     assert.equal(await page.text('strip'), `${en.name} ${fill(en.stripDone, { step: titleOf(STEP) })} ${en.stripBack} ${en.back} ${en.stripClose}`);
-    // The way back to the chapter, with the mark the chapter stamps on: the page the reader came from.
+    // The way back to the chapter, with the mark the chapter stamps on: the chapter's page the reader came from.
+    // It stays in this tab, and nothing on it asks for a referrer to be sent: the page's own policy sends none.
     assert.equal(await hrefOf(page, 'strip-chapter'), `${site}${FROM}#done=${STEP}`);
     assert.deepEqual(
-      await page.page.$eval(hook('strip-chapter'), (link) => [link.getAttribute('referrerpolicy'), link.getAttribute('target')]),
-      ['origin', null],
+      await page.page.$eval(hook('strip-chapter'), (link) => [link.getAttribute('referrerpolicy'), link.getAttribute('rel'), link.getAttribute('target')]),
+      [null, null, null],
     );
     assert.equal(await hrefOf(page, 'strip-back'), `/do/${STEP}`);
     assert.deepEqual(stepsCounted(s), { 'waiting-room': 1 });
@@ -263,7 +264,6 @@ scenario(
         addresses: [...funded.map((coin) => coin.address), SOMEBODY],
         txids: [...funded.map((coin) => coin.txid), unseen.txid, paid.txid],
       },
-      { from: [FROM] },
     );
   },
 );

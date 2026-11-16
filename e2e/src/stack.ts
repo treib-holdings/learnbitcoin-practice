@@ -17,7 +17,18 @@
 //                 drew the widget for with what the faucet was asked instead.
 //   forwardEvent  a recorder: nothing is sent anywhere
 //   limits        limiters that never refuse, until a scenario tells one to
+//   potStatsHolder
+//                 one holder for the life of the stack, as the deployed
+//                 Worker has one for the life of its isolate. So the pot's
+//                 counts are kept here as they are when deployed: the
+//                 network is asked for them once, and every request of the
+//                 next 15 seconds is given that answer
+//                 (worker/src/pot-stats.ts).
 //   log           a recorder for the one line the handler writes per request
+//   now           the real clock, plus what a scenario has moved it on by
+//                 (advanceClock below). Nothing switches the keeping of the
+//                 counts off: a scenario that needs the Worker to ask the
+//                 network again says that the 15 seconds have passed.
 //
 // That is the whole difference from production. The Worker has no test mode:
 // everything local is in what it is given here.
@@ -27,6 +38,7 @@ import {
   configFromEnv,
   makeHandler,
   makeOrigin,
+  makePotStatsHolder,
   type ConfigVars,
   type Deps,
   type EventMeta,
@@ -105,6 +117,20 @@ export interface Stack {
   botChecks: { token: string; address: string }[];
   /** The limiters told to refuse: stack.over.add('faucet') makes the faucet answer "limit" until it is deleted again. */
   over: Set<keyof Limits>;
+  /**
+   * Moves the Worker's clock on by `ms`, at once and for good: for the
+   * Worker, that much more time has passed. The Worker's clock dates its log
+   * lines and the pot's kept counts, and nothing else reads it: not the
+   * stand-in network, not the pages.
+   *
+   * What it is for: the Worker asks the network for the pot's counts once
+   * and gives everyone that answer for 15 seconds (POT_STATS_KEEP_MS of
+   * the Worker's package). A scenario that has looked at the counts and
+   * needs the Worker to ask again (after a payment, or to see what happens
+   * when the network cannot answer) moves the clock on by that much first.
+   * The clock only goes forward.
+   */
+  advanceClock(ms: number): void;
   /** Waits for the work the handler left to finish after its answers (an event on its way to the recorder). */
   settled(): Promise<void>;
   /** Stops the stand-in network. The handler answers "unavailable" from then on. */
@@ -146,6 +172,8 @@ export async function startStack(options: StackOptions = {}): Promise<Stack> {
   const over = new Set<keyof Limits>();
   const pending = new Set<Promise<unknown>>();
   const limiter = (name: keyof Limits): Limiter => ({ limit: async () => ({ success: !over.has(name) }) });
+  /** How far the Worker's clock is ahead of the real one, in ms (advanceClock). */
+  let ahead = 0;
 
   const deps: Deps = {
     config,
@@ -176,6 +204,8 @@ export async function startStack(options: StackOptions = {}): Promise<Stack> {
       pot: limiter('pot'),
       events: limiter('events'),
     },
+    // Made once, here, and handed to every request: the stack is one Worker, started once.
+    potStatsHolder: makePotStatsHolder(),
     log: (line) => {
       record(lines, line, keep);
       options.log?.(line);
@@ -187,7 +217,7 @@ export async function startStack(options: StackOptions = {}): Promise<Stack> {
       const tracked: Promise<void> = promise.then(forget, forget);
       pending.add(tracked);
     },
-    now: () => Date.now(),
+    now: () => Date.now() + ahead,
   };
 
   return {
@@ -199,6 +229,10 @@ export async function startStack(options: StackOptions = {}): Promise<Stack> {
     lines,
     botChecks,
     over,
+    advanceClock: (ms) => {
+      if (!Number.isFinite(ms) || ms < 0) throw new Error(`advanceClock: the clock only goes forward (${ms})`);
+      ahead += ms;
+    },
     settled: async () => {
       while (pending.size > 0) await Promise.all([...pending]);
     },

@@ -123,15 +123,28 @@ test('opening a step is the first write, and what the wallet already satisfies t
   assert.deepEqual(p.published.at(-1)?.progress, p.note());
 });
 
-test('a hostile way back is ignored without a word, and a later opening without one keeps the earlier one', () => {
+test('a way back that is not the step\'s own chapter is ignored without a word, and a later opening without one keeps the earlier one', () => {
   const p = page();
-  p.runner.watch(step('hold-some'), '?from=//evil.example/x');
-  assert.equal(p.note().steps['hold-some']?.from, undefined);
+  // Another host, another page of the main site, and another step's chapter: none is kept, and nothing of the address is stored.
+  for (const search of ['?from=//evil.example/x', '?from=/newsletter', '?from=/journey/how-bitcoin-works', '?from=/journey/what-bitcoin-actually-is/']) {
+    p.runner.watch(HOME, '');
+    p.runner.watch(step('hold-some'), search);
+    assert.equal(p.note().steps['hold-some']?.from, undefined, search);
+    assert.doesNotMatch(p.storage.map.get(PROGRESS_KEY) ?? '', /evil|newsletter|how-bitcoin-works|from/, search);
+  }
   p.runner.watch(HOME, '');
   p.runner.watch(step('hold-some'), '?from=/journey/what-bitcoin-actually-is');
   assert.equal(p.note().steps['hold-some']?.from, '/journey/what-bitcoin-actually-is');
   p.runner.watch(HOME, '');
   p.runner.watch(step('hold-some'), '');
+  assert.equal(p.note().steps['hold-some']?.from, '/journey/what-bitcoin-actually-is');
+  // One that is refused does not take its place either.
+  p.runner.watch(HOME, '');
+  p.runner.watch(step('hold-some'), '?from=/journey/be-your-own-bank');
+  assert.equal(p.note().steps['hold-some']?.from, '/journey/what-bitcoin-actually-is');
+  // The same address names the way back of the step it opens, and of no other: chapter 4's page is "The seed"'s own.
+  p.runner.watch(step('the-seed'), '?from=/journey/be-your-own-bank');
+  assert.equal(p.note().steps['the-seed']?.from, '/journey/be-your-own-bank');
   assert.equal(p.note().steps['hold-some']?.from, '/journey/what-bitcoin-actually-is');
 });
 
@@ -140,9 +153,11 @@ test('the same screen named again (the other language) is no new opening; anothe
   p.runner.watch(step('hold-some'), '');
   const writes = p.storage.writes;
   p.now += 60_000;
-  p.runner.watch(step('hold-some'), '?from=/journey/how-bitcoin-works');
+  // The switch to the other language keeps the address's query string, and may name the chapter's other page.
+  p.runner.watch(step('hold-some'), '?from=/es/recorrido/que-es-bitcoin-en-realidad');
   assert.equal(p.storage.writes, writes, 'nothing was written for the same screen');
   assert.equal(p.note().followedAt, NOW);
+  assert.equal(p.note().steps['hold-some']?.from, undefined, 'and its way back is as it was: none');
   p.runner.watch(step('the-seed'), '');
   assert.deepEqual([p.note().following, p.note().followedAt], ['the-seed', NOW + 60_000]);
   assert.equal(p.note().steps['hold-some']?.started, true, 'the first step stays started');

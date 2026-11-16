@@ -12,18 +12,31 @@
   // Three steps add a line of their own:
   //
   //   Pass it on        how many payments have been passed on to the pot so
-  //                     far, the reader's among them. Payments, not people:
-  //                     the pot cannot tell who sent one. The count is
-  //                     asked for once, when this piece is drawn, and the
-  //                     line is left out when it cannot be had or is 0.
+  //                     far. Payments, not people: the pot cannot tell who
+  //                     sent one. And never "yours": the count is a number
+  //                     the pot gives of the chain as it stands (and the
+  //                     Worker may give one a few seconds old), while a
+  //                     done step's note names no payment, so this piece
+  //                     cannot know that the reader's payment is one of
+  //                     them. The count is asked for once, when this piece
+  //                     is drawn, and the line is left out when it cannot
+  //                     be had or is 0.
   //   The seed          the wallet fingerprint the three words were checked
   //                     for. When another wallet is in this browser now,
   //                     the piece says so, and offers the check again for
   //                     that wallet.
   //   Prove the backup  for a wallet that was opened with a passkey before
-  //                     the drill: what has changed. This browser now keeps
-  //                     it with its 12 words. Then the Sparrow page, as one
-  //                     more proof that the words are the wallet.
+  //                     the drill: what the restore changed. The card is
+  //                     drawn from the step's note alone (how the wallet
+  //                     was kept when the drill began), and it stays for
+  //                     as long as the note does, whatever this browser
+  //                     keeps by then: that wallet with its words, that
+  //                     wallet behind its passkey again, no wallet, or
+  //                     another one. So it says what the restore did, in
+  //                     the past tense, and never what this browser keeps
+  //                     now: for that it names About. Then the Sparrow
+  //                     page, as one more proof that the words are the
+  //                     wallet.
 
   import { onMount } from 'svelte';
   import ChapterLink from '../../components/doit/ChapterLink.svelte';
@@ -83,7 +96,9 @@
   });
 
   let potLine = $derived.by(() => {
-    // Left out for a count of 0: the reader's own payment is among them, so it cannot be right.
+    // Left out for a count of 0. Under a step that was done by a payment to the pot, "none so far" would
+    // read as a contradiction, and this piece cannot tell which of the two is behind: the count may have
+    // been read a moment before the payment, or the chain may have been started again since the step.
     if (passedOn === null || passedOn < 1) return '';
     return passedOn === 1 ? t.potCountOne : fill(t.potCount, { count: formatSats(passedOn) });
   });
@@ -99,7 +114,7 @@
 <Card tone="grey" data-testid="step-done">
   <div class="space-y-4">
     <div class="space-y-3 text-pretty text-base leading-relaxed text-ink-700">
-      <!-- A heading: "What has changed" below is one level under it, and a reader who moves by headings finds the card. -->
+      <!-- A heading: "What the restore changed" below is one level under it, and a reader who moves by headings finds the card. -->
       <h2 class="text-balance text-xl font-bold leading-snug text-ink-800" data-testid="step-done-on">{day}</h2>
       <p data-testid="step-done-text">{t[doneKey(id)]}</p>
       {#if potLine !== ''}
@@ -125,6 +140,7 @@
     {/if}
 
     {#if id === 'prove-the-backup'}
+      <!-- From the note alone, whatever wallet is here now: the sentence is about the restore, not about the present. -->
       {#if note?.was === 'passkey'}
         <div class="space-y-2 border-t border-ink-200 pt-4" data-testid="step-changed">
           <h3 class="text-base font-bold text-ink-800">{t.changedTitle}</h3>

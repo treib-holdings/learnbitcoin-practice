@@ -38,6 +38,7 @@ import {
   configFromEnv,
   makeHandler,
   makeOrigin,
+  makePotStatsHolder,
   type ConfigVars,
   type Deps,
   type Handler,
@@ -117,6 +118,8 @@ function stack() {
       pot: limiter('pot'),
       events: limiter('events'),
     },
+    // One Worker, started once: its holder of the pot's counts lives as long as the stack.
+    potStatsHolder: makePotStatsHolder(),
     log: (line) => {
       lines.push(line);
     },

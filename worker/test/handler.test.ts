@@ -1034,10 +1034,15 @@ test('the pot counts are answered as three whole numbers, and the answer is writ
   const text = await response.text();
   assert.equal(text, '{"passedOn":12,"waiting":3,"handedOn":9}');
   assert.deepEqual(JSON.parse(text), POT_COUNTS);
-  // The pot's limiter, then the origin. No bot check: looking costs nothing.
+  // The pot's limiter, then the origin: nothing is kept yet, so this request asks. There is no
+  // bot check on this route, and a look is not free: it can cost the practice network a
+  // question. What keeps many looks from costing many questions is that the origin is asked
+  // once for everyone (pot-stats.test.ts).
   assert.deepEqual(h.trace, ['limit:pot', 'origin:potStats']);
   assert.deepEqual(h.originArgs, [], 'nothing of the request goes to the origin');
-  assert.deepEqual(h.lines, [{ route: 'pot_stats', status: 200, upstream: 200, ms: 5, fault: null }]);
+  // (This route looks at the clock twice more than the others: to see how old the kept counts
+  // are, and to date the answer that came. Each look is 5 ms after the last.)
+  assert.deepEqual(h.lines, [{ route: 'pot_stats', status: 200, upstream: 200, ms: 15, fault: null }]);
 
   // Whatever else an origin's answer holds beside the three counts is not passed on: the
   // Worker writes the body from those three fields itself.
@@ -1113,13 +1118,15 @@ test('a flood of looks at the pot counts cannot use up "Pass it on", nor the oth
     (limiter) => limiter.name === 'POT_LIMIT',
   );
   assert.deepEqual(budget?.simple, { limit: 60, period: 60 });
-  const flooded = harness();
+  // A clock that stands still: all of this happens in one moment.
+  const flooded = harness({ now: () => 1000 });
   const pot = countingLimiter(60);
   flooded.deps.limits = { ...flooded.deps.limits, pot };
   const handler = makeHandler(flooded.deps);
   const key = await readerKey('pot', READER_IP);
 
-  // 500 looks from one reader in one minute: 60 are answered, and the origin hears of no more.
+  // 500 looks from one reader in one minute: 60 are answered, and each of the 500 is counted
+  // or refused before anything else. The origin hears of one: the 60 share its answer.
   let answered = 0;
   for (let n = 0; n < 500; n += 1) {
     const response = await handler(get(API.potStats));
@@ -1127,14 +1134,16 @@ test('a flood of looks at the pot counts cannot use up "Pass it on", nor the oth
     else assert.deepEqual([response.status, await errorOf(response)], [429, { error: 'limit' }]);
   }
   assert.equal(answered, 60);
-  assert.equal(flooded.trace.filter((step) => step === 'origin:potStats').length, 60);
+  assert.equal(pot.calls, 500, 'the limiter was asked about every one of them');
+  assert.equal(flooded.trace.filter((step) => step === 'origin:potStats').length, 1);
   assert.deepEqual([pot.count(`${key}:stats`), pot.count(key)], [60, 0]);
   // The same reader still gets the pot's address, 60 times over.
   for (let n = 0; n < 60; n += 1) assert.equal((await handler(post(API.potAddress, null))).status, 200, String(n));
   assert.equal((await handler(post(API.potAddress, null))).status, 429);
   assert.deepEqual([pot.count(`${key}:stats`), pot.count(key)], [60, 60]);
-  // And another reader has counts of their own.
+  // And another reader has a budget of their own, and is given the same answer: the origin is not asked again.
   assert.equal((await handler(get(API.potStats, { 'CF-Connecting-IP': '203.0.113.8' }))).status, 200);
+  assert.equal(flooded.trace.filter((step) => step === 'origin:potStats').length, 1);
 
   // The other way round: a reader with no address requests left can still look.
   const spent = harness();
@@ -1162,7 +1171,10 @@ test('pot counts the origin cannot give come back as "unavailable", with the fau
     const h = await refusedWith(get(API.potStats), 'unavailable', ['limit:pot', 'origin:potStats'], {
       potStats: () => ({ ok: false, code: 'unavailable', detail: null, upstream, fault }),
     });
-    assert.deepEqual(h.lines, [{ route: 'pot_stats', status: 502, upstream, ms: 5, fault }], `${upstream} ${fault}`);
+    // (One look at the clock more than other routes take, to see how old the kept counts are: 10 ms.)
+    assert.deepEqual(h.lines, [{ route: 'pot_stats', status: 502, upstream, ms: 10, fault }], `${upstream} ${fault}`);
+    // An answer that failed is not kept: there is nothing for the next request to be given.
+    assert.deepEqual(h.deps.potStatsHolder, { kept: null, asking: null }, `${upstream} ${fault}`);
   }
 });
 
@@ -1542,13 +1554,15 @@ test('every other request writes exactly one line, whether it went well or was r
     ['the pot address from another site', post(API.potAddress, null, foreign), {}, line('pot_address', 403)],
     ['the pot address, wrong method', get(API.potAddress), {}, line('pot_address', 405)],
 
-    ['the pot counts', get(API.potStats), {}, line('pot_stats', 200, 200)],
-    ['the pot counts from another site', get(API.potStats, foreign), {}, line('pot_stats', 200, 200)],
+    // The pot's counts look at the clock once more than the other routes, to see how old the
+    // kept counts are (10 ms), and once more again to date an answer that came (15 ms).
+    ['the pot counts', get(API.potStats), {}, { ...line('pot_stats', 200, 200), ms: 15 }],
+    ['the pot counts from another site', get(API.potStats, foreign), {}, { ...line('pot_stats', 200, 200), ms: 15 }],
     [
       'the pot counts, origin down',
       get(API.potStats),
       { potStats: () => ({ ok: false, code: 'unavailable', detail: null, upstream: 502, fault: 'origin_down' }) },
-      line('pot_stats', 502, 502, 'origin_down'),
+      { ...line('pot_stats', 502, 502, 'origin_down'), ms: 10 },
     ],
     ['the pot counts over the limit', get(API.potStats), { over: ['pot'] }, line('pot_stats', 429)],
     ['the pot counts, wrong method', post(API.potStats, null), {}, line('pot_stats', 405)],
@@ -1628,8 +1642,11 @@ test('when a part throws, the answer is unavailable and the log says the handler
     const { response, h } = await run(request, options);
     assert.equal(response.status, 502);
     assert.deepEqual(await errorOf(response), { error: 'unavailable' });
-    assert.deepEqual(h.lines, [{ route, status: 502, upstream: null, ms: 5, fault: 'handler' }]);
+    // (The pot's counts had looked at the clock once more by then, to see how old the kept counts were.)
+    assert.deepEqual(h.lines, [{ route, status: 502, upstream: null, ms: route === 'pot_stats' ? 10 : 5, fault: 'handler' }]);
     for (const [name, value] of Object.entries(FIXED_HEADERS)) assert.equal(response.headers.get(name), value);
+    // A question that threw leaves nothing behind: no counts, and no question that later requests would wait for.
+    assert.deepEqual(h.deps.potStatsHolder, { kept: null, asking: null }, route);
   }
   // A limiter that breaks is our fault too, and nothing behind it is asked.
   const h = harness();

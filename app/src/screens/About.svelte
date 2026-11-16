@@ -1,8 +1,9 @@
 <script lang="ts">
   // The About page: what this is and who runs it, the practice network's
   // facts, and then, in short sections, what this browser keeps, what our
-  // server sees and writes down, what is counted, and what the faucet's bot
-  // check does.
+  // server sees and writes down (and, at its end, what a link back to a
+  // chapter of the main site carries), what is counted, and what the
+  // faucet's bot check does.
   //
   // Every sentence about what is stored, sent or seen is a claim about the
   // code (strings/about.ts says which file each rests on). Three things on
@@ -13,7 +14,8 @@
   //     with a line under the faucet's amount while the faucet is closed;
   //   - "In this browser right now" says what is stored here at this moment:
   //     the wallet's record, and the note of the "Do it" steps where there
-  //     is one;
+  //     is one (or that something is stored in the note's place that this
+  //     page cannot read);
   //   - the list of what is counted is the contract's list of events, and
   //     the line above it says whether counting is switched on.
   //
@@ -50,8 +52,8 @@
     keptNow,
     keptNowLines,
     linkText,
+    noteNow,
   } from './info/facts.ts';
-  import { progressKept } from './doit/view.ts';
 
   const wallet = useWallet();
   const doit = useDoit();
@@ -61,8 +63,12 @@
 
   /** What this browser holds for the page at this moment. */
   let kept = $derived(keptNow(wallet.status, wallet.record));
-  /** The same, in sentences: the wallet's record, and the note of the "Do it" steps where one is stored. */
-  let keptLines = $derived(kept === null ? null : keptNowLines(kept, progressKept(doit.read)));
+  /** What is stored where the note of the "Do it" steps goes: nothing, a note, or something this page cannot read. */
+  let note = $derived(noteNow(doit.read));
+  /** The same, in sentences: the wallet's record, and what is stored in the note's place where something is. */
+  let keptLines = $derived(kept === null ? null : keptNowLines(kept, note));
+  /** The sentence that follows the one about the wallet's record, where one does. */
+  let also = $derived(keptLines?.also ?? null);
 
   /** Whether the settings say that events are wanted. While they do not, the app sends none. */
   let counting = $derived(wallet.config.events);
@@ -76,9 +82,12 @@
   let english = $derived(router.lang === 'en' ? undefined : 'en');
 </script>
 
-<!-- Under the line about the wallet's record, when the note of the "Do it" steps is stored beside it. -->
+<!-- Under the line about the wallet's record: that the note of the "Do it" steps is stored beside it, or that
+     something is stored in the note's place that this page cannot read. -->
 {#snippet alsoNote()}
-  <p data-testid="about-kept-note">{t.noteAlsoNow}</p>
+  {#if also !== null}
+    <p data-testid="about-kept-note">{t[also]}</p>
+  {/if}
 {/snippet}
 
 <Page title={t.title} titleName={c.linkAbout} lede={t.lede}>
@@ -156,8 +165,8 @@
         text={t[keptLines.text]}
         data-testid="about-kept-now"
         data-kept={kept}
-        data-note={progressKept(doit.read) ? 'yes' : 'no'}
-        children={keptLines.also ? alsoNote : undefined}
+        data-note={note === 'kept' ? 'yes' : note === 'unreadable' ? 'unreadable' : 'no'}
+        children={also !== null ? alsoNote : undefined}
       />
     {/if}
   </Section>
@@ -176,6 +185,8 @@
       <p>{t.serverLimit}</p>
       <p>{t.serverLog}</p>
       <p>{t.serverCloudflare}</p>
+      <!-- What goes to LearnBitcoin's main site when the reader follows a link back to a chapter. -->
+      <p data-testid="about-link-back">{t.serverBack}</p>
     </Prose>
   </Section>
 

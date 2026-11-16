@@ -1244,7 +1244,10 @@ export function makeSession(deps: SessionDeps): Session {
     probeStorage();
     load();
   } else {
-    // This browser derives wrong keys. Nothing is read, written, made or opened.
+    // This browser derives wrong keys. The wallet reads, writes, makes and opens nothing: the storage is
+    // not even probed, so `storable` stays as it started. (The note of the "Do it" steps is not the
+    // wallet's: lib/doit/runner.ts reads it, and writes it when a step's screen opens, in this state as
+    // in any other. About says so.)
     status = 'broken';
     publish();
   }

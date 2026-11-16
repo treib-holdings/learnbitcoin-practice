@@ -33,6 +33,21 @@
 //   - page.waitForStatus() also hears what the status region said before the
 //     call. Before a step whose message can be the same words as an earlier
 //     one, call page.forgetStatus().
+//   - The Worker keeps the pot's counts for 15 seconds, here as when it is
+//     deployed (worker/src/pot-stats.ts). The first look at them in a
+//     scenario is the network's answer of that moment. A look within the 15
+//     seconds after it is given the same answer, whatever has happened on
+//     the network since, and with the network down too. A scenario that
+//     needs the Worker to ask again says that the time has passed:
+//     s.stack.advanceClock(POT_STATS_KEEP_MS), with the constant from the
+//     Worker's package. Nothing switches the keeping off.
+//   - The main site is no part of a scenario's world. A link to it names a
+//     host that the pages may not reach, and a page that follows one fails
+//     its scenario (a request to another host). A scenario that has to
+//     follow such a link starts a stand-in for the main site itself, hands
+//     its address to the Worker as SITE_URL (`stack: { vars }` in the
+//     scenario's options) and lets its pages reach it (`allow`), as
+//     doit-chapter.test.ts does.
 //   - Every file in this folder is a scenario file (*.test.ts) or a helper
 //     (helpers.ts, or a name ending in helpers.ts). Under any other name a
 //     file of scenarios would never be run, and nothing would say so: the
@@ -258,7 +273,10 @@ export interface ScenarioOptions {
 export interface Scenario {
   /** The app's address in this scenario: http://localhost:<port>. */
   url: string;
-  /** The Worker's side: its recorders (`events`, `lines`, `botChecks`), `over` to make a limiter refuse, the config. */
+  /**
+   * The Worker's side: its recorders (`events`, `lines`, `botChecks`), `over` to make a limiter refuse, the
+   * config, and `advanceClock` to let time pass for the Worker (it keeps the pot's counts for 15 seconds).
+   */
   stack: Stack;
   /** The practice network, with the calls that work on the stand-in and on a real one alike. */
   network: Network;

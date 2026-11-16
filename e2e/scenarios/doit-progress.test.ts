@@ -12,10 +12,12 @@
 //      the list, About, any screen of the wallet, the 12 words shown or a
 //      payment sent; and a payment sent before the step was opened does not
 //      count for it
-//   2. the way back to the chapter: "?from=" is kept when it is a plain
-//      path of the main site and ignored, without a word, when it is
-//      anything else; the link carries "#do-<step>" until the step is done
-//      and "#done=<step>" from then on
+//   2. the way back to the chapter: "?from=" is kept when it is the step's
+//      own chapter page, in English or in Spanish, and ignored, without a
+//      word, when it is anything else; a reader who came from the English
+//      chapter goes back to it from the Spanish wallet too; the link
+//      carries "#do-<step>" until the step is done and "#done=<step>" from
+//      then on
 //   3. "Forget my progress": the question, "Keep it", an answer pressed too
 //      soon, and the note gone; the wallet is untouched, and a step done
 //      again is counted again
@@ -29,11 +31,14 @@
 //      fields that fail their checks
 //   8. a step done before the server's settings have arrived is counted
 //      when they arrive, and not before
+//   9. in a browser that fails the wallet's self-test the steps keep their
+//      note as in any other, and About says so: its line speaks of the
+//      wallet only, and names the note once one is stored
 //
-// Scenarios 2 and 7 touch nothing of the stand-in (they need no wallet at
-// all) and could run against a real practice network as they are. The
-// other six are local only: they pay the wallet from the stand-in and
-// make blocks.
+// Scenarios 2, 7 and 9 touch nothing of the stand-in (they pay no wallet
+// and make no block) and could run against a real practice network as
+// they are. The other six are local only: they pay the wallet from the
+// stand-in and make blocks.
 
 import assert from 'node:assert/strict';
 import type { EventBody } from '@learnbitcoin/practice-contract';
@@ -56,6 +61,7 @@ import {
   sleep,
   standBy,
   storageKeys,
+  switchLanguage,
   toSection,
   untilAnswersCount,
   watchEventRequests,
@@ -137,12 +143,13 @@ scenario(
       await page.page.$$eval(hook('do-state'), (states) => states.map((state) => [state.getAttribute('data-state'), (state.textContent ?? '').trim()])),
       STEPS.map(() => ['not-started', en.stateNotStarted]),
     );
-    // A chapter's name leads to the chapter, in this tab, and tells the main site no more than where the reader comes from.
+    // A chapter's name leads to the chapter's page, in this tab, with no mark in its address; and nothing on the
+    // link asks for a referrer to be sent (the page's own policy sends none).
     assert.deepEqual(
       await page.page.$$eval(hook('do-chapter'), (links) =>
-        links.map((link) => [link.getAttribute('href'), (link.textContent ?? '').trim(), link.getAttribute('referrerpolicy'), link.getAttribute('target')]),
+        links.map((link) => [link.getAttribute('href'), (link.textContent ?? '').trim(), link.getAttribute('referrerpolicy'), link.getAttribute('rel'), link.getAttribute('target')]),
       ),
-      CHAPTERS.map((chapter) => [`${site}${chapter.path}`, fill(en.chapterHeading, { number: String(chapter.number), title: chapter.title }), 'origin', null]),
+      CHAPTERS.map((chapter) => [`${site}${chapter.path}`, fill(en.chapterHeading, { number: String(chapter.number), title: chapter.title }), null, null, null]),
     );
     // Which step stands under which chapter.
     assert.deepEqual(
@@ -266,12 +273,14 @@ scenario(
 );
 
 scenario(
-  'The way back to the chapter: "?from=" is kept when it is a plain path of the main site, and ignored without a word when it is a full address, a second slash, dots, an encoding of any of them, or too long; the latest plain one wins, a hostile one in the stored note is dropped, and the link ends "#do-<step>" until the step is done and "#done=<step>" after',
-  { timeout: 200_000 },
+  'The way back to the chapter: "?from=" is kept only when it is the step\'s own chapter page, in English or in Spanish, and ignored without a word when it is another step\'s chapter, any other page of the main site, a full address, a second slash, dots, an encoding of any of them, or too long; the latest of the two pages wins, any other path in the stored note is dropped, a reader who came from the English chapter goes back to it from the Spanish wallet too, and the link ends "#do-<step>" until the step is done and "#done=<step>" after',
+  { timeout: 240_000 },
   async (s) => {
     const site = s.stack.config.siteUrl;
     const STEP = 'pass-it-on';
+    /** The step's own chapter: its English page and its Spanish one. No other value of "from" counts for this step. */
     const OWN = '/journey/how-bitcoin-works';
+    const OWN_ES = '/es/recorrido/como-funciona-bitcoin';
     const reader = await begin(s, `/do/${STEP}`);
     const { page } = reader;
     await page.waitFor('step-parts');
@@ -289,37 +298,52 @@ scenario(
 
     // -- No "from" at all: the step's own chapter, with the card's mark and no stamp --
     assert.deepEqual(await arrive(''), { href: `${site}${OWN}#do-${STEP}`, from: undefined });
-    // The link itself: this tab, the site's name as the only thing the main site is told, and the main site's own origin.
+    // The link itself: this tab, nothing that asks for a referrer to be sent, and the main site's own origin.
     assert.deepEqual(
-      await page.page.$eval(hook('step-back'), (link) => [link.getAttribute('referrerpolicy'), link.getAttribute('target'), (link as HTMLAnchorElement).origin]),
-      ['origin', null, new URL(site).origin],
+      await page.page.$eval(hook('step-back'), (link) => [link.getAttribute('referrerpolicy'), link.getAttribute('rel'), link.getAttribute('target'), (link as HTMLAnchorElement).origin]),
+      [null, null, null, new URL(site).origin],
     );
 
-    // -- Plain paths of the main site are kept --
-    const plain: [why: string, query: string, from: string][] = [
-      ['a chapter page', 'from=/journey/what-bitcoin-actually-is', '/journey/what-bitcoin-actually-is'],
-      ['the same kind of path, encoded', 'from=%2Fjourney%2Fbe-your-own-bank', '/journey/be-your-own-bank'],
-      ['another page of the site', 'from=/glossary/utxo-unspent-transaction-output', '/glossary/utxo-unspent-transaction-output'],
-      ['a Spanish page', 'from=/es/recorrido/como-funciona-bitcoin', '/es/recorrido/como-funciona-bitcoin'],
-      ['the longest path that is kept: 200 characters', `from=/${'a'.repeat(199)}`, `/${'a'.repeat(199)}`],
-      ['the first of two', 'from=/journey/what-bitcoin-actually-is&from=//evil.example', '/journey/what-bitcoin-actually-is'],
-      ['among other things in the address', 'ref=//evil.example&from=/journey/be-your-own-bank&next=https://evil.example', '/journey/be-your-own-bank'],
-      ['the main site\'s front page', 'from=/', '/'],
+    // -- The step's own chapter page, in English or in Spanish, is kept --
+    const own: [why: string, query: string, from: string][] = [
+      ['the chapter\'s English page', `from=${OWN}`, OWN],
+      ['the same, encoded as a browser writes it in a link', 'from=%2Fjourney%2Fhow-bitcoin-works', OWN],
+      ['the chapter\'s Spanish page', `from=${OWN_ES}`, OWN_ES],
+      ['the Spanish page, encoded', 'from=%2Fes%2Frecorrido%2Fcomo-funciona-bitcoin', OWN_ES],
+      ['the first of two', `from=${OWN}&from=//evil.example`, OWN],
+      ['among other things in the address', `ref=//evil.example&from=${OWN_ES}&next=https://evil.example`, OWN_ES],
     ];
-    for (const [why, query, from] of plain) {
+    for (const [why, query, from] of own) {
       assert.deepEqual(await arrive(query), { href: `${site}${from}#do-${STEP}`, from }, why);
     }
 
     // -- Anything else is ignored: the link is the step's own chapter, and the note keeps no way back --
-    const hostile: [why: string, query: string][] = [
+    const refused: [why: string, query: string][] = [
+      // Plain paths of the main site that are not this step's chapter. Kept, any of them would send the reader
+      // back to a page that has no card for the step.
+      ['another step\'s chapter', 'from=/journey/what-bitcoin-actually-is'],
+      ['another step\'s chapter, encoded', 'from=%2Fjourney%2Fbe-your-own-bank'],
+      ['another step\'s chapter, in Spanish', 'from=/es/recorrido/se-tu-propio-banco'],
+      ['another page of the site', 'from=/glossary/utxo-unspent-transaction-output'],
+      ['the main site\'s front page', 'from=/'],
+      ['the Journey\'s own page', 'from=/journey'],
+      ['a long plain path, which a link could fill with text of its choosing', `from=/${'a'.repeat(199)}`],
+      ['a path that names a reader', 'from=/u/reader-4f1c9a7e-2b6d-4c1e-9d0a-7e5f3b2a1c0d/campaign-77'],
+      ['the chapter\'s page with a slash at its end', `from=${OWN}/`],
+      ['the chapter\'s page with something after it', `from=${OWN}/extra`],
+      ['the chapter\'s Spanish path without its language', 'from=/recorrido/como-funciona-bitcoin'],
+      ['a plain first value that is not the chapter, with the chapter after it', `from=/newsletter&from=${OWN}`],
+      // Everything that is no plain path at all.
       ['a full address', 'from=https://evil.example/journey/how-bitcoin-works'],
       ['a full address, encoded', 'from=https%3A%2F%2Fevil.example%2Fjourney%2Fhow-bitcoin-works'],
+      ['the main site\'s own full address of the chapter', 'from=https://www.learnbitcoin.com/journey/how-bitcoin-works'],
       ['an address without its scheme', 'from=//evil.example/journey'],
       ['the same, encoded', 'from=%2F%2Fevil.example%2Fjourney'],
       ['a second slash inside the path', 'from=/journey//how-bitcoin-works'],
       ['a backslash', 'from=/%5Cevil.example'],
       ['a backslash, as typed', 'from=/\\evil.example'],
       ['dots that climb out', 'from=/journey/../../evil'],
+      ['dots that come back to the chapter', 'from=/journey/x/../how-bitcoin-works'],
       ['the same dots, encoded', 'from=/journey/%2e%2e/%2e%2e/evil'],
       ['a dot in a name', 'from=/journey/how-bitcoin-works.html'],
       ['a host name after one slash', 'from=/evil.example'],
@@ -334,72 +358,96 @@ scenario(
       ['a space', 'from=/journey/how%20bitcoin%20works'],
       ['a plus sign, which an address reads as a space', 'from=/journey/how+bitcoin+works'],
       ['a path encoded twice', 'from=%252Fjourney%252Fhow-bitcoin-works'],
-      ['a letter with an accent', 'from=/es/recorrido/qu%C3%A9-es-bitcoin'],
+      ['a letter with an accent', 'from=/es/recorrido/c%C3%B3mo-funciona-bitcoin'],
       ['a line break', 'from=/journey/how%0Abitcoin-works'],
       ['a NUL character', 'from=/journey/how-bitcoin-works%00'],
       ['an underscore', 'from=/journey/how_bitcoin_works'],
-      ['a path one character too long: 201', `from=/${'a'.repeat(200)}`],
+      ['a path of 201 characters', `from=/${'a'.repeat(200)}`],
       ['a very long path', `from=/${'journey/'.repeat(400)}how-bitcoin-works`],
       ['an empty value', 'from='],
-      ['the name in capitals', 'FROM=/journey/what-bitcoin-actually-is'],
-      ['a hostile first value with a plain one after it', 'from=//evil.example&from=/journey/what-bitcoin-actually-is'],
+      ['the name in capitals', `FROM=${OWN}`],
+      ['a hostile first value with the chapter after it', `from=//evil.example&from=${OWN}`],
     ];
-    for (const [why, query] of hostile) {
+    for (const [why, query] of refused) {
       assert.deepEqual(await arrive(query), { href: `${site}${OWN}#do-${STEP}`, from: undefined }, why);
+      // Nothing of what the address said is kept: the note is the one any first opening of the step writes.
+      assert.deepEqual((await noteOf(page))?.steps, { [STEP]: { started: true } }, why);
       // "Without a word": the screen is the step's own, with nothing said about the address.
       assert.equal(await page.text('step-title'), en['title_pass-it-on'], why);
       assert.equal(await countOf(page, 'do-no-storage'), 0, why);
     }
 
-    // -- The latest plain one wins. An opening with a hostile one, or with none, leaves the earlier one alone. --
-    assert.deepEqual(await arrive('from=/journey/what-bitcoin-actually-is'), { href: `${site}/journey/what-bitcoin-actually-is#do-${STEP}`, from: '/journey/what-bitcoin-actually-is' });
-    assert.deepEqual(await arrive('from=//evil.example/journey', { fresh: false }), {
-      href: `${site}/journey/what-bitcoin-actually-is#do-${STEP}`,
-      from: '/journey/what-bitcoin-actually-is',
-    });
-    assert.deepEqual(await arrive('', { fresh: false }), { href: `${site}/journey/what-bitcoin-actually-is#do-${STEP}`, from: '/journey/what-bitcoin-actually-is' });
-    assert.deepEqual(await arrive('from=/journey/be-your-own-bank', { fresh: false }), { href: `${site}/journey/be-your-own-bank#do-${STEP}`, from: '/journey/be-your-own-bank' });
+    // -- The latest of the chapter's two pages wins. An opening with anything else, or with none, leaves the earlier one alone. --
+    assert.deepEqual(await arrive(`from=${OWN}`), { href: `${site}${OWN}#do-${STEP}`, from: OWN });
+    assert.deepEqual(await arrive('from=//evil.example/journey', { fresh: false }), { href: `${site}${OWN}#do-${STEP}`, from: OWN });
+    assert.deepEqual(await arrive('from=/journey/be-your-own-bank', { fresh: false }), { href: `${site}${OWN}#do-${STEP}`, from: OWN });
+    assert.deepEqual(await arrive('', { fresh: false }), { href: `${site}${OWN}#do-${STEP}`, from: OWN });
+    assert.deepEqual(await arrive(`from=${OWN_ES}`, { fresh: false }), { href: `${site}${OWN_ES}#do-${STEP}`, from: OWN_ES });
 
-    // -- A hostile way back that is in the stored note already (written by anything but this page) is dropped
-    //    when the note is read, and is gone from it at the next write --
+    // -- A reader who came from the English chapter and then switches the wallet to Spanish still goes back to
+    //    the English chapter: the switch is no new opening, and the Spanish page loaded again reads the same
+    //    way back from its address --
+    assert.deepEqual(await arrive(`from=${OWN}`), { href: `${site}${OWN}#do-${STEP}`, from: OWN });
+    const documents = documentsOf(page);
+    await switchLanguage(page);
+    await arrivesAt(page, `/es/do/${STEP}`);
+    await page.page.waitForFunction((wanted) => document.querySelector('[data-testid="step-back"]')?.textContent?.trim() === wanted, {}, strings.doit.es.back);
+    counted.push(view(`/es/do/${STEP}`));
+    assert.equal(documentsOf(page), documents, 'the switch loads no page');
+    assert.equal(await page.text('step-title'), strings.doit.es['title_pass-it-on']);
+    assert.equal(await hrefOf(page, 'step-back'), `${site}${OWN}#do-${STEP}`, 'the Spanish wallet leads back to the English chapter the reader came from');
+    assert.equal((await noteOf(page))?.steps[STEP]?.from, OWN);
+    await reloadStep(page);
+    counted.push(view(`/es/do/${STEP}`));
+    assert.equal(await hrefOf(page, 'step-back'), `${site}${OWN}#do-${STEP}`, 'and still does after the Spanish page was loaded again');
+    assert.equal((await noteOf(page))?.steps[STEP]?.from, OWN);
+
+    // -- A way back that is in the stored note already and is not the step's own chapter (written by anything
+    //    but this page) is dropped when the note is read, and is gone from it at the next write --
     const at = Date.now();
-    for (const planted of ['//evil.example/journey', 'https://evil.example/', '/journey/../x', `/${'a'.repeat(200)}`]) {
+    for (const planted of ['//evil.example/journey', 'https://evil.example/', '/journey/../x', `/${'a'.repeat(200)}`, '/newsletter', '/journey/be-your-own-bank', `${OWN}/`, '/u/reader-4f1c9a7e/campaign-77']) {
       await page.store(PROGRESS_KEY, noteFor({ following: STEP, followedAt: at, steps: { [STEP]: { started: true, from: planted } } }));
       assert.deepEqual(await arrive('', { fresh: false }), { href: `${site}${OWN}#do-${STEP}`, from: undefined }, planted);
+      assert.ok(!((await noteText(page)) ?? '').includes('from'), `${planted}: the note that was written back has no way back in it`);
     }
 
     // -- A step that is done: the same way back, now with the mark the chapter stamps on --
     const done = { started: true as const, doneAt: at, parts: { 1: true as const, 2: true as const, 3: true as const } };
-    await page.store(PROGRESS_KEY, noteFor({ following: null, steps: { [STEP]: { ...done, from: '/journey/what-bitcoin-actually-is' } } }));
-    assert.deepEqual(await arrive('', { fresh: false }), { href: `${site}/journey/what-bitcoin-actually-is#done=${STEP}`, from: '/journey/what-bitcoin-actually-is' });
+    await page.store(PROGRESS_KEY, noteFor({ following: null, steps: { [STEP]: { ...done, from: OWN_ES } } }));
+    assert.deepEqual(await arrive('', { fresh: false }), { href: `${site}${OWN_ES}#done=${STEP}`, from: OWN_ES });
     assert.equal(await countOf(page, 'step-done'), 1);
-    await page.store(PROGRESS_KEY, noteFor({ following: null, steps: { [STEP]: { ...done, from: '//evil.example/journey' } } }));
-    assert.equal((await arrive('', { fresh: false })).href, `${site}${OWN}#done=${STEP}`);
-    // A hostile "from" in the address of a done step changes nothing either.
+    for (const planted of ['//evil.example/journey', '/journey/what-bitcoin-actually-is', '/newsletter']) {
+      await page.store(PROGRESS_KEY, noteFor({ following: null, steps: { [STEP]: { ...done, from: planted } } }));
+      assert.equal((await arrive('', { fresh: false })).href, `${site}${OWN}#done=${STEP}`, planted);
+    }
+    // A "from" in the address of a done step that is not its chapter changes nothing either.
     assert.equal((await arrive(`from=/journey/how-bitcoin-works%23done%3Dhold-some`, { fresh: false })).href, `${site}${OWN}#done=${STEP}`);
+    assert.equal((await arrive('from=/journey/be-your-own-bank', { fresh: false })).href, `${site}${OWN}#done=${STEP}`);
 
     // -- The strip of a done step carries the same link: on Home, for a step that was finished elsewhere --
-    await page.store(PROGRESS_KEY, noteFor({ following: STEP, followedAt: at, steps: { [STEP]: { ...done, from: '/journey/be-your-own-bank' } } }));
+    await page.store(PROGRESS_KEY, noteFor({ following: STEP, followedAt: at, steps: { [STEP]: { ...done, from: OWN_ES } } }));
     await page.goto('/');
     counted.push(view('/'));
     await untilStrip(page, STEP, 'done');
-    assert.equal(await hrefOf(page, 'strip-chapter'), `${site}/journey/be-your-own-bank#done=${STEP}`);
+    assert.equal(await hrefOf(page, 'strip-chapter'), `${site}${OWN_ES}#done=${STEP}`);
     assert.deepEqual(
-      await page.page.$eval(hook('strip-chapter'), (link) => [link.getAttribute('referrerpolicy'), link.getAttribute('target')]),
-      ['origin', null],
+      await page.page.$eval(hook('strip-chapter'), (link) => [link.getAttribute('referrerpolicy'), link.getAttribute('rel'), link.getAttribute('target')]),
+      [null, null, null],
     );
-    await page.store(PROGRESS_KEY, noteFor({ following: STEP, followedAt: at, steps: { [STEP]: { ...done, from: '//evil.example' } } }));
-    await page.goto('/');
-    counted.push(view('/'));
-    await untilStrip(page, STEP, 'done');
-    assert.equal(await hrefOf(page, 'strip-chapter'), `${site}${OWN}#done=${STEP}`);
+    for (const planted of ['//evil.example', '/journey/be-your-own-bank']) {
+      await page.store(PROGRESS_KEY, noteFor({ following: STEP, followedAt: at, steps: { [STEP]: { ...done, from: planted } } }));
+      await page.goto('/');
+      counted.push(view('/'));
+      await untilStrip(page, STEP, 'done');
+      assert.equal(await hrefOf(page, 'strip-chapter'), `${site}${OWN}#done=${STEP}`, planted);
+    }
 
-    // -- In Spanish the step's own chapter is the Spanish page --
+    // -- In Spanish, with no way back noted, the step's own chapter is the Spanish page --
     await page.store(PROGRESS_KEY, null);
     await page.goto(`/es/do/${STEP}`);
     await page.waitFor('step-parts');
     counted.push(view(`/es/do/${STEP}`));
-    assert.equal(await hrefOf(page, 'step-back'), `${site}/es/recorrido/como-funciona-bitcoin#do-${STEP}`);
+    assert.equal(await hrefOf(page, 'step-back'), `${site}${OWN_ES}#do-${STEP}`);
     assert.deepEqual(stepsCounted(s), {});
 
     // No wallet was ever in this browser. What must not show up anywhere is held against the harness's own test wallet.
@@ -604,7 +652,6 @@ scenario(
         doIt('/do/waiting-room', STEP),
       ],
       { records: [record], words: [WORDS], addresses: [record.firstAddress, SOMEBODY], txids: [funding, first.txid, second.txid] },
-      { from: [FROM] },
     );
   },
 );
@@ -790,7 +837,7 @@ scenario(
 );
 
 scenario(
-  'What is stored under the note\'s key and is no note counts as no progress, is left alone by the list and replaced when a step is opened; in a note, a field that fails its check is dropped by itself, a step this version does not know is not read, and the rest stands',
+  'What is stored under the note\'s key and is no note counts as no progress, is left alone by the list and by About, which says that something is stored there that it cannot read, and is replaced when a step is opened; in a note, a field that fails its check is dropped by itself, a step this version does not know is not read, and the rest stands',
   { timeout: 150_000 },
   async (s) => {
     const NONSENSE = 'not a note {';
@@ -806,6 +853,36 @@ scenario(
     for (const absent of ['do-newer', 'do-no-storage', 'do-following']) assert.equal(await countOf(page, absent), 0, absent);
     assert.equal(await countOf(page, 'do-forget'), 1);
     assert.equal(await noteText(page), NONSENSE);
+
+    // -- About says what is so: no wallet, and something stored where the note goes that this page cannot
+    //    read. Not "Nothing": the key holds text, and the list has just offered to erase it. --
+    const rightNow = async (path: string): Promise<{ kept: string | null; note: string | null; says: string; also: string[] }> => {
+      await page.goto(path);
+      await page.waitFor('about-kept-now');
+      return {
+        kept: await attributeOf(page, 'about-kept-now', 'data-kept'),
+        note: await attributeOf(page, 'about-kept-now', 'data-note'),
+        says: await page.text('about-kept-now'),
+        also: await page.texts('about-kept-note'),
+      };
+    };
+    assert.deepEqual(await rightNow('/about'), {
+      kept: 'none',
+      note: 'unreadable',
+      says: `${about.keepNowLabel} ${about.noWalletNow} ${about.noteUnreadableNow}`,
+      also: [about.noteUnreadableNow],
+    });
+    assert.equal(about.noteUnreadableNow, 'Something is stored where the note of your "Do it" progress goes, and this page cannot read it.');
+    assert.deepEqual(await rightNow('/es/about'), {
+      kept: 'none',
+      note: 'unreadable',
+      says: `${strings.about.es.keepNowLabel} ${strings.about.es.noWalletNow} ${strings.about.es.noteUnreadableNow}`,
+      also: ['Hay algo guardado donde va la nota de tu progreso de "Hazlo", y esta página no puede leerlo.'],
+    });
+    // Reading About wrote nothing over it either.
+    assert.equal(await noteText(page), NONSENSE);
+    await page.goto('/do');
+    await page.waitFor('do-list');
 
     // -- A step is opened: that is a write, and it puts a note in its place --
     await pickStep(page, 'the-seed');
@@ -854,14 +931,30 @@ scenario(
       steps: { 'hold-some': { started: true, parts: { 1: true } }, 'waiting-room': { started: true, doneAt: at, parts: { 1: true, 2: true, 3: true } } },
     });
     assert.deepEqual(stepsCounted(s), {});
+    // With a note that can be read, About says that the note is kept: the one sentence for a browser with no wallet.
+    assert.deepEqual(await rightNow('/about'), { kept: 'none', note: 'yes', says: `${about.keepNowLabel} ${about.noteOnlyNow}`, also: [] });
 
-    // No wallet was ever in this browser. What must not show up anywhere is held against the harness's own test wallet.
-    await ends(s, reader, [view('/do'), view('/do/the-seed'), view('/do'), view('/do/hold-some')], {
-      records: [testRecord()],
-      words: [WORDS],
-      addresses: [testRecord().firstAddress],
-      txids: [],
+    // -- A wallet in the browser, and again something in the note's place that is no note: About says the
+    //    wallet's line, and then that something is stored there that it cannot read --
+    await page.store('lbp_wallet_v1', JSON.stringify(testRecord()));
+    await page.store(PROGRESS_KEY, NONSENSE);
+    assert.deepEqual(await rightNow('/about'), {
+      kept: 'words',
+      note: 'unreadable',
+      says: `${about.keepNowLabel} ${about.keepNowWords} ${about.noteUnreadableNow}`,
+      also: [about.noteUnreadableNow],
     });
+    assert.equal(await noteText(page), NONSENSE);
+
+    // What must not show up anywhere is held against the harness's own test wallet, the one that was put into this
+    // browser at the end. What is stored for the steps is the text the scenario put there, to the last character.
+    await ends(
+      s,
+      reader,
+      [view('/do'), view('/about'), view('/es/about'), view('/do'), view('/do/the-seed'), view('/do'), view('/do/hold-some'), view('/about'), view('/about')],
+      { records: [testRecord()], words: [WORDS], addresses: [testRecord().firstAddress], txids: [] },
+      { untouched: NONSENSE },
+    );
   },
 );
 
@@ -930,5 +1023,115 @@ scenario(
       { records: [record], words: [WORDS], addresses: [record.firstAddress, paid.to], txids: [funding, paid.txid] },
     );
     assert.deepEqual(stepsCounted(s), { 'pass-it-on': 1 });
+  },
+);
+
+scenario(
+  'In a browser that fails the wallet\'s self-test About speaks of the wallet only: before any step it says that no wallet is read or stored here, and once a step\'s screen has been opened it adds that the note of the progress is kept, in both languages; the wallet\'s record that was stored before is never read, changed or removed, and "Forget my progress" takes the second sentence away again',
+  { timeout: 150_000 },
+  async (s) => {
+    const record = testRecord();
+    const kept = JSON.stringify(record);
+    const page = await standBy(s, { record, timeout: 30_000 });
+    const reader = { page, requests: watchEventRequests(page) };
+    // In every page from here on, before any script of the app runs. The salt of the seed is turned into
+    // something else, so every key this browser derives is wrong and the wallet's self-test fails. And every
+    // call to the browser's storage is written down, with the key it names.
+    await page.page.evaluateOnNewDocument(() => {
+      const normalize = String.prototype.normalize;
+      String.prototype.normalize = function wrong(this: string, form?: string): string {
+        const out = normalize.call(this, form);
+        return form === 'NFKD' && out.startsWith('mnemonic') ? `${out}x` : out;
+      };
+      const calls: string[] = [];
+      (window as unknown as { __storageCalls: string[] }).__storageCalls = calls;
+      for (const name of ['getItem', 'setItem', 'removeItem'] as const) {
+        const real = Storage.prototype[name] as (this: Storage, ...args: string[]) => unknown;
+        (Storage.prototype as unknown as Record<string, unknown>)[name] = function watched(this: Storage, ...args: string[]): unknown {
+          calls.push(`${name} ${String(args[0])}`);
+          return real.apply(this, args);
+        };
+      }
+    });
+    /** What the app asked of the storage in the document that is showing. (Asked first: the harness's own looks at the storage come after.) */
+    const storageCalls = (): Promise<string[]> => page.page.evaluate(() => [...(window as unknown as { __storageCalls: string[] }).__storageCalls]);
+    /** About's line "In this browser right now": what it is about, whether a note is there, and its words. */
+    const rightNow = async (path: string): Promise<{ kept: string | null; note: string | null; says: string; also: string[]; calls: string[] }> => {
+      await page.goto(path);
+      await page.waitFor('about-kept-now');
+      await page.settle();
+      const calls = await storageCalls();
+      return {
+        kept: await attributeOf(page, 'about-kept-now', 'data-kept'),
+        note: await attributeOf(page, 'about-kept-now', 'data-note'),
+        says: await page.text('about-kept-now'),
+        also: await page.texts('about-kept-note'),
+        calls,
+      };
+    };
+
+    // -- Before any step: the line speaks of the wallet, and nothing follows it. The page has looked for a note
+    //    and for nothing else. --
+    const before = await rightNow('/about');
+    assert.deepEqual([before.kept, before.note], ['broken', 'no']);
+    assert.equal(before.says, `${about.keepNowLabel} ${about.keepNowBroken}`);
+    assert.equal(about.keepNowBroken, "Not known. This browser failed the wallet's self-test, so this page does not read or store a wallet here.");
+    assert.deepEqual(before.also, []);
+    assert.ok(before.calls.length > 0 && before.calls.every((call): boolean => call === `getItem ${PROGRESS_KEY}`), before.calls.join(', '));
+    assert.deepEqual(await storageKeys(page), ['lbp_wallet_v1']);
+
+    // -- A step's screen, opened as a chapter's card opens it: the note is written, in this browser as in any other --
+    await page.goto('/do/hold-some?from=/journey/what-bitcoin-actually-is');
+    await page.waitFor('step-parts');
+    await page.settle();
+    const onStep = await storageCalls();
+    assert.equal(onStep.filter((call): boolean => call === `setItem ${PROGRESS_KEY}`).length, 1, onStep.join(', '));
+    assert.ok(onStep.every((call): boolean => call.endsWith(` ${PROGRESS_KEY}`)), `the wallet's record was touched: ${onStep.join(', ')}`);
+    // No wallet can be used here, so no part can be done; and the step does not say that progress cannot be kept, for it is.
+    assert.equal((await partsOf(page))[0], 'blocked');
+    assert.equal(await countOf(page, 'do-no-storage'), 0);
+    const note = await noteOf(page);
+    assert.deepEqual(note?.steps, { 'hold-some': { started: true, from: '/journey/what-bitcoin-actually-is' } });
+    assert.equal(note?.following, 'hold-some');
+    assert.deepEqual(await storageKeys(page), [PROGRESS_KEY, 'lbp_wallet_v1']);
+
+    // -- About now: the same line about the wallet, and then that the note is kept too --
+    const after = await rightNow('/about');
+    assert.deepEqual([after.kept, after.note], ['broken', 'yes']);
+    assert.equal(after.says, `${about.keepNowLabel} ${about.keepNowBroken} ${about.noteAlsoNow}`);
+    assert.deepEqual(after.also, [about.noteAlsoNow]);
+    assert.ok(after.calls.every((call): boolean => call === `getItem ${PROGRESS_KEY}`), after.calls.join(', '));
+    const spanish = await rightNow('/es/about');
+    assert.deepEqual([spanish.kept, spanish.note], ['broken', 'yes']);
+    assert.equal(spanish.says, `${strings.about.es.keepNowLabel} ${strings.about.es.keepNowBroken} ${strings.about.es.noteAlsoNow}`);
+    assert.equal(
+      spanish.says,
+      'En este navegador, ahora mismo No se sabe. Este navegador no pasó la comprobación interna de la billetera, así que esta página no lee ni guarda ninguna billetera aquí. Este navegador también guarda la nota de tu progreso de "Hazlo".',
+    );
+    // What the line says of the wallet is so: the record that was stored is there, character for character.
+    assert.equal(await page.stored(), kept);
+
+    // -- The list reads the note back, and "Forget my progress" erases it: the second sentence goes with it --
+    await page.goto('/do');
+    await page.waitFor('do-list');
+    assert.equal(await listState(page, 'hold-some'), 'started');
+    await page.click('do-forget');
+    await page.waitFor('do-forget-confirm');
+    await untilAnswersCount();
+    await page.click('do-forget-confirm');
+    await page.waitFor('do-forgotten');
+    assert.deepEqual(await storageKeys(page), ['lbp_wallet_v1']);
+    const forgotten = await rightNow('/about');
+    assert.deepEqual([forgotten.kept, forgotten.note], ['broken', 'no']);
+    assert.equal(forgotten.says, `${about.keepNowLabel} ${about.keepNowBroken}`);
+    assert.equal(await page.stored(), kept);
+    assert.deepEqual(stepsCounted(s), {});
+
+    await ends(s, reader, [view('/about'), view('/do/hold-some'), view('/about'), view('/es/about'), view('/do'), view('/about')], {
+      records: [record],
+      words: [WORDS],
+      addresses: [record.firstAddress],
+      txids: [],
+    });
   },
 );

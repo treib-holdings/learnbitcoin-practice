@@ -101,7 +101,8 @@ export interface Runner {
    * at every change of screen; a call that names the screen that is already
    * open (the same screen in the other language) changes nothing. `search`
    * is the address's query string: a step's screen reads the way back to
-   * the main site from it ("?from=<path>").
+   * the main site from it ("?from=<path>"), and takes it only when it is
+   * one of the two pages of the step's own chapter.
    */
   watch(route: Route, search: string): void;
   /** Something the world is made of has changed: what the wallet publishes, or the stored note (another tab wrote it). */
@@ -255,7 +256,7 @@ export function makeRunner(deps: RunnerDeps): Runner {
       if (same) return;
       // A step's screen starts its step and follows it. Written first, so that the world looked at
       // next already holds a started step, and whatever is true of the wallet ticks at once.
-      if (opened) write({ kind: 'open', step: next.id, at: deps.now(), from: fromOfSearch(search) });
+      if (opened) write({ kind: 'open', step: next.id, at: deps.now(), from: fromOfSearch(next.id, search) });
       run();
     },
 
@@ -271,7 +272,7 @@ export function makeRunner(deps: RunnerDeps): Runner {
         // has just chosen to forget, and a tab nobody is looking at does not undo that.)
         const read = readProgress(local);
         if (read.state !== 'newer' && read.progress.steps[route.id]?.started !== true) {
-          write({ kind: 'open', step: route.id, at: deps.now(), from: fromOfSearch(query) });
+          write({ kind: 'open', step: route.id, at: deps.now(), from: fromOfSearch(route.id, query) });
         } else {
           // "A step's screen makes its step the followed one when its tab comes back into view."
           write({ kind: 'follow', step: route.id, at: deps.now() });

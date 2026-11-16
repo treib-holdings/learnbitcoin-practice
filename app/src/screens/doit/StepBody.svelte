@@ -77,7 +77,7 @@
   /** "Start this step again" is offered on a step under way, but not while the drill's wallet is out of the browser (view.ts). */
   let restartable = $derived(canRestart(view, doit.kept, wallet.status));
 
-  /** The way back to the chapter: the page the reader came from, or the step's own chapter. Null when no link can be built. */
+  /** The way back to the step's chapter: the one of its two pages the reader came from, or the one in this page's language. Null when no link can be built. */
   let back = $derived(chapterLink(wallet.config.siteUrl, id, lang, note));
 
   /**

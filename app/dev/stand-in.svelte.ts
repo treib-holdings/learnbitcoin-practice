@@ -47,8 +47,9 @@
 //   events=yes                 screen views are counted (into a list on the page, never the network: see main.ts)
 //   delay=<milliseconds>       how long an action takes (default 600)
 //   from=<path>                not the stand-in's: a step's screen (/do/<id>) reads it from its own
-//                              address, as the page of the main site the reader came from. It is let
-//                              through here, so that such an address can be opened in the gallery
+//                              address, as the page of the step's chapter the reader came from (it
+//                              counts only when it is that chapter's English or Spanish path). It is
+//                              let through here, so that such an address can be opened in the gallery
 //
 // QUERY KEYS that say how an action ends. The first value is the default.
 // Wherever "passkey" stands in a list, any of these may be given: cancelled,

@@ -22,6 +22,7 @@ import { makeForwardEvent } from './events.ts';
 import { makeHandler } from './handler.ts';
 import { refusal } from './headers.ts';
 import { makeOrigin } from './origin.ts';
+import { makePotStatsHolder } from './pot-stats.ts';
 
 declare global {
   /**
@@ -50,6 +51,23 @@ function log(line: LogLine): void {
   if (line.fault === null) console.log(line);
   else console.error(line);
 }
+
+/**
+ * The pot's counts, kept between requests (pot-stats.ts).
+ *
+ * Everything else in this file is made anew for each request. This is made
+ * once, when Cloudflare starts an isolate for the Worker, and it is there
+ * for every request that isolate answers. That is the whole reason it
+ * stands here, outside any function: made inside depsFor() below, it would
+ * be empty for every request, and every request would ask the origin for
+ * itself. Each isolate has its own, and a new isolate starts with an empty
+ * one.
+ *
+ * It holds plain data: three counts that are the same for every reader,
+ * when they came, and a note of the question that is out for them. Nothing
+ * of a request is ever put in it.
+ */
+const potStatsHolder = makePotStatsHolder();
 
 function depsFor(request: Request, env: Env, context: Context): Deps {
   const config = configFromEnv(env);
@@ -87,11 +105,15 @@ function depsFor(request: Request, env: Env, context: Context): Deps {
       pot: env.POT_LIMIT,
       events: env.EVENTS_LIMIT,
     },
+    // The one part that is not made here: the same holder for every request.
+    potStatsHolder,
     log,
     waitUntil: (promise) => context.waitUntil(promise),
     // In a Worker the clock stands still while code runs and moves only when
     // the Worker waits for something outside itself. So the "ms" of a log
     // line is the time spent waiting, which is nearly always the origin's.
+    // The same clock says how old the pot's kept counts are: they are dated
+    // when the origin's answer has come, which is after such a wait.
     now: () => Date.now(),
   };
 }

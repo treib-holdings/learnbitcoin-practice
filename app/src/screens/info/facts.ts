@@ -7,6 +7,7 @@
 
 import { EVENTS, type AppConfig, type EventName, type Lang } from '@learnbitcoin/practice-contract';
 import { satsText } from '../../components/wallet/frame.ts';
+import type { Read } from '../../lib/doit/progress.ts';
 import { fill, formatSats } from '../../lib/format.ts';
 import type { PublicRecord, WalletStatus } from '../../lib/wallet-api.ts';
 import { strings } from '../../strings/index.ts';
@@ -68,7 +69,9 @@ export function faucetClosed(config: AppConfig): boolean {
  *             without a passkey, or any wallet restored here from its words
  * unreadable  something is stored under the wallet's key that cannot be read
  * newer       a record written by a newer version of the page
- * broken      the self-test failed, so the page has read nothing and stores nothing
+ * broken      the self-test failed, so the page has read no wallet and stores none.
+ *             (The note of the "Do it" steps is another matter: it is read and
+ *             kept in this state as in every other.)
  */
 export type KeptNow = 'none' | 'passkey' | 'words' | 'unreadable' | 'newer' | 'broken';
 
@@ -105,22 +108,51 @@ export const KEPT_KEYS = {
 } as const satisfies Record<KeptNow, AboutKey>;
 
 /**
+ * What is stored where the note of the "Do it" steps goes, as About's line
+ * tells it:
+ *
+ *   none        nothing (or the browser will not let this page look)
+ *   kept        a note: this version's, or one a newer version wrote
+ *   unreadable  something that is no note this version can read. This page
+ *               never writes such a value: it was damaged, or changed by
+ *               hand. The list of steps shows no progress for it, and offers
+ *               "Forget my progress"
+ */
+export type NoteNow = 'none' | 'kept' | 'unreadable';
+
+export function noteNow(read: Read['state']): NoteNow {
+  if (read === 'kept' || read === 'newer') return 'kept';
+  return read === 'unreadable' ? 'unreadable' : 'none';
+}
+
+/**
  * What the line "In this browser right now" says, when the note of the
  * "Do it" steps may be stored beside the wallet's record, or without one.
  * Removing a wallet leaves that note in place, so "Nothing" would be false
- * of a browser that has no wallet and still has the note.
+ * of a browser that has no wallet and still has the note. It would be
+ * false, too, of a browser that holds something unreadable in the note's
+ * place: that state has a sentence of its own, as an unreadable record of
+ * the wallet has.
  *
  *   text  the sentence about the wallet's record; for a browser with no
- *         wallet and a note, the one sentence that says both
- *   also  true when the sentence that the note is kept too follows it
+ *         wallet and a note, the one sentence that says both; for one
+ *         with no wallet and something unreadable, "No practice wallet."
+ *   also  the sentence that follows it, or null: that the note is kept
+ *         too, or that something is stored in its place that this page
+ *         cannot read
  *
- * A browser that failed the self-test is said to hold "not known", and
- * nothing is added to that.
+ * A browser that failed the self-test is no exception. The wallet's own
+ * code reads and stores nothing there, and the steps keep their note all
+ * the same, from the moment a step's screen is opened. So that line says
+ * "not known" of the wallet only, and the sentence about the note follows
+ * it like any other: said without it, the page would promise that nothing
+ * is stored in a browser where the note is.
  */
-export function keptNowLines(kept: KeptNow, note: boolean): { text: AboutKey; also: boolean } {
-  if (!note || kept === 'broken') return { text: KEPT_KEYS[kept], also: false };
-  if (kept === 'none') return { text: 'noteOnlyNow', also: false };
-  return { text: KEPT_KEYS[kept], also: true };
+export function keptNowLines(kept: KeptNow, note: NoteNow): { text: AboutKey; also: AboutKey | null } {
+  if (note === 'none') return { text: KEPT_KEYS[kept], also: null };
+  if (note === 'unreadable') return { text: kept === 'none' ? 'noWalletNow' : KEPT_KEYS[kept], also: 'noteUnreadableNow' };
+  if (kept === 'none') return { text: 'noteOnlyNow', also: null };
+  return { text: KEPT_KEYS[kept], also: 'noteAlsoNow' };
 }
 
 // -- what is counted ---------------------------------------------------------------

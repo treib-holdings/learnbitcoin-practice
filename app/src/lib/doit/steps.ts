@@ -83,7 +83,13 @@ export interface PartDef {
 /** A chapter of the main site's Journey that has steps: its number, and its page in each language. */
 export interface Chapter {
   number: 2 | 3 | 4;
-  /** The page's path on the main site, by language. Plain paths: they pass the rule for a way back (progress.ts). */
+  /**
+   * The page's path on the main site, by language, as the main site itself
+   * writes its address: with no slash at the end. For a step of this
+   * chapter these two paths are the only ways back there are (validFrom in
+   * progress.ts): a "from" in a step's address counts only when it is one
+   * of them, character for character.
+   */
   path: Readonly<Record<Lang, string>>;
 }
 

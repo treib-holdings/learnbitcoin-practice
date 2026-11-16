@@ -30,6 +30,7 @@ import {
   configFromEnv,
   makeHandler,
   makeOrigin,
+  makePotStatsHolder,
   type ConfigVars,
   type Deps,
   type Handler,
@@ -103,6 +104,8 @@ function stack() {
       return { ok: true, upstream: 202, fault: null };
     },
     limits,
+    // One Worker, started once: its holder of the pot's counts lives as long as the stack.
+    potStatsHolder: makePotStatsHolder(),
     log: (line) => {
       lines.push(line);
     },
@@ -261,7 +264,7 @@ function follow(s: Stack, page: Page) {
       page.chain.watch(to.name);
       trackPage(to, 'en');
       // A step's screen starts its step and follows it; that is the first write a browser ever sees.
-      if (to.name === 'step') write({ kind: 'open', step: to.id, at: s.clock.ms, from: fromOfSearch(search) });
+      if (to.name === 'step') write({ kind: 'open', step: to.id, at: s.clock.ms, from: fromOfSearch(to.id, search) });
       run();
     },
     /** The page is gone (a page load, a closed tab): its engine is no longer listened to. */

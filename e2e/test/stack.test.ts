@@ -65,11 +65,13 @@ import {
   type WalletState,
 } from '@learnbitcoin/practice-wallet';
 import {
+  POT_STATS_KEEP_MS,
   configFromEnv,
   makeBotCheck,
   makeForwardEvent,
   makeHandler,
   makeOrigin,
+  makePotStatsHolder,
   type ConfigVars,
   type Deps,
   type EventMeta,
@@ -234,6 +236,10 @@ function stack(options: StackOptions = {}) {
       pot: limiter('pot'),
       events: limiter('events'),
     },
+    // One Worker, started once: its holder of the pot's counts lives as long as the stack. So the
+    // counts are kept as they are when deployed, by the stack's own clock (`clock.ms`), which a
+    // test moves by hand: the origin is asked once, and again when the answer is 15 seconds old.
+    potStatsHolder: makePotStatsHolder(),
     log: (line) => {
       lines.push(line);
     },
@@ -1513,39 +1519,61 @@ test('the pot\'s counts: three numbers cross from the bots to the app, written b
   const state = await scanWallet(watch, s.api.esplora);
   /** What the bots themselves answer, asked with nothing in between. */
   const bots = async (): Promise<unknown> => (await s.network.fetch(`${ORIGIN}/bots/pot/stats`)).json();
+  /** How often the bots have been asked for the counts. Until this test asks them itself, further down, that is how often the Worker has. */
+  const asked = (): number => s.reached('GET', '/bots/pot/stats');
+  /**
+   * For the Worker, 15 seconds pass. It gives everyone the bots' last answer until that answer is
+   * 15 seconds old (worker/src/pot-stats.ts), so this is how a test gets it to ask the bots again.
+   */
+  const answerRunsOut = (): void => {
+    s.clock.ms += POT_STATS_KEEP_MS;
+  };
 
   // Nobody has passed anything on yet. The app reads that as three zeros, and the request leaves a line.
   assert.deepEqual(await s.api.potStats(), { passedOn: 0, waiting: 0, handedOn: 0 });
   assert.deepEqual(s.lines, [line('pot_stats', 200, 200)]);
-  assert.equal(s.reached('GET', '/bots/pot/stats'), 1);
+  assert.equal(asked(), 1);
 
   // The wallet pays the pot. The counter counts what is in a block, so nothing moves until one is mined.
   const pot = await s.api.potAddress();
   const gift = signPayment(account.key, state, { to: pot, amount: 60_000n, feeRate: 2n });
   assert.equal(await s.api.esplora.broadcast(gift.hex), gift.txid);
+  answerRunsOut();
   assert.deepEqual(await s.api.potStats(), { passedOn: 0, waiting: 0, handedOn: 0 });
+  assert.equal(asked(), 2);
   s.network.mine();
+  // Asked again at once, the app is given the answer the Worker has: the one from before the block.
+  // The bots are not asked. (So a count on a screen can be up to 15 seconds behind the chain.)
+  assert.deepEqual(await s.api.potStats(), { passedOn: 0, waiting: 0, handedOn: 0 });
+  assert.equal(asked(), 2);
+  // Once that answer has run out, the Worker asks, and the payment is counted.
+  answerRunsOut();
   assert.deepEqual(await s.api.potStats(), { passedOn: 1, waiting: 1, handedOn: 0 });
+  assert.equal(asked(), 3);
 
   // A newcomer's coin is made from it: none waiting any more, one handed on.
   const payment = await s.api.askFaucet(SOMEONE, DUMMY_TOKEN);
   assert.equal(payment.potTxid, gift.txid);
+  answerRunsOut();
   assert.deepEqual(await s.api.potStats(), { passedOn: 1, waiting: 0, handedOn: 1 });
+  assert.equal(asked(), 4);
 
   // The bots say more than that: the sats the pot has received, and how many payments the faucet
   // has made. The Worker writes its own answer from three of the fields, so the page is sent the
-  // three counts under the contract's names, and not a byte of the rest.
+  // three counts under the contract's names, and not a byte of the rest. That goes for an answer
+  // the Worker had kept as for one it has just been given: this one is kept.
   assert.deepEqual(await bots(), { learners_passed_on: 1, sats_received: 60_000, coins_waiting: 0, coins_passed_to_newcomers: 1, faucet_payments: 1 });
+  assert.equal(asked(), 5, 'four questions of the Worker\'s, and this one of the test\'s own');
   const raw = await s.page(API.potStats);
   assert.equal(raw.status, 200);
   assert.match(raw.headers.get('Content-Type') ?? '', /^application\/json\b/);
+  assert.equal(raw.headers.get('Cache-Control'), 'no-store', 'kept by the Worker for a moment, and by nothing else');
   assert.equal(raw.headers.get('Access-Control-Allow-Origin'), null);
   assert.equal(await raw.text(), '{"passedOn":1,"waiting":0,"handedOn":1}');
 
   // A plain GET like the other reads: it needs no page of the app's behind it, and takes nothing after its path.
   const bare = await fetchFrom(s.handler, 'bare')(API.potStats);
   assert.deepEqual([bare.status, await bare.json()], [200, { passedOn: 1, waiting: 0, handedOn: 1 }]);
-  const asked = s.reached('GET', '/bots/pot/stats');
   for (const [path, init, status] of [
     [`${API.potStats}?x=1`, {}, 404],
     [`${API.potStats}/`, {}, 404],
@@ -1553,30 +1581,98 @@ test('the pot\'s counts: three numbers cross from the bots to the app, written b
   ] as const) {
     assert.equal((await s.page(path, init)).status, status, path);
   }
-  assert.equal(s.reached('GET', '/bots/pot/stats'), asked, 'none of those reached the bots');
+  assert.equal(asked(), 5, 'none of those reached the bots: not the two that were given the kept answer, not the three that were refused');
 
   // Each reading counts 1 at the pot's limiter, on a count of the reader's own beside the one
-  // "Pass it on" uses (as the older pages of a long list have theirs at the chain's limiter).
+  // "Pass it on" uses (as the older pages of a long list have theirs at the chain's limiter). A
+  // reading that is given the kept answer is counted like one the bots are asked for.
   const stats = { limiter: 'pot', cost: 1, apart: 'stats' };
   const address = { limiter: 'pot', cost: 1, apart: '' };
   assert.deepEqual(
     s.counted.filter((call) => call.limiter === 'pot'),
-    [stats, address, stats, stats, stats, stats, stats],
+    [stats, address, stats, stats, stats, stats, stats, stats],
   );
-  // One line for each request, and a line holds a route, two statuses, a time and a fault: none of the counts.
+  // One line for each request, and a line holds a route, two statuses, a time and a fault: none of
+  // the counts. The second status is the bots', and there is none where the bots were not asked.
   assert.deepEqual(s.lines, [
     line('pot_stats', 200, 200),
     line('pot_address', 200, 200),
     line('esplora_broadcast', 200, 200),
     line('pot_stats', 200, 200),
+    line('pot_stats', 200),
     line('pot_stats', 200, 200),
     line('faucet', 200, 200),
     line('pot_stats', 200, 200),
-    line('pot_stats', 200, 200),
-    line('pot_stats', 200, 200),
+    line('pot_stats', 200),
+    line('pot_stats', 200),
     line('unknown', 404),
     line('unknown', 404),
     line('pot_stats', 405),
+  ]);
+});
+
+test('the pot\'s counts are asked for once for everyone: sixty pages at the same moment, one question to the bots; and an answer that failed is not kept', async () => {
+  // Something on the way holds the Worker's question to the bots until the test lets it through.
+  let through: () => void = () => {};
+  let gate: Promise<void> = Promise.resolve();
+  const hold = (): void => {
+    gate = new Promise((open) => {
+      through = open;
+    });
+  };
+  const s = stack({
+    transport: (send) => async (input, init) => {
+      if (new URL(input).pathname === '/bots/pot/stats') await gate;
+      return send(input, init);
+    },
+  });
+  const asked = (): number => s.reached('GET', '/bots/pot/stats');
+  /** Waits until `count` requests in all have been counted at the pot's limiter, and have gone as far as they can. */
+  const arrived = async (count: number): Promise<void> => {
+    for (let turns = 0; s.counted.filter((call) => call.limiter === 'pot').length < count; turns += 1) {
+      assert.ok(turns < 10_000, 'not every request reached the limiter');
+      await new Promise((turn) => setImmediate(turn));
+    }
+    await new Promise((turn) => setImmediate(turn));
+  };
+
+  // Sixty pages ask at the same moment, and the bots take their time.
+  hold();
+  const looks = Array.from({ length: 60 }, () => s.api.potStats());
+  await arrived(60);
+  assert.deepEqual(s.lines, [], 'nobody has an answer yet');
+  through();
+  for (const each of looks) assert.deepEqual(await each, { passedOn: 0, waiting: 0, handedOn: 0 });
+  assert.equal(asked(), 1, 'the bots were asked once for the sixty of them');
+  // Each of the sixty was counted, and each wrote its line: all of them waited for the bots' answer.
+  assert.equal(s.counted.filter((call) => call.limiter === 'pot' && call.apart === 'stats').length, 60);
+  assert.deepEqual(s.lines.splice(0), Array.from({ length: 60 }, () => line('pot_stats', 200, 200)));
+
+  // The answer runs out while the bots are stopped. Twenty pages ask: one question, which fails, and
+  // all twenty are told so. Nothing is kept of it: the next page asks again, and again.
+  s.clock.ms += POT_STATS_KEEP_MS;
+  s.network.setFaucet('down');
+  hold();
+  const failing = Array.from({ length: 20 }, () => thrownBy(() => s.api.potStats()));
+  await arrived(80);
+  through();
+  for (const each of failing) assert.equal(failureOf(await each), 'unavailable');
+  assert.equal(asked(), 2);
+  assert.deepEqual(s.lines.splice(0), Array.from({ length: 20 }, () => line('pot_stats', 502, 502, 'origin_down')));
+  for (const again of [3, 4]) {
+    assert.equal(failureOf(await thrownBy(() => s.api.potStats())), 'unavailable');
+    assert.equal(asked(), again);
+  }
+  // The bots are back: the next page is answered, and that answer is kept for the pages after it.
+  s.network.setFaucet('ok');
+  assert.deepEqual(await s.api.potStats(), { passedOn: 0, waiting: 0, handedOn: 0 });
+  assert.deepEqual(await s.api.potStats(), { passedOn: 0, waiting: 0, handedOn: 0 });
+  assert.equal(asked(), 5);
+  assert.deepEqual(s.lines.splice(0), [
+    line('pot_stats', 502, 502, 'origin_down'),
+    line('pot_stats', 502, 502, 'origin_down'),
+    line('pot_stats', 200, 200),
+    line('pot_stats', 200),
   ]);
 });
 
@@ -1609,7 +1705,8 @@ test('the pot\'s counts when they cannot be read: the app is told "unavailable" 
   s.network.setFaucet('ok');
   assert.deepEqual(await s.api.potStats(), { passedOn: 0, waiting: 0, handedOn: 0 });
 
-  // The pot's limiter refuses: "limit", and the bots are not asked.
+  // The pot's limiter refuses: "limit", and the bots are not asked. The Worker has an answer it
+  // could give, the one of a moment ago, and refuses all the same: the reader's count comes first.
   const before = s.reached('GET', '/bots/pot/stats');
   s.over.add('pot');
   s.lines.length = 0;
@@ -1617,6 +1714,10 @@ test('the pot\'s counts when they cannot be read: the app is told "unavailable" 
   assert.equal(s.reached('GET', '/bots/pot/stats'), before);
   assert.deepEqual(s.lines, [line('pot_stats', 429)]);
   s.over.clear();
+  // With the limiter out of the way, that answer is given, and the bots are still not asked.
+  assert.deepEqual(await s.api.potStats(), { passedOn: 0, waiting: 0, handedOn: 0 });
+  assert.equal(s.reached('GET', '/bots/pot/stats'), before);
+  assert.deepEqual(s.lines.splice(0), [line('pot_stats', 429), line('pot_stats', 200)]);
 
   // An origin that never answers is given up on.
   const slow = stack({ timeoutMs: 40 });

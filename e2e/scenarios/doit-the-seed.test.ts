@@ -571,7 +571,6 @@ scenario(
         doIt('/es/do/the-seed', STEP),
       ],
       { records: [record], words: [words], addresses: [record.firstAddress], txids: [] },
-      { from: [CAPITULO] },
     );
   },
 );

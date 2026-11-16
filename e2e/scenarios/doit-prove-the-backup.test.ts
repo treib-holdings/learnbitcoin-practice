@@ -15,7 +15,7 @@
 //   2. with a passkey wallet, after "The seed" was done for it: the paper
 //      check is ticked already; the wallet opened again with its passkey
 //      leaves the step not done; restored from the words it is done, and the
-//      screen says what has changed
+//      screen says what the restore changed
 //   3. it stays not done when another wallet is restored; a done "The
 //      seed" then offers its check again for the wallet that is here; with
 //      the first wallet restored the step is done
@@ -24,8 +24,13 @@
 //      made while the step was not followed
 //   5. with the page loaded again after every part, and the faucet's page
 //      load between two parts
+//   6. the done drill of a wallet that was opened with a passkey, read again
+//      in each state a reader can then bring this browser to: that wallet
+//      kept with its words, that wallet behind its passkey again, no wallet,
+//      another wallet. The card says what the restore changed, and what it
+//      says is true in each of them
 //
-// All five are local only: they pay the wallet from the stand-in, or ask
+// All six are local only: they pay the wallet from the stand-in, or ask
 // the faucet.
 
 import assert from 'node:assert/strict';
@@ -45,6 +50,7 @@ import {
   untilAnswersCount,
   untilPhase,
   watchPrompts,
+  wordsOnScreen,
 } from './journey-helpers.ts';
 import {
   PROGRESS_KEY,
@@ -83,6 +89,7 @@ import {
 
 const en = strings.doit.en;
 const home = strings.home.en;
+const about = strings.about.en;
 
 const STEP = 'prove-the-backup';
 const SEED = 'the-seed';
@@ -236,7 +243,7 @@ scenario(
 );
 
 scenario(
-  'Prove the backup with a passkey wallet: the paper check is ticked already when "The seed" was done for this wallet; opened again with its passkey the wallet proves the passkey and the step stays not done; restored from the 12 words it is done, and the screen says what has changed',
+  'Prove the backup with a passkey wallet: the paper check is ticked already when "The seed" was done for this wallet; opened again with its passkey the wallet proves the passkey and the step stays not done; restored from the 12 words it is done, and the screen says what the restore changed',
   { localOnly: true, timeout: 200_000 },
   async (s) => {
     const reader = await begin(s, '/new', { passkey: 'prf' });
@@ -304,7 +311,7 @@ scenario(
     const back = await storedRecord(page);
     assert.deepEqual([back?.kind, back?.fingerprint], ['words', record.fingerprint]);
 
-    // -- Done, and what has changed: this browser now keeps the wallet with its words --
+    // -- Done, and what the restore changed: this browser began to keep the wallet with its words --
     await stripBack(page, STEP);
     await page.waitFor('step-done');
     assert.deepEqual(await partsOf(page), ['ticked', 'ticked', 'ticked', 'ticked']);
@@ -665,6 +672,199 @@ scenario(
         view('/do/prove-the-backup'),
       ],
       { records: [record], words: [words], addresses: [address], txids: [faucetTxid] },
+    );
+  },
+);
+
+scenario(
+  'A done drill for a wallet that was opened with a passkey says what the restore changed, and goes on saying it word for word whatever this browser keeps by then: that wallet with its words, that wallet behind its passkey again, no wallet, and another wallet; each time the stored record and About say what is kept right now, the passkey opens the same wallet, and the way back to the passkey that the card names works',
+  { localOnly: true, timeout: 300_000 },
+  async (s) => {
+    const reader = await begin(s, '/new', { passkey: 'prf' });
+    const { page } = reader;
+    const prompts = await watchPrompts(page);
+    await page.waitFor('create-passkey');
+    const made = await createFrom(page, 'create-passkey');
+    const { record, words } = made;
+    // A second wallet, for the state in which another wallet is in this browser. It holds coins, so that a restore finds it.
+    const second = freshRecord();
+    const others = wordsOf(second);
+    const fundings = [s.standIn.fund(record.firstAddress, 100_000), s.standIn.fund(second.firstAddress, 7_000)];
+    await page.click('words-written');
+    await arrivesAt(page, '/wallet');
+    await page.waitFor('coin');
+
+    // -- "The seed" and then the drill, the short way: removed on Settings, restored from the 12 words --
+    await page.click('overview-do-link');
+    await arrivesAt(page, '/do');
+    await pickStep(page, SEED);
+    await doTheSeed(page, words);
+    await page.click('step-next');
+    await arrivesAt(page, `/do/${STEP}`);
+    await untilParts(page, ['ticked', 'now', 'later', 'later']);
+    await act(page, '/wallet/settings');
+    await removeHere(page);
+    await untilStrip(page, STEP, 'part');
+    await page.click('home-restore');
+    await arrivesAt(page, '/restore');
+    await restoreHere(page, words);
+    await untilStrip(page, STEP, 'done');
+    await stripBack(page, STEP);
+    await page.waitFor('step-done');
+    assert.deepEqual(await prompts.asked(), { create: 1, get: 0 });
+
+    /** The card, as it must read in every state below: the same words, drawn from the same note. */
+    const CARD = `${en.changedTitle} ${en.changed}`;
+    assert.equal(await page.text('step-changed'), CARD);
+    // It is in three of the four states below that a sentence about the present would be false: there the
+    // browser does not keep that wallet with its words, and (in two of them) asks for the passkey again. So the
+    // card speaks of the restore, and says nowhere what this browser keeps or asks for now.
+    assert.match(CARD, /^What the restore changed When you restored the wallet from its 12 words, this browser began to keep it with those words, not encrypted, and stopped asking for the passkey\. /);
+    assert.doesNotMatch(CARD, /\bnow keeps\b|\bkeeps (this|the) wallet\b|\bno longer asks\b|\bis kept\b/);
+    const drill = (await noteOf(page))?.steps[STEP];
+    assert.ok(drill?.doneAt !== undefined);
+    assert.deepEqual(drill, { started: true, doneAt: drill.doneAt, was: 'passkey', parts: { 1: true, 2: true, 3: true, 4: true } });
+
+    /**
+     * One state, looked at after a page load each: the done drill's card, the drill's note, what About
+     * says this browser keeps right now, and what it really keeps for the wallet.
+     */
+    const look = async (): Promise<{ card: string; kept: string | null; about: string; stored: Awaited<ReturnType<typeof storedRecord>> }> => {
+      await page.goto(`/do/${STEP}`);
+      await page.waitFor('step-done');
+      const card = await page.text('step-changed');
+      assert.deepEqual((await noteOf(page))?.steps[STEP], drill, 'the done drill\'s note is as it was');
+      await page.goto('/about');
+      await page.waitFor('about-kept-now');
+      return { card, kept: await attributeOf(page, 'about-kept-now', 'data-kept'), about: await page.text('about-kept-now'), stored: await storedRecord(page) };
+    };
+
+    /** The way back to the passkey that the card names: "remove the wallet that is in this browser, if there is one, and choose Open with my passkey". */
+    const backToThePasskey = async (here: 'a wallet' | 'no wallet'): Promise<void> => {
+      if (here === 'a wallet') {
+        await page.goto('/wallet/settings');
+        await removeHere(page);
+      } else {
+        await page.goto('/');
+      }
+      assert.equal(await page.text('open-passkey'), strings.wallet.en.openButton);
+      assert.ok(en.changed.endsWith(`choose "${strings.wallet.en.openButton}".`), 'the card quotes the button as Home draws it');
+      // Chrome answers a passkey prompt only for the page that is in front.
+      await page.page.bringToFront();
+      await page.click('open-passkey');
+      await arrivesAt(page, '/wallet');
+      await page.waitFor('coin');
+      // "The passkey still opens the same wallet": the wallet the drill was done for, and this browser keeps none of its words.
+      const opened = await storedRecord(page);
+      assert.deepEqual([opened?.kind, opened?.fingerprint, opened?.xpub, opened?.mnemonic], ['passkey', record.fingerprint, record.xpub, undefined]);
+      assert.equal(await page.text('total'), '100,000 practice sats');
+    };
+
+    // -- 1. That wallet, kept with its words: what the restore did is what is so right now --
+    const withWords = await look();
+    assert.equal(withWords.card, CARD);
+    assert.deepEqual([withWords.stored?.kind, withWords.stored?.fingerprint, withWords.stored?.mnemonic], ['words', record.fingerprint, words.join(' ')], 'kept with those words, not encrypted');
+    assert.deepEqual([withWords.kept, withWords.about], ['words', `${about.keepNowLabel} ${about.keepNowWords} ${about.noteAlsoNow}`]);
+    // "And stopped asking for the passkey": the 12 words are shown with no prompt.
+    await page.goto('/wallet/backup');
+    await page.click('reveal-words');
+    assert.deepEqual(await wordsOnScreen(page), words);
+    assert.deepEqual(await prompts.asked(), { create: 1, get: 0 });
+
+    // -- 2. The reader takes the way back that the card names. The wallet is behind its passkey again, the
+    //       browser keeps none of its words, and the card says what it said: it is about the restore. --
+    await backToThePasskey('a wallet');
+    assert.deepEqual(await prompts.asked(), { create: 1, get: 1 });
+    const behindPasskey = await look();
+    assert.equal(behindPasskey.card, CARD);
+    assert.deepEqual([behindPasskey.stored?.kind, behindPasskey.stored?.fingerprint, behindPasskey.stored?.mnemonic], ['passkey', record.fingerprint, undefined]);
+    for (const pair of [words.slice(0, 2), words.slice(5, 7), words.slice(10, 12)]) {
+      assert.ok(!((await page.stored()) ?? '').includes(pair.join(' ')), 'no two of the 12 words are stored');
+    }
+    assert.deepEqual([behindPasskey.kept, behindPasskey.about], ['passkey', `${about.keepNowLabel} ${about.keepNowPasskey} ${about.noteAlsoNow}`]);
+
+    // -- 3. No wallet at all: the note is all this browser keeps, and the card is the same --
+    await page.goto('/wallet/settings');
+    await removeHere(page);
+    assert.deepEqual(await storageKeys(page), [PROGRESS_KEY]);
+    const noWallet = await look();
+    assert.equal(noWallet.card, CARD);
+    assert.equal(noWallet.stored, null);
+    assert.deepEqual([noWallet.kept, noWallet.about], ['none', `${about.keepNowLabel} ${about.noteOnlyNow}`]);
+    // The way back from here has nothing to remove: the passkey opens the wallet.
+    await backToThePasskey('no wallet');
+    assert.deepEqual(await prompts.asked(), { create: 1, get: 2 });
+
+    // -- 4. Another wallet, kept with its own words: the card still speaks of the wallet that was restored in
+    //       the drill, and About says what is here now --
+    await page.goto('/wallet/settings');
+    await removeHere(page);
+    await page.click('home-restore');
+    await arrivesAt(page, '/restore');
+    await restoreHere(page, others);
+    await page.waitFor('coin');
+    assert.equal(await page.text('total'), '7,000 practice sats');
+    const another = await look();
+    assert.equal(another.card, CARD);
+    assert.deepEqual([another.stored?.kind, another.stored?.fingerprint], ['words', second.fingerprint]);
+    assert.notEqual(second.fingerprint, record.fingerprint);
+    assert.deepEqual([another.kept, another.about], ['words', `${about.keepNowLabel} ${about.keepNowWords} ${about.noteAlsoNow}`]);
+    // The way back from here removes the wallet that is in this browser, as the card says, and the passkey
+    // opens the wallet of the drill.
+    await backToThePasskey('a wallet');
+    assert.deepEqual(await prompts.asked(), { create: 1, get: 3 });
+
+    // The drill was counted once, when it was done, and nothing since has counted it again.
+    assert.deepEqual(stepsCounted(s), { 'the-seed': 1, 'prove-the-backup': 1 });
+
+    const looked = [view('/do/prove-the-backup'), view('/about')];
+    const removed = (kind: 'passkey' | 'words') => [view('/wallet/settings'), { name: 'Wallet removed' as const, path: '/wallet/settings', value: kind }, view('/')];
+    const opened = [view('/wallet'), { name: 'Unlock' as const, path: '/wallet', value: 'opened' }];
+    await ends(
+      s,
+      reader,
+      [
+        view('/new'),
+        { name: 'Passkey', path: '/new', value: 'ok' },
+        { name: 'Wallet created', path: '/new', value: 'passkey' },
+        view('/wallet/backup'),
+        { name: 'Words shown', path: '/wallet/backup', value: 'passkey' },
+        view('/wallet'),
+        view('/do'),
+        view('/do/the-seed'),
+        view('/wallet/backup'),
+        view('/do/the-seed'),
+        doIt('/do/the-seed', SEED),
+        view('/do/prove-the-backup'),
+        ...removed('passkey'),
+        view('/restore'),
+        { name: 'Restore', path: '/restore', value: 'found' },
+        doIt('/restore', STEP),
+        view('/wallet'),
+        view('/do/prove-the-backup'),
+        // 1. kept with its words
+        ...looked,
+        view('/wallet/backup'),
+        { name: 'Words shown', path: '/wallet/backup', value: 'words' },
+        // 2. behind its passkey again
+        ...removed('words'),
+        ...opened,
+        ...looked,
+        // 3. no wallet, and the way back from there
+        ...removed('passkey'),
+        ...looked,
+        view('/'),
+        ...opened,
+        // 4. another wallet, and the way back from there
+        ...removed('passkey'),
+        view('/restore'),
+        { name: 'Restore', path: '/restore', value: 'found' },
+        view('/wallet'),
+        ...looked,
+        ...removed('words'),
+        ...opened,
+      ],
+      { records: [record, second], words: [words, others], addresses: [record.firstAddress, second.firstAddress], txids: fundings },
     );
   },
 );

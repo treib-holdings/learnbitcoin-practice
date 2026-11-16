@@ -11,12 +11,20 @@
 //   passkey wallets           src/lib/passkey.ts, wallet/src/keys.ts
 //   what our server sees      worker/src/handler.ts (the log line, and which requests write one),
 //                             worker/src/reader-key.ts (the limit per reader)
+//   a link back to a chapter  src/components/doit/ChapterLink.svelte (this tab, and no referrer: the page's
+//                             own policy in public/_headers holds for it), chapterLink() in
+//                             src/lib/doit/progress.ts (the address of "Back to the chapter": one of the
+//                             chapter's two pages and the step's mark), chapterUrl() in
+//                             src/screens/doit/view.ts (a chapter's name: its page, and no mark)
 //   what is counted           the contract's EVENTS, src/lib/events.ts, worker/src/events.ts
 //   the faucet's bot check    src/lib/turnstile.ts, worker/src/bot-check.ts, beforeBotCheck in src/lib/wallet-api.ts
 //
 // Change the code and the sentence changes with it. test/info-text.test.ts,
-// test/info-kept.test.ts (the 12 words, against the wallet engine) and
-// e2e/scenarios/info.test.ts hold the two together where a program can.
+// test/info-kept.test.ts (the 12 words, against the wallet engine),
+// test/doit-text.test.ts (the note of the steps, field by field),
+// e2e/scenarios/info.test.ts and e2e/scenarios/doit-chapter.test.ts (the
+// link back, followed to a stand-in for the main site) hold the two together
+// where a program can.
 //
 // What the page may promise is short (SPEC section 12): no account, we set
 // no cookies, the 12 words never leave this browser. It never says that
@@ -46,7 +54,7 @@ export const en = {
   shortTitle: 'The short version',
   shortBody: 'There is no account, and we set no cookies. The 12 words never leave this browser.',
   shortRest:
-    "The rest of this page says what does leave it: what our server sees, what is counted, and what the faucet's bot check does.",
+    "The rest of this page says what does leave it: what our server sees, what a link back to LearnBitcoin carries, what is counted, and what the faucet's bot check does.",
 
   // -- what this is, and who runs it --
   whatTitle: 'What this is',
@@ -93,26 +101,40 @@ export const en = {
   keepNote: 'The note of your "Do it" progress holds:',
   keepNoteSteps: 'Which steps you have opened, which parts of each are ticked, and the time each step was done.',
   keepNoteFollowing: 'Which step you are following, and when you last followed it.',
-  keepNoteFrom: 'The page of LearnBitcoin you came to a step from, so that "Back to the chapter" leads there.',
+  // The way back is never free text: for each step it is the English or the Spanish page of the step's own chapter, or nothing (validFrom).
+  keepNoteFrom:
+    'Whether you came to a step from the English or the Spanish page of its chapter, so that "Back to the chapter" leads to that page.',
   keepNoteWallet:
     'For the two steps about the 12 words: the wallet fingerprint of the wallet they were checked for and, from the drill on, whether this browser opened that wallet with a passkey or with its words.',
   keepNotePayment:
     "While a step waits for a payment: that payment's transaction ID and the time it was sent. Both are erased when the step is done.",
   keepNoteNever:
     'The note never holds one of the 12 words, a key or an answer you typed. Removing the wallet leaves it in place: "Forget my progress" on the Do it screen erases it.',
-  /** The label of the line that says what is stored here at this moment. One of the six lines below follows it. */
+  /** The label of the line that says what is stored here at this moment. One of the lines below follows it. */
   keepNowLabel: 'In this browser right now',
   keepNowNone: 'Nothing. This browser has no practice wallet.',
   /** In its place, when no wallet is here and the note of the "Do it" steps is. */
   noteOnlyNow: 'No practice wallet. This browser keeps only the note of your "Do it" progress.',
   /** Under any of the lines below, when the note is stored beside what they name. */
   noteAlsoNow: 'This browser also keeps the note of your "Do it" progress.',
+  /**
+   * In its place, when what is stored under the note's key is no note this version can read (damaged, or
+   * changed by hand: this page never writes such a value). The list of steps then shows no progress, and
+   * offers "Forget my progress" for it. With no wallet here, the line before it is the next one.
+   */
+  noteUnreadableNow: 'Something is stored where the note of your "Do it" progress goes, and this page cannot read it.',
+  noWalletNow: 'No practice wallet.',
   keepNowPasskey: 'The record of a wallet that this browser opens with a passkey. Its 12 words are not stored.',
   keepNowWords: 'The record of a wallet kept with its 12 words, as plain text.',
   keepNowUnreadable: "Something is stored where the wallet's record goes, and this page cannot read it.",
   keepNowNewer: 'A record saved by a newer version of this page. This version leaves it alone.',
+  /**
+   * Of the wallet only. In this state the wallet's own code reads and stores nothing (src/lib/session.ts), and the
+   * "Do it" steps still read and keep their note (src/lib/doit/runner.ts): so the line about the note follows this
+   * one like any other, whenever a note is stored.
+   */
   keepNowBroken:
-    "Not known. This browser failed the wallet's self-test, so this page reads and stores nothing here.",
+    "Not known. This browser failed the wallet's self-test, so this page does not read or store a wallet here.",
 
   // -- wallets this browser opens with a passkey --
   passkeyTitle: 'Wallets opened with a passkey',
@@ -137,6 +159,10 @@ export const en = {
   // sentence says that Cloudflare's own logs can hold it.
   serverCloudflare:
     "The server runs on Cloudflare's network. Cloudflare stores those lines for a short time. Beside each one it keeps the web address that was asked for, the time and IDs that Cloudflare gives the request, and no IP address. For a line written while something on our side is broken, that web address can hold a wallet address or a transaction ID. Cloudflare also keeps logs of its own, and those can hold the IP address.",
+  // The links that lead back to the main site, in this tab (ChapterLink.svelte). They send no referrer. What they
+  // carry is their address: a chapter's page and, for "Back to the chapter", "#do-<step>" or "#done=<step>".
+  serverBack:
+    '"Back to the chapter", and a chapter\'s name on the Do it screen, lead to LearnBitcoin in this tab. The address of "Back to the chapter" names the step and whether it is done. Nothing about the wallet travels with either.',
 
   // -- what is counted --
   countTitle: 'What is counted',
@@ -149,7 +175,8 @@ export const en = {
   countNames: 'The first line of each entry is the name of the count, exactly as it is sent.',
   // One line for each event of the contract. screens/info/facts.ts ties
   // each key to its event, and the compiler refuses an event without one.
-  count_pageview: 'A screen was opened. Every transaction screen counts as the same screen.',
+  // A step's screen is counted under its own path, /do/<step> (the contract's eventPaths): so a view says which step was opened.
+  count_pageview: 'A screen was opened. Every transaction screen counts as the same screen. Each "Do it" step is a screen of its own.',
   count_walletCreated: 'A wallet was made in this browser, and whether with a passkey or without.',
   count_passkey:
     'How making a passkey ended: it worked, it was left unfinished, the prompt was closed or timed out, or it failed.',
@@ -201,7 +228,7 @@ export const es: Record<keyof typeof en, string> = {
   shortTitle: 'En pocas palabras',
   shortBody: 'No hay cuenta, y no ponemos cookies. Las 12 palabras nunca salen de este navegador.',
   shortRest:
-    'El resto de esta página dice qué sí sale de él: lo que ve nuestro servidor, lo que se cuenta y lo que hace la comprobación contra bots del faucet.',
+    'El resto de esta página dice qué sí sale de él: lo que ve nuestro servidor, lo que lleva un enlace de vuelta a LearnBitcoin, lo que se cuenta y lo que hace la comprobación contra bots del faucet.',
 
   whatTitle: 'Qué es esto',
   whatBody:
@@ -239,7 +266,8 @@ export const es: Record<keyof typeof en, string> = {
   keepNote: 'La nota de tu progreso de "Hazlo" contiene:',
   keepNoteSteps: 'Qué pasos abriste, qué partes de cada uno están marcadas, y el momento en que se terminó cada paso.',
   keepNoteFollowing: 'Qué paso estás siguiendo, y cuándo lo seguiste por última vez.',
-  keepNoteFrom: 'La página de LearnBitcoin desde la que llegaste a un paso, para que "Volver al capítulo" lleve ahí.',
+  keepNoteFrom:
+    'Desde cuál de las dos páginas de su capítulo llegaste a un paso, la que está en inglés o la que está en español, para que "Volver al capítulo" lleve a esa página.',
   keepNoteWallet:
     'En los dos pasos sobre las 12 palabras: la huella de la billetera para la que se comprobaron y, desde el ejercicio en adelante, si este navegador abría esa billetera con llave de acceso o con sus palabras.',
   keepNotePayment:
@@ -250,12 +278,14 @@ export const es: Record<keyof typeof en, string> = {
   keepNowNone: 'Nada. Este navegador no tiene billetera de práctica.',
   noteOnlyNow: 'Ninguna billetera de práctica. Este navegador guarda solo la nota de tu progreso de "Hazlo".',
   noteAlsoNow: 'Este navegador también guarda la nota de tu progreso de "Hazlo".',
+  noteUnreadableNow: 'Hay algo guardado donde va la nota de tu progreso de "Hazlo", y esta página no puede leerlo.',
+  noWalletNow: 'Ninguna billetera de práctica.',
   keepNowPasskey: 'El registro de una billetera que este navegador abre con llave de acceso. Sus 12 palabras no están guardadas.',
   keepNowWords: 'El registro de una billetera guardada con sus 12 palabras, como texto simple.',
   keepNowUnreadable: 'Hay algo guardado donde va el registro de la billetera, y esta página no puede leerlo.',
   keepNowNewer: 'Un registro guardado por una versión más nueva de esta página. Esta versión no lo toca.',
   keepNowBroken:
-    'No se sabe. Este navegador no pasó la comprobación interna de la billetera, así que esta página no lee ni guarda nada aquí.',
+    'No se sabe. Este navegador no pasó la comprobación interna de la billetera, así que esta página no lee ni guarda ninguna billetera aquí.',
 
   passkeyTitle: 'Billeteras que se abren con llave de acceso',
   passkeyBody:
@@ -273,6 +303,8 @@ export const es: Record<keyof typeof en, string> = {
     'Cuando la página pregunta por una dirección, una transacción o la altura de bloque actual, el servidor no anota nada, salvo que algo de nuestro lado esté fallando. Por cada una de las demás solicitudes (la configuración de la página, el faucet, la dirección del fondo común, los totales del fondo común, un pago que se envía, un conteo) anota una línea: qué tipo de solicitud fue, cómo terminó y cuánto tardó. La línea en sí no contiene ninguna dirección, ningún txid ni ninguna dirección IP.',
   serverCloudflare:
     'El servidor funciona en la red de Cloudflare. Cloudflare guarda esas líneas por poco tiempo. Junto a cada una guarda la dirección web que se pidió, la hora y los identificadores que Cloudflare le da a la solicitud, y ninguna dirección IP. En una línea anotada mientras algo de nuestro lado está fallando, esa dirección web puede contener una dirección de la billetera o un txid. Cloudflare también lleva sus propios registros, y esos sí pueden contener la dirección IP.',
+  serverBack:
+    '"Volver al capítulo", y el nombre de un capítulo en la pantalla Hazlo, llevan a LearnBitcoin en esta pestaña. La dirección de "Volver al capítulo" nombra el paso y dice si está terminado. Con ninguno de los dos viaja nada de la billetera.',
 
   countTitle: 'Qué se cuenta',
   countBody:
@@ -280,7 +312,7 @@ export const es: Record<keyof typeof en, string> = {
   countOn: 'El conteo está activado en este momento.',
   countOff: 'El conteo está desactivado en este momento, así que nada de esto se envía.',
   countNames: 'La primera línea de cada entrada es el nombre del conteo, tal como se envía.',
-  count_pageview: 'Se abrió una pantalla. Todas las pantallas de transacción cuentan como la misma pantalla.',
+  count_pageview: 'Se abrió una pantalla. Todas las pantallas de transacción cuentan como la misma pantalla. Cada paso de "Hazlo" es una pantalla propia.',
   count_walletCreated: 'Se creó una billetera en este navegador, y si fue con llave de acceso o sin ella.',
   count_passkey:
     'Cómo terminó la creación de una llave de acceso: funcionó, quedó a medias, la ventana se cerró o se agotó el tiempo, o falló.',

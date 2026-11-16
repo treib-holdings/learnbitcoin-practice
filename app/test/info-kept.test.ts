@@ -8,13 +8,20 @@
 // wallet made with a passkey" would be false of that wallet. These tests
 // walk that reader's path through the real engine (on the stand-ins of
 // engine-fakes.ts), and then read the sentences that reader is shown.
+//
+// The last test does the same for the one state in which the wallet's code
+// touches nothing: a browser that fails the self-test. The "Do it" steps
+// keep their note there too, and About's line has to say no more than is so.
 
 import assert from 'node:assert/strict';
 import { LANGS } from '@learnbitcoin/practice-contract';
+import { walletFacts, type World } from '../src/lib/doit/judge.ts';
+import { PROGRESS_KEY } from '../src/lib/doit/progress.ts';
+import { makeRunner } from '../src/lib/doit/runner.ts';
 import { RECORD_KEY, loadRecord } from '../src/lib/keystore.ts';
-import { KEPT_KEYS, keptNow, type KeptNow } from '../src/screens/info/facts.ts';
+import { KEPT_KEYS, keptNow, keptNowLines, noteNow, type KeptNow } from '../src/screens/info/facts.ts';
 import { strings } from '../src/strings/index.ts';
-import { test, testEngine, type TestEngine } from './engine-fakes.ts';
+import { MemoryStorage, test, testEngine, type TestEngine } from './engine-fakes.ts';
 
 type Table = Readonly<Record<string, string>>;
 
@@ -208,4 +215,114 @@ test('About and Receive, the bot check: the lock is said to do what it does, and
   assert.ok(record !== null && typeof record === 'object');
   assert.equal(record.kind, 'passkey');
   assert.ok((t.storage.getItem(RECORD_KEY) ?? '').includes(record.xpub), 'the record of a passkey wallet holds its public key');
+});
+
+// -- a browser that fails the wallet's self-test -------------------------------------------------------------
+
+/** A storage that writes down every call it gets, by key: what was read, written and removed. */
+class WatchedStorage extends MemoryStorage {
+  readonly calls: string[] = [];
+  override getItem(key: string): string | null {
+    this.calls.push(`get ${key}`);
+    return super.getItem(key);
+  }
+  override setItem(key: string, value: string): void {
+    this.calls.push(`set ${key}`);
+    super.setItem(key, value);
+  }
+  override removeItem(key: string): void {
+    this.calls.push(`remove ${key}`);
+    super.removeItem(key);
+  }
+}
+
+test('About, in a browser that fails the self-test: the wallet\'s code reads and stores nothing, the "Do it" steps keep their note all the same, and the line says exactly that', async () => {
+  const { en, es } = strings.about;
+  // The sentence speaks of the wallet only. Said of everything ("reads and stores nothing here"), it would be
+  // false in the browser this test builds: the steps read their note there, and store it.
+  assert.equal(en.keepNowBroken, "Not known. This browser failed the wallet's self-test, so this page does not read or store a wallet here.");
+  assert.equal(es.keepNowBroken, 'No se sabe. Este navegador no pasó la comprobación interna de la billetera, así que esta página no lee ni guarda ninguna billetera aquí.');
+  assert.doesNotMatch(en.keepNowBroken, /\bnothing\b|\banything\b/);
+  assert.doesNotMatch(es.keepNowBroken, /\bnada\b/);
+
+  for (const selfTest of [() => false, () => { throw new Error('no crypto here'); }]) {
+    // A wallet's record is in storage already, from a page that could still use it.
+    const sound = testEngine();
+    assert.deepEqual(await sound.session.createWithWords(), { kind: 'created' });
+    await sound.settle();
+    const record = sound.storage.getItem(RECORD_KEY);
+    assert.ok(record !== null);
+    const storage = new WatchedStorage();
+    storage.map.set(RECORD_KEY, record);
+
+    // The real engine, with a self-test that fails.
+    const t = testEngine({ storage: storage as unknown as Storage, selfTest });
+    await t.settle();
+    assert.equal(t.session.view().status, 'broken');
+    assert.equal(storage.calls.join(', '), '', 'the wallet\'s code touched the storage');
+
+    // The steps, made over the same storage as lib/doit/doit.svelte.ts makes them.
+    const wallet = (): World['wallet'] => {
+      const session = t.session.view();
+      const chain = t.chain.view();
+      return walletFacts({
+        status: session.status,
+        record: session.record,
+        unlocked: session.unlocked,
+        chain: chain.chain,
+        history: chain.history,
+        historyError: chain.historyError,
+        lastSent: chain.lastSent,
+        wordsShown: session.wordsShown,
+      });
+    };
+    const runner = makeRunner({
+      local: storage as unknown as Storage,
+      wallet,
+      canStore: () => t.session.view().canStore,
+      now: () => t.clock.now(),
+      visible: () => true,
+      count: () => {},
+      publish: () => {},
+    });
+    /** What About's "In this browser right now" is made of, as About.svelte works it out. */
+    const about = (): { text: string; also: string | null } => {
+      const view = t.session.view();
+      const kept = keptNow(view.status, view.record);
+      assert.equal(kept, 'broken');
+      return keptNowLines(kept, noteNow(runner.shown().read));
+    };
+
+    // Before any step: the line alone. The page has looked for a note, and found none.
+    runner.watch({ name: 'about' }, '');
+    assert.deepEqual(about(), { text: 'keepNowBroken', also: null });
+    assert.ok(storage.calls.length > 0 && storage.calls.every((call): boolean => call === `get ${PROGRESS_KEY}`), storage.calls.join(', '));
+
+    // A step's screen is opened, as a chapter's card would open it: that writes the note, in this state as in any other.
+    runner.watch({ name: 'step', id: 'hold-some' }, '?from=/journey/what-bitcoin-actually-is');
+    assert.deepEqual(JSON.parse(storage.map.get(PROGRESS_KEY) ?? 'null'), {
+      v: 1,
+      following: 'hold-some',
+      followedAt: t.clock.now(),
+      steps: { 'hold-some': { started: true, from: '/journey/what-bitcoin-actually-is' } },
+    });
+    assert.ok(storage.calls.includes(`set ${PROGRESS_KEY}`));
+
+    // About now: the same line about the wallet, and then that the note is kept too.
+    runner.watch({ name: 'about' }, '');
+    assert.deepEqual(about(), { text: 'keepNowBroken', also: 'noteAlsoNow' });
+    assert.equal(en.noteAlsoNow, 'This browser also keeps the note of your "Do it" progress.');
+    assert.equal(es.noteAlsoNow, 'Este navegador también guarda la nota de tu progreso de "Hazlo".');
+
+    // And the line about the wallet is true: through all of it nothing was read, written or removed under the
+    // wallet's key, and the record that was there is as it was.
+    for (const call of storage.calls) assert.ok(call.endsWith(` ${PROGRESS_KEY}`), `the storage was asked: ${call}`);
+    assert.equal(storage.map.get(RECORD_KEY), record);
+    assert.deepEqual([...storage.map.keys()].sort(), [PROGRESS_KEY, RECORD_KEY].sort());
+
+    // "Forget my progress" takes the note away, and the second sentence with it.
+    assert.equal(runner.forget(), true);
+    assert.deepEqual(about(), { text: 'keepNowBroken', also: null });
+    assert.equal(storage.map.get(RECORD_KEY), record);
+  }
 });

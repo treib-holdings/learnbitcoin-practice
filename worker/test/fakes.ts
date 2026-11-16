@@ -18,6 +18,7 @@ import type {
   OriginAnswer,
   OriginBody,
 } from '../src/deps.ts';
+import { makePotStatsHolder } from '../src/pot-stats.ts';
 
 /** Where the app lives, as the handler sees it in a request's URL. */
 export const APP = 'https://practice.learnbitcoin.com';
@@ -258,12 +259,21 @@ export interface HarnessOptions {
   broadcast?: (hex: string) => OriginAnswer<string>;
   faucet?: (address: string) => OriginAnswer<FaucetPayment>;
   potAddress?: () => OriginAnswer<string>;
-  potStats?: () => OriginAnswer<PotStats>;
+  /** What the origin answers when asked for the pot's counts: at once, or when the test lets it. */
+  potStats?: () => OriginAnswer<PotStats> | Promise<OriginAnswer<PotStats>>;
   botCheck?: BotCheckResult;
   forward?: () => Promise<{ ok: boolean; upstream: number | null; fault: LogLine['fault'] }>;
+  /** A clock of the test's own. Default: each look at the clock is 5 ms after the last. */
+  now?: () => number;
 }
 
-/** A Deps made of fakes that all succeed unless told otherwise, with a record of what the handler did with them. */
+/**
+ * A Deps made of fakes that all succeed unless told otherwise, with a record of what the handler did with them.
+ *
+ * Each harness has a holder of its own for the pot's counts, with nothing
+ * kept: it stands for a Worker that has just been started. Requests that
+ * are to find what an earlier one left go to one harness.
+ */
 export function harness(options: HarnessOptions = {}): Harness {
   const lines: LogLine[] = [];
   const pending: Promise<unknown>[] = [];
@@ -340,14 +350,15 @@ export function harness(options: HarnessOptions = {}): Harness {
       return options.forward?.() ?? { ok: true, upstream: 202, fault: null };
     },
     limits: limiters,
+    potStatsHolder: makePotStatsHolder(),
     log: (line) => {
       lines.push(line);
     },
     waitUntil: (promise) => {
       pending.push(promise);
     },
-    // Each look at the clock is 5 ms after the last.
-    now: () => (clock += 5),
+    // Each look at the clock is 5 ms after the last, unless the test brings a clock.
+    now: options.now ?? (() => (clock += 5)),
   };
 
   return { deps, lines, pending, trace, originArgs, botCalls, forwarded, limiters };

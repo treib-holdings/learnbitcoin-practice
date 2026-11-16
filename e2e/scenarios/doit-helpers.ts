@@ -412,22 +412,24 @@ const NOTE_WORDS = tokensOf(
 const isTime = (value: unknown): boolean => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
 
 /**
- * A stored note holds public things only: ticks, times, a path of the main
- * site, a wallet fingerprint, a transaction ID. Never a word of the 12,
- * never a key, never an address, never an answer.
+ * A stored note holds public things only: ticks, times, which of a
+ * chapter's two pages the reader came from, a wallet fingerprint, a
+ * transaction ID. Never a word of the 12, never a key, never an address,
+ * never an answer, and no text of anybody's choosing.
  *
  * The note is held to its closed shape first: the listed fields and no
  * others, each of the kind it must be. A shape that has no field for an
- * answer or an address keeps none. Then, all the same, its text is
- * searched: for anything that looks like an address or a key, for a
- * transaction ID anywhere but in a step's `tx`, for every secret the
+ * answer or an address keeps none. A step's way back (`from`) is the
+ * English or the Spanish page of the step's own chapter, character for
+ * character, or it is not there: whatever a scenario's address said after
+ * "from=", nothing else may have reached the note. Then, all the same, its
+ * text is searched: for anything that looks like an address or a key, for
+ * a transaction ID anywhere but in a step's `tx`, for every secret the
  * scenario knows by value, and for the 12 words (two in a row never; one
  * alone only where the note's own shape has that very word, as "wallet"
- * and "seed" are on the word list and in the field names). `from` holds
- * the plain paths the scenario itself arrived with, whose words are the
- * note's own too.
+ * and "seed" are on the word list and in the field names).
  */
-export function noteIsPublic(text: string, secrets: Secrets, from: readonly string[] = []): void {
+export function noteIsPublic(text: string, secrets: Secrets): void {
   const note: unknown = JSON.parse(text);
   assert.ok(typeof note === 'object' && note !== null && !Array.isArray(note), text);
   const top = note as Record<string, unknown>;
@@ -442,7 +444,7 @@ export function noteIsPublic(text: string, secrets: Secrets, from: readonly stri
     assert.ok(step.started === undefined || step.started === true, text);
     assert.ok(step.doneAt === undefined || isTime(step.doneAt), text);
     assert.ok(step.sentAt === undefined || isTime(step.sentAt), text);
-    assert.ok(step.from === undefined || (typeof step.from === 'string' && /^\/[a-z0-9/-]*$/.test(step.from) && !step.from.includes('//')), text);
+    assert.ok(step.from === undefined || Object.values(stepDef(id as StepId).chapter.path).includes(step.from as string), `the note of ${id} names a way back that is not its own chapter: ${JSON.stringify(step.from)}`);
     assert.ok(step.wallet === undefined || (typeof step.wallet === 'string' && /^[0-9a-f]{8}$/.test(step.wallet)), text);
     assert.ok(step.was === undefined || step.was === 'passkey' || step.was === 'words', text);
     assert.ok(step.tx === undefined || (typeof step.tx === 'string' && /^[0-9a-f]{64}$/.test(step.tx)), text);
@@ -460,7 +462,7 @@ export function noteIsPublic(text: string, secrets: Secrets, from: readonly stri
     ...secrets.addresses,
   ].filter((value): value is string => typeof value === 'string' && value !== '');
   for (const value of values) assert.ok(!text.includes(value), `the note holds ${value}`);
-  const allowed = new Set([...NOTE_WORDS, ...tokensOf(from.join(' '))]);
+  const allowed = NOTE_WORDS;
   const tokens = tokensOf(text);
   for (const words of secrets.words) {
     for (const pair of pairsOf(words)) assert.ok(!text.toLowerCase().includes(pair), 'the note holds two of the 12 words in a row');
@@ -479,7 +481,6 @@ export function noteIsPublic(text: string, secrets: Secrets, from: readonly stri
  * stored text has to be exactly that, to the last character.
  */
 export interface KeptOptions {
-  from?: readonly string[];
   others?: readonly string[];
   untouched?: string;
 }
@@ -491,7 +492,7 @@ export async function storedIsPublic(page: OpenedPage, secrets: Secrets, options
   assert.deepEqual([kept.session, kept.cookie], [0, ''], 'nothing in sessionStorage, and no cookie');
   const text = await noteText(page);
   if (options.untouched !== undefined) assert.equal(text, options.untouched, 'the note the scenario stored is as it was');
-  else if (text !== null) noteIsPublic(text, secrets, options.from);
+  else if (text !== null) noteIsPublic(text, secrets);
 }
 
 // -- what was counted -----------------------------------------------------------------------------------------------

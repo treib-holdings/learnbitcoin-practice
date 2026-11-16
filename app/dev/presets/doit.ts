@@ -27,9 +27,10 @@
 //   /do/prove-the-backup?state=funded the same for a locked passkey wallet: the unlock step first
 //
 // and any of them with &storage=no (progress cannot be kept), with
-// &from=/journey/how-bitcoin-works (the way back the reader came by), or in
-// Spanish under /es. The history loads a moment after the page: give the
-// gallery tool --wait 900.
+// &from=<the step's own chapter page> (the way back the reader came by: for
+// a step of chapter 3, /journey/how-bitcoin-works or its Spanish twin; any
+// other value is ignored), or in Spanish under /es. The history loads a
+// moment after the page: give the gallery tool --wait 900.
 //
 // THE PRESETS HERE, by the screen they are for:
 //
@@ -38,6 +39,8 @@
 //     do-all-done         all six done
 //     do-newer            a note written by a newer version: no states, Reload, no "Forget my progress"
 //     do-unreadable       something stored that is no note: no progress, and "Forget my progress"
+//                         (on /about, "In this browser right now" then says that something is
+//                         stored where the note goes, and that the page cannot read it)
 //
 //   Hold some (/do/hold-some)
 //     do-unconfirmed      one coin, not in a block yet: part 3 waits (also: Pass it on, "not spendable yet")
@@ -82,7 +85,7 @@
 //     do-prove-other      part 3: another wallet was restored
 //     do-prove-looking    part 4: the restored wallet's coins are being looked up
 //     do-prove-empty      part 4: the restored wallet holds no coins
-//     do-prove-done       done, for a wallet that was opened with a passkey before: "What has changed"
+//     do-prove-done       done, for a wallet that was opened with a passkey before: "What the restore changed"
 //     do-prove-done-words done, for a wallet that was kept with its words all along
 //
 //   the strip (any screen but the followed step's own: /wallet, /wallet/send, /)

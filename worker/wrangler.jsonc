@@ -46,6 +46,22 @@
   // key of the reader's, so they can never use up what "Pass it on" needs
   // (src/handler.ts, POT_STATS): 60 a minute of each for one reader.
   //
+  // Every limiter here is a brake on one reader. None of them is a cap for
+  // all readers together. And what a look at the pot's counts costs the
+  // practice network is not fixed: it can grow with the number of coins
+  // that wait in the pot, and anybody can add coins to the pot. So the
+  // limiter is not what keeps the looks of many readers away from the
+  // practice network. The Worker asks the network for the counts once and
+  // gives everyone that answer for 15 seconds (src/pot-stats.ts). The
+  // answer is kept in the Worker's memory, one for each isolate that
+  // Cloudflare runs the Worker in. An isolate has one question out at a
+  // time, whoever looks and however often, and while the network answers
+  // that comes to four questions a minute. It is not one answer for a
+  // whole Cloudflare location, and not one for the whole network. No
+  // setting in this file switches the keeping on or off, or changes the 15
+  // seconds. A look is still counted at the limiter first, and a reader
+  // over the limit is refused.
+  //
   // namespace_id is a number we pick; it only has to be unique in the account.
   "ratelimits": [
     { "name": "CHAIN_LIMIT", "namespace_id": "2620", "simple": { "limit": 6000, "period": 60 } },

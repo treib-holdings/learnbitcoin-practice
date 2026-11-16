@@ -19,8 +19,13 @@
 //      follows
 //   6. while the practice network cannot answer, the open part is "not
 //      known yet": never "no coins", and nothing to press but "Try again"
+//   7. the count under a done step is the pot's own figure, and never says
+//      whose payments it counts: with the step done on an earlier visit and
+//      every payment on the chain somebody else's, the line says the count
+//      alone; and a count the Worker has kept is an older figure in a
+//      sentence that is still true
 //
-// All six are local only: they pay the wallet from the stand-in, make
+// All seven are local only: they pay the wallet from the stand-in, make
 // blocks on it, ask the faucet, or take the network down.
 //
 // The other steps' files are named for their step. This one is not named
@@ -29,6 +34,7 @@
 
 import assert from 'node:assert/strict';
 import { deriveAddress, watchOnlyAccount } from '@learnbitcoin/practice-wallet';
+import { POT_STATS_KEEP_MS } from '@learnbitcoin/practice-worker';
 import { fill } from '../../app/src/lib/format.ts';
 import { strings } from '../../app/src/strings/index.ts';
 import { OTHER_WORDS, TEST_WORDS, scenario, testRecord, type Scenario } from './helpers.ts';
@@ -57,6 +63,7 @@ import {
   hrefOf,
   listState,
   marked,
+  noteFor,
   noteOf,
   noteText,
   partName,
@@ -160,7 +167,7 @@ scenario(
     assert.equal((await onNetwork(s, paid.txid)).status.block_height, height);
     // The one line the part keeps: how long the payment waited, and which block took it in.
     assert.match(await page.text('step-waited'), new RegExp(`^It waited (1 second|\\d+ seconds)\\. Block ${height} took it in\\.$`));
-    // Asked once, of the pot itself: payments, not people.
+    // Asked once, of the pot itself: payments, not people, and never whose.
     await page.waitFor('step-pot-count');
     assert.equal(await page.text('step-pot-count'), en.potCountOne);
     assert.equal(await page.text('step-done-text'), en['done_pass-it-on']);
@@ -227,7 +234,7 @@ scenario(
     await reloadStep(page);
     await page.waitFor('step-done');
     assert.equal(await page.waitForStatus(saidDone(STEP)), saidDone(STEP));
-    // The pot's own count: two payments now, the reader's among them. Payments, not people.
+    // The pot's own count: two payments now. Payments, not people, and the line does not say whose.
     await page.waitFor('step-pot-count');
     assert.equal(await page.text('step-pot-count'), fill(en.potCount, { count: '2' }));
     assert.deepEqual(stepsCounted(s), { 'hold-some': 1, 'pass-it-on': 1 });
@@ -377,18 +384,28 @@ scenario(
     }
     assert.deepEqual(stepsCounted(s), { 'pass-it-on': 1 });
 
-    // -- The pot's count is asked for each time a done "Pass it on" is shown. When the bots cannot answer, the
-    //    line is left out, and nothing else on the screen changes. --
+    // -- The pot's count is asked for each time a done "Pass it on" is shown. The Worker does not ask the bots
+    //    each time: it asks once and gives every page that answer for 15 seconds (worker/src/pot-stats.ts). So
+    //    with the bots stopped, a page loaded within that time would still be given the count. Here the 15
+    //    seconds are over for the Worker: it has to ask, the bots cannot answer, and the line is left out.
+    //    Nothing else on the screen changes. --
     await page.waitFor('step-pot-count');
     assert.equal(await page.text('step-pot-count'), en.potCountOne);
     s.expectFault('origin_down');
     s.standIn.setFaucet('down');
+    s.stack.advanceClock(POT_STATS_KEEP_MS);
     await reloadStep(page);
     await page.waitFor('step-done');
     await page.settle();
     assert.equal(await countOf(page, 'step-pot-count'), 0);
     assert.deepEqual(await partsOf(page), ['ticked', 'ticked', 'ticked']);
     assert.equal(await page.text('step-done-text'), en['done_pass-it-on']);
+    // The bots are back. The Worker kept nothing of the answer that failed, so the page that is loaded next is
+    // given the count again.
+    s.standIn.setFaucet('ok');
+    await reloadStep(page);
+    await page.waitFor('step-pot-count');
+    assert.equal(await page.text('step-pot-count'), en.potCountOne);
 
     await ends(
       s,
@@ -407,6 +424,7 @@ scenario(
         view('/do/pass-it-on'),
         view('/do/pass-it-on'),
         doIt('/do/pass-it-on', STEP),
+        view('/do/pass-it-on'),
         view('/do/pass-it-on'),
         view('/do/pass-it-on'),
         view('/do/pass-it-on'),
@@ -549,5 +567,78 @@ scenario(
       addresses: [record.firstAddress],
       txids: [funding],
     });
+  },
+);
+
+scenario(
+  'The count under a done "Pass it on" is the pot\'s own figure and never says whose payments it counts: with the step done on an earlier visit and this wallet having paid nothing on the chain as it is now, the line is left out while the pot counts none, says "One payment" when somebody else has paid, and "3 payments" after two more; a figure the Worker has kept from a moment before is older, and the sentence is still true',
+  { localOnly: true, timeout: 150_000 },
+  async (s) => {
+    const record = testRecord();
+    // "Pass it on", done three days ago: as it stands in a browser whose practice chain has been started again
+    // since. The note of a done step names no payment, and this wallet has sent none on the chain as it is now.
+    const doneAt = Date.now() - 3 * 86_400_000;
+    const stored = noteFor({ following: null, steps: { [STEP]: { started: true, doneAt, parts: { 1: true, 2: true, 3: true } } } });
+    const reader = await begin(s, `/do/${STEP}`, { record, storage: { [PROGRESS_KEY]: stored } });
+    const { page } = reader;
+    /** How many answers the Worker has given to a look at the pot's counts, and how many of them it asked the network for. */
+    const looks = (): [answered: number, asked: number] => {
+      const lines = s.stack.lines.filter((line) => line.route === 'pot_stats');
+      return [lines.filter((line) => line.status === 200).length, lines.filter((line) => line.upstream === 200).length];
+    };
+    /** The done step's screen, loaded anew, once the pot's counts have come: the line under it, or null when there is none. */
+    const potLine = async (path = `/do/${STEP}`): Promise<string | null> => {
+      const [answered] = looks();
+      await page.goto(path);
+      await page.waitFor('step-done');
+      await until(() => looks()[0] > answered, 'the pot\'s counts were asked for and answered');
+      await page.settle();
+      return (await page.texts('step-pot-count'))[0] ?? null;
+    };
+
+    // -- The pot counts no payment on this chain. The step is done all the same, and the line is left out. --
+    await page.waitFor('step-done');
+    await until(() => looks()[0] === 1, 'the pot\'s counts were asked for and answered');
+    await page.settle();
+    assert.deepEqual(looks(), [1, 1]);
+    assert.equal(await countOf(page, 'step-pot-count'), 0);
+    assert.equal(await page.text('step-done-text'), en['done_pass-it-on']);
+
+    // -- Somebody else passes coins on, and a block takes the payment in. It is the only payment the pot has
+    //    seen, and it is not this reader's. --
+    const theirs = [s.standIn.fund(await potOnNetwork(s), 5_000)];
+    // A page loaded within the next seconds is given the count the Worker has kept: an older figure, and no line.
+    assert.equal(await potLine(), null);
+    assert.deepEqual(looks(), [2, 1], 'the Worker gave the count it had kept, and asked nobody');
+    // Once the Worker asks again, the line says how many, and not whose: with "yours" in it, it would be false here.
+    s.stack.advanceClock(POT_STATS_KEEP_MS);
+    assert.equal(await potLine(), 'One payment has been passed on to the pot so far.');
+    assert.equal(en.potCountOne, 'One payment has been passed on to the pot so far.');
+    assert.deepEqual(looks(), [3, 2]);
+
+    // -- Two more, by others. The kept figure is one behind the chain for a moment, and what the line says is
+    //    still so; then the count is three. --
+    theirs.push(s.standIn.fund(await potOnNetwork(s), 6_000), s.standIn.fund(await potOnNetwork(s), 7_000));
+    assert.equal(await potLine(), en.potCountOne);
+    s.stack.advanceClock(POT_STATS_KEEP_MS);
+    assert.equal(await potLine(), '3 payments have been passed on to the pot so far.');
+    assert.equal(fill(en.potCount, { count: '3' }), '3 payments have been passed on to the pot so far.');
+    // In Spanish, the same count and no more.
+    assert.equal(await potLine(`/es/do/${STEP}`), 'Hasta ahora se han pasado 3 pagos al fondo común.');
+    assert.equal(fill(strings.doit.es.potCount, { count: '3' }), 'Hasta ahora se han pasado 3 pagos al fondo común.');
+    for (const line of [en.potCountOne, en.potCount, strings.doit.es.potCountOne, strings.doit.es.potCount]) {
+      assert.doesNotMatch(line, /\byours?\b|among them|\btuyo\b|entre ellos/i, line);
+    }
+
+    // The step was done on an earlier visit: nothing here counted it again, and its note is as it was.
+    assert.deepEqual(stepsCounted(s), {});
+    assert.equal(await noteText(page), stored);
+
+    await ends(
+      s,
+      reader,
+      [view('/do/pass-it-on'), view('/do/pass-it-on'), view('/do/pass-it-on'), view('/do/pass-it-on'), view('/do/pass-it-on'), view('/es/do/pass-it-on')],
+      { records: [record], words: [WORDS], addresses: [record.firstAddress], txids: theirs },
+    );
   },
 );

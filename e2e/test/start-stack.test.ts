@@ -4,13 +4,13 @@
 // the handler and the stand-in network, with the network answering in the
 // same process. This file is about the wiring the local server uses: the
 // settings a local run gets, the stand-in reached over a real socket through
-// makeOrigin, the bot check that knows one token, the recorders, and the
-// limiters a scenario can switch.
+// makeOrigin, the bot check that knows one token, the recorders, the
+// limiters a scenario can switch, and the clock a scenario can move on.
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { ADDRESS_PATTERN } from '@learnbitcoin/practice-contract';
-import type { LogLine } from '@learnbitcoin/practice-worker';
+import { POT_STATS_KEEP_MS, type LogLine } from '@learnbitcoin/practice-worker';
 import { DEFAULT_CONFIG } from '../../app/src/lib/config.ts';
 import { makeFakeOrigin } from '../src/fake-origin.ts';
 import { DUMMY_TOKEN, LOCAL_VARS, TEST_SITE_KEY, localVars, startStack, wranglerVars, type Stack, type StackOptions } from '../src/stack.ts';
@@ -178,6 +178,60 @@ test('log lines are recorded, handed to the caller, and can be capped', async ()
     assert.deepEqual(stack.lines.map((line) => line.route), ['pot_address', 'pot_address', 'pot_address']);
     assert.equal(printed.length, 7);
     assert.deepEqual(printed.slice(0, 2).map((line) => line.route), ['config', 'unknown']);
+  });
+});
+
+test("the pot's counts are kept by the stack's Worker as by the deployed one: the network is asked once, and again when the scenario says that 15 seconds have passed", async () => {
+  const none = { passedOn: 0, waiting: 0, handedOn: 0 };
+  await withStack({}, async (stack) => {
+    const asked = (): number => stack.network!.requests().filter((request) => request.path === '/bots/pot/stats').length;
+    const counts = async (): Promise<unknown> => (await get(stack, '/api/pot/stats')).json();
+
+    assert.deepEqual(await counts(), none);
+    assert.equal(asked(), 1);
+    // Somebody pays the pot, and a block takes the payment in.
+    const pot = ((await (await post(stack, '/api/pot/address')).json()) as { address: string }).address;
+    assert.match(pot, ADDRESS_PATTERN);
+    stack.network!.fund(pot, 5_000);
+    // The Worker has an answer from a moment ago and gives it to everyone. The network is not
+    // asked: nothing switches the keeping off for a local run.
+    for (let look = 0; look < 25; look += 1) assert.deepEqual(await counts(), none);
+    assert.equal(asked(), 1);
+
+    // A scenario that needs the figure as it now stands says that the Worker's 15 seconds are over.
+    stack.advanceClock(5_000);
+    assert.deepEqual(await counts(), none, 'five seconds on, the answer is still the kept one');
+    stack.advanceClock(POT_STATS_KEEP_MS - 5_000);
+    assert.deepEqual(await counts(), { passedOn: 1, waiting: 1, handedOn: 0 });
+    assert.deepEqual(await counts(), { passedOn: 1, waiting: 1, handedOn: 0 });
+    assert.equal(asked(), 2);
+    // The second status of a line is the network's, and a look that was given the kept answer has none.
+    assert.deepEqual(
+      stack.lines.filter((line) => line.route === 'pot_stats').map((line) => [line.status, line.upstream]),
+      [[200, 200], ...Array.from({ length: 26 }, () => [200, null]), [200, 200], [200, null]],
+    );
+
+    // Only the Worker's clock moved, and it only goes forward.
+    for (const backwards of [-1, Number.NaN, Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY]) {
+      assert.throws(() => stack.advanceClock(backwards), /the clock only goes forward/, String(backwards));
+    }
+    assert.deepEqual(await counts(), { passedOn: 1, waiting: 1, handedOn: 0 });
+    assert.equal(asked(), 2);
+
+    // With the bots stopped, the kept answer is still given while it is young. Once it has run out,
+    // the page is told "unavailable": an old answer is not given again.
+    stack.network!.setFaucet('down');
+    assert.deepEqual(await counts(), { passedOn: 1, waiting: 1, handedOn: 0 });
+    stack.advanceClock(POT_STATS_KEEP_MS);
+    assert.deepEqual(await errorOf(await get(stack, '/api/pot/stats')), [502, 'unavailable']);
+    assert.equal(stack.lines.at(-1)?.fault, 'origin_down');
+    assert.equal(asked(), 3);
+  });
+
+  // Another stack is another Worker: it has kept nothing, and asks for itself.
+  await withStack({}, async (other) => {
+    assert.deepEqual(await (await get(other, '/api/pot/stats')).json(), none);
+    assert.equal(other.network!.requests().filter((request) => request.path === '/bots/pot/stats').length, 1);
   });
 });
 

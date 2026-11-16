@@ -27,7 +27,9 @@
 //     itself or of this app's design: 10 minutes, six confirmations, the
 //     12 words, three of them.
 //   - No sentence ever says what the answer to a question is.
-//   - The pot's line counts payments, not people.
+//   - The pot's line counts payments, not people, and never says whose they
+//     are: the page is given a number, and cannot know that the reader's own
+//     payment is among the ones counted.
 //
 // The Spanish name of "Do it" is "Hazlo", the term the site's voice notes
 // propose. The Spanish here is a first draft that no native reviewer has
@@ -54,9 +56,13 @@ export const en = {
   /** Beside the step the strip is following. */
   stateFollowing: 'Following',
   forgetTitle: 'Your progress',
-  /** What is kept is one thing, and what is counted another: the second sentence must not say more than About does. */
+  /**
+   * Where a reader decides whether to forget: so it names what the note holds, by the kinds of thing About
+   * lists field by field, and says where the whole list is. What is kept is one thing, and what is counted
+   * another: the last sentence must not say more than About does.
+   */
   forgetWhat:
-    'This browser keeps which steps you have opened and done. The note itself is never sent to us. Opening a step and finishing one are counted, as the About page says.',
+    "This browser keeps a note of your progress: which steps you have opened and done, which parts are ticked, and what a step needs on its way, such as a wallet fingerprint and a payment it waits for. The About page lists it all. The note itself is never sent to us. Opening a step's screen and finishing a step are counted, as the About page says.",
   forget: 'Forget my progress',
   forgetAsk: 'Forget your "Do it" progress in this browser?',
   forgetWarn:
@@ -333,19 +339,31 @@ export const en = {
     'You said your 12 words are on paper, and three of them matched. Three right words do not prove the other nine: "Prove the backup" does that.',
   'done_prove-the-backup':
     'The wallet came back from its 12 words, with its coins. The chain kept them the whole time, and the words only unlock them: you own keys, not coins.',
-  /** Under a done "Pass it on": how many payments, never how many people. */
-  potCount: '{count} payments have been passed on to the pot so far, yours among them.',
-  potCountOne: 'One payment has been passed on to the pot so far: yours.',
+  /**
+   * Under a done "Pass it on": how many payments, never how many people, and never whose. The count is the
+   * pot's own, of the chain as it stands, and the Worker may hand out one that is a few seconds old. A done
+   * step's note names no payment. So the page cannot know that this reader's payment is one of those
+   * counted (the chain may have been started again since, or the count read a moment before the payment),
+   * and the line says the count alone.
+   */
+  potCount: '{count} payments have been passed on to the pot so far.',
+  potCountOne: 'One payment has been passed on to the pot so far.',
   /** Under a done "The seed". {fingerprint} is a wallet fingerprint. */
   seedChecked: 'The three words were checked for the wallet with the wallet fingerprint {fingerprint}.',
   /** The same place, when another wallet is in this browser now. {here} is its wallet fingerprint. */
   seedOther:
     'Another wallet is in this browser now ({here}). Its paper has not been checked: type three of its words to check it too.',
   seedRechecked: 'Checked. The three words are now checked for the wallet that is here.',
-  /** Under a done "Prove the backup", when the wallet was opened with a passkey before the drill. */
-  changedTitle: 'What has changed',
+  /**
+   * Under a done "Prove the backup", when the wallet was opened with a passkey before the drill. The card is
+   * drawn from the step's note alone and stays for as long as the note does, whatever is in this browser by
+   * then: the wallet kept with its words, the wallet back behind its passkey, no wallet, another wallet. So it
+   * says what the restore did, in the past tense, and names About for what is kept now. The button is quoted
+   * as Home draws it (strings/wallet.ts, openButton).
+   */
+  changedTitle: 'What the restore changed',
   changed:
-    'This browser now keeps this wallet with its 12 words, not encrypted, and no longer asks for the passkey. The passkey still opens the same wallet. To go back to that, remove the wallet once more and choose "Open with my passkey".',
+    'When you restored the wallet from its 12 words, this browser began to keep it with those words, not encrypted, and stopped asking for the passkey. The passkey still opens the same wallet. About says what this browser keeps right now. To go back to the passkey for that wallet, remove the wallet that is in this browser, if there is one, and choose "Open with my passkey".',
   sparrow: 'One more proof: open the same wallet in Sparrow',
   /** {step} is the next step's title. Only within the same chapter. */
   next: 'Next step: {step}',
@@ -450,7 +468,7 @@ export const es: Record<keyof typeof en, string> = {
   stateFollowing: 'En seguimiento',
   forgetTitle: 'Tu progreso',
   forgetWhat:
-    'Este navegador guarda qué pasos abriste y cuáles terminaste. La nota en sí nunca se nos envía. Abrir un paso y terminarlo se cuentan, como dice la página Acerca de.',
+    'Este navegador guarda una nota de tu progreso: qué pasos abriste y cuáles terminaste, qué partes están marcadas, y lo que un paso necesita por el camino, como una huella de la billetera y un pago que espera. La página Acerca de lo enumera todo. La nota en sí nunca se nos envía. Abrir la pantalla de un paso y terminar un paso se cuentan, como dice la página Acerca de.',
   forget: 'Olvidar mi progreso',
   forgetAsk: '¿Olvidar tu progreso de "Hazlo" en este navegador?',
   forgetWarn:
@@ -681,15 +699,15 @@ export const es: Record<keyof typeof en, string> = {
     'Dijiste que tus 12 palabras están en papel, y tres de ellas coincidieron. Tres palabras correctas no comprueban las otras nueve: eso lo hace "Comprueba el respaldo".',
   'done_prove-the-backup':
     'La billetera volvió desde sus 12 palabras, con sus monedas. La cadena las conservó todo el tiempo, y las palabras solo las desbloquean: tienes claves, no monedas.',
-  potCount: 'Hasta ahora se han pasado {count} pagos al fondo común, el tuyo entre ellos.',
-  potCountOne: 'Hasta ahora se ha pasado un pago al fondo común: el tuyo.',
+  potCount: 'Hasta ahora se han pasado {count} pagos al fondo común.',
+  potCountOne: 'Hasta ahora se ha pasado un pago al fondo común.',
   seedChecked: 'Las tres palabras se comprobaron para la billetera con la huella de la billetera {fingerprint}.',
   seedOther:
     'Ahora hay otra billetera en este navegador ({here}). Su papel no se ha comprobado: escribe tres de sus palabras para comprobarlo también.',
   seedRechecked: 'Comprobado. Las tres palabras quedan comprobadas para la billetera que está aquí.',
-  changedTitle: 'Lo que cambió',
+  changedTitle: 'Lo que cambió con la restauración',
   changed:
-    'Este navegador ahora guarda esta billetera con sus 12 palabras, sin cifrar, y ya no pide la llave de acceso (passkey). La llave de acceso sigue abriendo la misma billetera. Para volver a eso, quita la billetera una vez más y elige "Abrir con mi llave de acceso".',
+    'Cuando restauraste la billetera desde sus 12 palabras, este navegador empezó a guardarla con esas palabras, sin cifrar, y dejó de pedir la llave de acceso (passkey). La llave de acceso sigue abriendo la misma billetera. La página Acerca de dice qué guarda este navegador ahora mismo. Para volver a la llave de acceso con esa billetera, quita la billetera que haya en este navegador, si hay alguna, y elige "Abrir con mi llave de acceso (passkey)".',
   sparrow: 'Una comprobación más: abre la misma billetera en Sparrow',
   next: 'Siguiente paso: {step}',
 

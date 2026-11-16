@@ -17,6 +17,11 @@
 //
 // That is the only difference between a test run and production. The handler
 // has no test mode, and no setting can relax a check.
+//
+// A Deps may be built anew for every request, and index.ts does so. One
+// part of it must not be: the holder of the pot's counts (PotStatsHolder
+// below) is made once, where it outlives a request, and the same one is
+// handed to every request.
 
 import type { AppConfig, ErrorCode, EventBody, FaucetPayment, PotStats } from '@learnbitcoin/practice-contract';
 
@@ -59,7 +64,11 @@ export type Fault =
 export interface LogLine {
   route: RouteName;
   status: number;
-  /** The origin's (or verify service's) status, when one was asked. */
+  /**
+   * The origin's (or verify service's) status, when one was asked. For the
+   * pot's counts that is the question this request asked or waited for: a
+   * request that was given the kept counts asked nobody, and says null.
+   */
   upstream: number | null;
   ms: number;
   fault: Fault | null;
@@ -120,8 +129,48 @@ export interface Origin {
    * lets in, so no bearer token goes with it. It has no refusal of its own:
    * anything but a 200 that holds the three counts, each a whole number from
    * 0, is `unavailable` with a fault.
+   *
+   * Every call is a question to the origin. The handler does not call this
+   * once for each request: pot-stats.ts asks once for everyone.
    */
   potStats(): Promise<OriginAnswer<PotStats>>;
+}
+
+// -- what is kept between requests ------------------------------------------------
+
+/**
+ * The pot's counts as the origin last gave them, and a note of the question
+ * that is out for them right now: the one thing the Worker keeps from one
+ * request to the next (pot-stats.ts says why, and reads and writes it).
+ *
+ * It must outlive a request, or every request would ask the origin for
+ * itself. So whoever builds a Deps makes one of these where it lives longer
+ * than a request (makePotStatsHolder), and hands the same one to every
+ * request. The deployed Worker keeps it at the top of index.ts, where it
+ * lives as long as the isolate the Worker runs in.
+ *
+ * It is plain data: counts, times, and how a question ended (a status and
+ * a code). Nothing of a request or of a reader is in it, and nothing that
+ * belongs to one request: no Request, no Response, no body, no promise.
+ */
+export interface PotStatsHolder {
+  /** The origin's last good answer, and when it came (ms since 1970). Null: there is none, or it grew too old. */
+  kept: { readonly stats: Readonly<PotStats>; readonly at: number } | null;
+  /** The question that is out to the origin. Null: none is out. */
+  asking: PotStatsQuestion | null;
+}
+
+/**
+ * One question to the origin for the pot's counts, as the requests that
+ * wait for it see it. The request that asked writes down here how it ended.
+ * The others look here: they never touch the question itself, which belongs
+ * to the request that asked.
+ */
+export interface PotStatsQuestion {
+  /** When it was asked (ms since 1970). */
+  readonly since: number;
+  /** Null while it is out. Then the origin's answer, or "broke" when the question itself threw. */
+  ended: OriginAnswer<PotStats> | 'broke' | null;
 }
 
 // -- the bot check --------------------------------------------------------------
@@ -187,7 +236,8 @@ export interface Limits {
    * The pot: its address (POST /api/pot/address) and its counts (GET
    * /api/pot/stats). The counts are counted apart, under a second key of the
    * reader's (handler.ts, POT_STATS), so asking for them can never use up
-   * what "Pass it on" needs.
+   * what "Pass it on" needs. A request for the counts is counted here
+   * first, whether or not the origin will be asked for it.
    */
   pot: Limiter;
   events: Limiter;
@@ -202,10 +252,15 @@ export interface Deps {
   botCheck: BotCheck;
   forwardEvent: ForwardEvent;
   limits: Limits;
+  /** The pot's counts, kept between requests. The same holder for every request: never one made for this request. */
+  potStatsHolder: PotStatsHolder;
   /** Writes one line. The deployed Worker prints JSON to the console; tests collect the lines. */
   log(line: LogLine): void;
-  /** Lets work finish after the answer has been sent (the Worker's ctx.waitUntil). */
+  /**
+   * Lets work finish after the answer has been sent, or after the reader
+   * has gone away (the Worker's ctx.waitUntil).
+   */
   waitUntil(promise: Promise<unknown>): void;
-  /** Milliseconds since 1970, for the log line's timing. */
+  /** Milliseconds since 1970: for the log line's timing, and for the age of the pot's kept counts. */
   now(): number;
 }

@@ -6,7 +6,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { LANGS, STEPS } from '@learnbitcoin/practice-contract';
-import { validFrom } from '../src/lib/doit/progress.ts';
 import {
   CHAPTERS,
   STEP_DEFS,
@@ -60,8 +59,9 @@ test('the three chapter pages, in both languages, as the main site has them', ()
   for (const chapter of CHAPTERS) {
     for (const lang of LANGS) {
       const path = chapter.path[lang];
-      // A plain path of the main site: it passes the very rule a way back has to pass.
-      assert.equal(validFrom(path), path, path);
+      // A plain path, as the main site writes its own addresses: no slash at its end. (For the steps of a
+      // chapter these two paths are the only ways back there are: test/doit-progress.test.ts.)
+      assert.match(path, /^(\/[a-z0-9]+(-[a-z0-9]+)*)+$/, path);
       assert.equal(path.startsWith('/es/'), lang === 'es', path);
     }
   }

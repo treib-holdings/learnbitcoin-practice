@@ -129,7 +129,7 @@ function tickOf(id: StepId, part: number, world: World): Change {
   }
   if (fact === 'three-words' && record !== null) {
     // The wallet whose words were checked. The drill also notes how this browser kept it, to
-    // say afterwards what has changed: a wallet restored from its words is kept with them.
+    // say afterwards what the restore changed: a wallet restored from its words is kept with them.
     tick.wallet = record.fingerprint;
     if (id === 'prove-the-backup') tick.was = record.kind;
   }

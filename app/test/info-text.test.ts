@@ -5,7 +5,9 @@
 //   - the sentences SPEC section 12 gives word for word are there;
 //   - facts are slots or values from the settings, never typed into a sentence;
 //   - every sentence of the two tables is on a screen;
-//   - and the code that About describes still does what About says.
+//   - and the code that About describes still does what About says: what is
+//     stored, what the bot check is handed, and what a link back to a chapter
+//     of the main site carries.
 //
 // The last group holds About's sentences to this package's own code by
 // calling it: what a record holds, what the bot check's widget is handed.
@@ -19,14 +21,16 @@
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import { test } from 'node:test';
-import { LANGS } from '@learnbitcoin/practice-contract';
+import { LANGS, STEPS } from '@learnbitcoin/practice-contract';
 import { ACCOUNT_PATH, REGTEST } from '@learnbitcoin/practice-wallet';
 import { splitLead } from '../src/components/text.ts';
 import { DEFAULT_CONFIG } from '../src/lib/config.ts';
 import { slotNames } from '../src/lib/format.ts';
-import { PROGRESS_KEY } from '../src/lib/doit/progress.ts';
+import { PROGRESS_KEY, chapterLink } from '../src/lib/doit/progress.ts';
+import { CHAPTERS, STEP_DEFS } from '../src/lib/doit/steps.ts';
 import { RECORD_KEY, loadRecord, makeRecord } from '../src/lib/keystore.ts';
 import { TURNSTILE_SCRIPT, faucetWidgetOptions } from '../src/lib/turnstile.ts';
+import { chapterUrl } from '../src/screens/doit/view.ts';
 import { ARROW, LABEL_MARK, needsSays, sentenceParts, sentenceText } from '../src/screens/info/says.ts';
 import { REGTEST_FLAG } from '../src/screens/info/sparrow-guide.ts';
 import { strings } from '../src/strings/index.ts';
@@ -639,4 +643,97 @@ test("About, \"the faucet's bot check\": Cloudflare's script, loaded from the on
   const headers = source('public/_headers');
   assert.match(headers, /script-src 'self' https:\/\/challenges\.cloudflare\.com;/);
   assert.match(headers, /connect-src 'self';/);
+});
+
+test('About, "what our server sees": a link back to a chapter stays in this tab, sends no referrer, and its address names the step and whether it is done', () => {
+  const { en, es } = strings.about;
+  // The sentence, in both languages: where the two kinds of link lead, what the address of one of them says, and what travels with neither.
+  assert.equal(
+    en.serverBack,
+    '"Back to the chapter", and a chapter\'s name on the Do it screen, lead to LearnBitcoin in this tab. The address of "Back to the chapter" names the step and whether it is done. Nothing about the wallet travels with either.',
+  );
+  assert.equal(
+    es.serverBack,
+    '"Volver al capítulo", y el nombre de un capítulo en la pantalla Hazlo, llevan a LearnBitcoin en esta pestaña. La dirección de "Volver al capítulo" nombra el paso y dice si está terminado. Con ninguno de los dos viaja nada de la billetera.',
+  );
+  // It names the link by the words on the link, and the screen by its own name.
+  assert.deepEqual([strings.doit.en.back, strings.doit.es.back], ['Back to the chapter', 'Volver al capítulo']);
+  assert.deepEqual([strings.doit.en.name, strings.doit.es.name], ['Do it', 'Hazlo']);
+  // The short version names it among what leaves the browser, in the order the page takes them.
+  assert.equal(
+    en.shortRest,
+    "The rest of this page says what does leave it: what our server sees, what a link back to LearnBitcoin carries, what is counted, and what the faucet's bot check does.",
+  );
+  assert.equal(
+    es.shortRest,
+    'El resto de esta página dice qué sí sale de él: lo que ve nuestro servidor, lo que lleva un enlace de vuelta a LearnBitcoin, lo que se cuenta y lo que hace la comprobación contra bots del faucet.',
+  );
+  // The screen draws it as the last paragraph of "What our server sees", before "What is counted".
+  assert.match(
+    source('src/screens/About.svelte'),
+    /<p>\{t\.serverCloudflare\}<\/p>\s*<!--[^>]*-->\s*<p data-testid="about-link-back">\{t\.serverBack\}<\/p>\s*<\/Prose>\s*<\/Section>\s*<Section title=\{t\.countTitle\}>/,
+  );
+
+  // -- No referrer. The page's own policy sends none, and it is set for every page and file of the app ("/*"). --
+  assert.match(source('public/_headers'), /^\/\*\n(?:  [^\n]+\n)*?  Referrer-Policy: no-referrer\n/m);
+  // No file of the app lifts that policy for a link, a picture or a request: the attribute of an element, the
+  // property of one and the option of fetch() are all spelled with this one word. Comments are searched too.
+  const root = new URL('../src/', import.meta.url);
+  const files = readdirSync(root, { recursive: true, encoding: 'utf8' }).filter((name) => /\.(ts|svelte|css|html)$/.test(name));
+  assert.ok(files.length > 80, `${files.length} files`);
+  for (const name of files) {
+    const text = readFileSync(new URL(name, root), 'utf8');
+    assert.doesNotMatch(text, /referrerpolicy|referrer-policy/i, `${name}: About says that nothing but its address travels with a link back`);
+    assert.doesNotMatch(text, /name=["']referrer["']/i, name);
+  }
+  // The page itself names no policy of its own: a <meta name="referrer"> in it would stand in for the header.
+  assert.doesNotMatch(source('index.html'), /referrer/i);
+
+  // -- This tab, and these links only. The one piece that draws a link back has no target and no rel ... --
+  const link = source('src/components/doit/ChapterLink.svelte');
+  assert.doesNotMatch(code(link), /target=|rel=/);
+  // ... and "Back to the chapter" in its three places, and a chapter's name on the list of steps, are all drawn by it.
+  const drawn: [file: string, words: string][] = [
+    ['src/screens/doit/StepBody.svelte', '{t.back}'],
+    ['src/screens/doit/Done.svelte', '{t.back}'],
+    ['src/components/doit/Strip.svelte', '{t.back}'],
+    ['src/screens/Do.svelte', '{chapterHeading(chapter, lang)}'],
+  ];
+  for (const [file, words] of drawn) {
+    const text = source(file);
+    const inLink = text.split(`>${words}</ChapterLink>`).length - 1;
+    assert.equal(inLink, 1, `${file}: ${words} is the text of one link back`);
+    if (words === '{t.back}') assert.equal(text.split(words).length - 1, inLink, `${file}: "Back to the chapter" is drawn by ChapterLink and by nothing else`);
+  }
+  // No other file of the app draws those words, or that piece.
+  for (const name of files) {
+    if (drawn.some(([file]) => file === `src/${name}`) || name === 'components/doit/ChapterLink.svelte') continue;
+    assert.doesNotMatch(code(readFileSync(new URL(name, root), 'utf8')), /ChapterLink|\bt\.back\b|doit\[[a-z.]+\]\.back\b/, name);
+  }
+
+  // -- The address of "Back to the chapter": the main site, one of the chapter's two pages, and the mark that
+  //    names the step and says whether it is done. Nothing else, whatever the step's note holds. --
+  const SITE = 'https://www.learnbitcoin.com';
+  const doneAt = Date.UTC(2026, 10, 15, 12);
+  for (const id of STEPS) {
+    for (const lang of LANGS) {
+      const page = STEP_DEFS[id].chapter.path[lang];
+      assert.equal(chapterLink(SITE, id, lang, undefined), `${SITE}${page}#do-${id}`);
+      assert.equal(chapterLink(SITE, id, lang, { started: true }), `${SITE}${page}#do-${id}`);
+      assert.equal(chapterLink(SITE, id, lang, { started: true, doneAt }), `${SITE}${page}#done=${id}`);
+      // A note with everything a step's note can hold: a wallet fingerprint, how the wallet was kept, a payment.
+      const full = { started: true as const, doneAt, from: STEP_DEFS[id].chapter.path.es, wallet: '73c5da0a', was: 'passkey' as const, tx: 'ab'.repeat(32), sentAt: doneAt - 60_000, parts: { 1: true as const } };
+      const address = new URL(chapterLink(SITE, id, lang, full) ?? '');
+      assert.deepEqual(
+        [address.origin, address.pathname, address.search, address.hash, address.username, address.password],
+        [SITE, STEP_DEFS[id].chapter.path.es, '', `#done=${id}`, '', ''],
+        `${id}, ${lang}`,
+      );
+      assert.doesNotMatch(address.href, /73c5da0a|abab|passkey|[0-9]{6}/, `${id}, ${lang}: nothing about the wallet, and no time, is in the address`);
+    }
+  }
+  // A chapter's name on the Do it screen leads to the chapter's page, with no mark and nothing else.
+  for (const chapter of CHAPTERS) {
+    for (const lang of LANGS) assert.equal(chapterUrl(SITE, chapter, lang), `${SITE}${chapter.path[lang]}`);
+  }
 });

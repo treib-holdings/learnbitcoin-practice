@@ -38,7 +38,7 @@ for a block, write down the 12 words, prove the backup. Nothing here holds value
 | `contract/` | What the app and its Worker agree on: paths, request and answer bodies, error codes, and the closed list of events that may be counted. Plain TypeScript with no imports. |
 | `wallet/` | Keys (from a passkey or from random words), addresses, descriptors, the scan of the chain, payments and history. Pure TypeScript on the audited @scure / @noble libraries; no WebAssembly. |
 | `app/` | The wallet itself: a single-page app (Svelte 5, Vite, Tailwind CSS 4) in English and Spanish. The rules live in plain modules with tests under `src/lib/` (`session.ts` for keys and storage, `chain-sync.ts` for coins, `faucet-flow.ts` for the faucet); `src/screens/` has one file per screen, `src/strings/` every sentence in both languages, and `dev/` a gallery of every screen in every state. |
-| `worker/` | A small Cloudflare Worker for the app's `/api/` and `/p/` paths: the chain's read API, limited to the few shapes the wallet asks for; the faucet, behind a bot check; the address of the pay-it-forward pot; and a forwarder for counted events. The built app is served beside it as static files. |
+| `worker/` | A small Cloudflare Worker for the app's `/api/` and `/p/` paths: the chain's read API, limited to the few shapes the wallet asks for; the faucet, behind a bot check; the address of the pay-it-forward pot, and its three counts, which the Worker asks the practice network for once for all readers and keeps for 15 seconds; and a forwarder for counted events. The built app is served beside it as static files. |
 | `e2e/` | The end-to-end tools: a stand-in practice network kept in memory, a local server that runs the Worker's real handler, headless Chrome with virtual passkeys, the smoke command, and the scenarios in `e2e/scenarios/`. |
 | `bots/` | The practice network's scripted counterparties: treasury upkeep, the faucet, the pay-it-forward pot, refills and health alerts, with a small API for the Worker. Every key stays in Bitcoin Core's wallets. See `bots/README.md`. |
 | `ops/` | The practice network itself: Bitcoin Core (regtest), electrs, a mempool explorer, the block producer, backups, and a Cloudflare tunnel. See `ops/README.md`. |
@@ -88,9 +88,13 @@ fails on any console error, any violation of the page's security policy and
 any request to another host. `--wallet` chooses what the browser holds:
 `none`, `empty`, `funded` or `passkey`.
 
-`pnpm e2e` runs 147 scenarios in about two and a half minutes. Each gets a
+`pnpm e2e` runs 210 scenarios in about three minutes. Each gets a
 world of its own: the built app, the Worker's handler, a stand-in network,
 and pages in Chrome. Most files hold the scenarios of one screen. The files
+named `doit-*` hold the "Do it" steps: one file for each step, and one each
+for the note of progress, the strip, the reading of a transaction, the
+edges, and the link back to the chapter, which is followed to a stand-in
+for the main site. The files
 named `journey-*` cross the screens: a wallet made with a passkey from Home
 to its last payment, the faucet and its bot check, a wallet without a
 passkey in Spanish on a phone, restore in a second browser, a stored record
@@ -147,9 +151,13 @@ public key. With it the app works out addresses, reads coins and history, and
 receives, with no private key and no prompt. Private keys are needed for two
 things only: to sign a payment, and to show the 12 words.
 
-**One record.** The app keeps one JSON value in the browser's localStorage,
-under the key `lbp_wallet_v1`, and nothing else: no sessionStorage, no
-IndexedDB, no cookie. One browser holds one practice wallet.
+**One record.** The wallet keeps one JSON value in the browser's
+localStorage, under the key `lbp_wallet_v1`. One browser holds one practice
+wallet. The "Do it" steps keep a second value beside it, under
+`lbp_progress_v1`, once a reader has opened a step: a note of their progress,
+which holds no key and none of the 12 words (the About screen lists what it
+does hold, and `app/src/lib/doit/progress.ts` is where it is written). The
+app keeps nothing else: no sessionStorage, no IndexedDB, no cookie.
 
 The two kinds of record go by how this browser keeps the wallet, not by how
 the wallet was made:
@@ -237,7 +245,15 @@ app's About screen, and comes to this:
 - The faucet's bot check is Cloudflare's. It loads only when coins are asked
   for, examines the browser, and is given the address the coins are for. Its
   code runs in the page, so it could also read the stored record: the
-  wallet's public key, and with it every address of the wallet.
+  wallet's public key, and with it every address of the wallet. It could
+  read the note of the "Do it" steps too.
+- "Back to the chapter" on a step, and a chapter's name on the list of
+  steps, lead to the main site in the same tab. They send no referrer: the
+  app's pages are served with `Referrer-Policy: no-referrer`, and no link is
+  an exception to it. The address of "Back to the chapter" names the step
+  and says whether it is done (`#do-<step>` or `#done=<step>`), and the page
+  it leads to is one of the two pages of the step's own chapter, English or
+  Spanish. Nothing about the wallet is in it.
 
 ## Known limits
 

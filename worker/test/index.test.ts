@@ -1,7 +1,13 @@
 // The deployed entry, run under Node with stand-ins for what Cloudflare
 // supplies: the settings of wrangler.jsonc, four secrets, five limiters and
 // fetch. These tests are about the wiring: which setting, secret and limiter
-// ends up where.
+// ends up where, and what the entry keeps from one request to the next.
+//
+// Cloudflare runs the entry in an isolate: it loads the module once and then
+// hands it request after request. What the module holds at its top (the
+// holder of the pot's counts) lives as long as that. So each test here gets
+// an isolate of its own, newly started (newIsolate below), and a test that
+// is about two isolates starts a second one.
 
 import assert from 'node:assert/strict';
 import { afterEach, beforeEach, test } from 'node:test';
@@ -9,9 +15,30 @@ import { API } from '@learnbitcoin/practice-contract';
 import type { LogLine } from '../src/deps.ts';
 import { OLDER_PAGE_COST, POT_STATS } from '../src/handler.ts';
 import { FIXED_HEADERS } from '../src/headers.ts';
-import worker from '../src/index.ts';
+import { POT_STATS_KEEP_MS } from '../src/pot-stats.ts';
 import { ADDRESS, APP, POT_ADDRESS, READER_IP, TXID, fakeFetch, fakeLimiter, post, reply, wranglerConfig } from './fakes.ts';
 import type { FetchCall } from './fakes.ts';
+
+/** The entry as Cloudflare calls it. */
+type Entry = typeof import('../src/index.ts').default;
+
+let started = 0;
+
+/**
+ * The entry module, loaded anew: what Cloudflare has when it starts an
+ * isolate for the Worker. Node keeps one copy of a module for each address
+ * it was asked for under, so a new query string is a new copy, with its
+ * top-level values made again. (The modules it imports are shared, as they
+ * hold nothing.)
+ */
+async function newIsolate(): Promise<Entry> {
+  started += 1;
+  const loaded = (await import(`../src/index.ts?isolate=${started}`)) as { default: Entry };
+  return loaded.default;
+}
+
+/** The isolate the test's requests go to, unless it names another. */
+let worker: Entry;
 
 const VARS = wranglerConfig().vars as Record<string, string>;
 const ORIGIN = 'https://practice-origin.learnbitcoin.com';
@@ -44,13 +71,14 @@ let waiting: Promise<unknown>[] = [];
 const context = { waitUntil: (promise: Promise<unknown>) => void waiting.push(promise) };
 const real = { fetch: globalThis.fetch, log: console.log, error: console.error };
 
-/** What the outside answers, per test. Anything a test did not expect to be asked fails it. */
-let outside: (call: FetchCall) => Response = () => {
+/** What the outside answers, per test: at once, or when the test lets it. Anything a test did not expect to be asked fails it. */
+let outside: (call: FetchCall) => Response | Promise<Response> = () => {
   throw new Error('nothing outside should be asked');
 };
 let asked: FetchCall[] = [];
 
-beforeEach(() => {
+beforeEach(async () => {
+  worker = await newIsolate();
   logged = [];
   waiting = [];
   const fetch = fakeFetch((call) => outside(call));
@@ -69,8 +97,8 @@ afterEach(() => {
   };
 });
 
-async function send(request: Request, env: Env): Promise<Response> {
-  const response = await worker.fetch(request, env, context);
+async function send(request: Request, env: Env, isolate: Entry = worker): Promise<Response> {
+  const response = await isolate.fetch(request, env, context);
   await Promise.all(waiting);
   return response;
 }
@@ -455,22 +483,170 @@ test('the pot counts go to the configured origin with the Access token and no be
   );
 
   // With no bots token set the counts are still asked for: they need none. The address does.
+  // (A Worker that has just been started, so that it has no counts yet and must ask.)
   logged = [];
   outside = () => reply(200, { learners_passed_on: 0, coins_waiting: 0, coins_passed_to_newcomers: 0 });
   const bare = bindings({ BOTS_API_TOKEN: undefined });
-  assert.deepEqual(await (await send(get(API.potStats), bare.env)).json(), { passedOn: 0, waiting: 0, handedOn: 0 });
-  assert.equal((await send(post(API.potAddress, null), bare.env)).status, 502);
+  const untokened = await newIsolate();
+  assert.deepEqual(await (await send(get(API.potStats), bare.env, untokened)).json(), { passedOn: 0, waiting: 0, handedOn: 0 });
+  assert.equal(asked.at(-1)?.url, `${ORIGIN}/bots/pot/stats`);
+  assert.equal(asked.at(-1)?.headers.authorization, undefined);
+  assert.equal((await send(post(API.potAddress, null), bare.env, untokened)).status, 502);
 
-  // An origin that is down: "unavailable", and one error line.
+  // An origin that is down: "unavailable", and one error line. (Again a Worker with no counts yet.)
   logged = [];
   outside = () => reply(502, '<html>Bad gateway</html>', 'text/html');
-  const failed = await send(get(API.potStats), bindings().env);
+  const failed = await send(get(API.potStats), bindings().env, await newIsolate());
   assert.equal(failed.status, 502);
   assert.deepEqual(await failed.json(), { error: 'unavailable' });
   assert.deepEqual(
     logged.map(({ level, line }) => ({ level, line: { ...(line as LogLine), ms: 0 } })),
     [{ level: 'error', line: { route: 'pot_stats', status: 502, upstream: 502, ms: 0, fault: 'origin_down' } }],
   );
+});
+
+/** What the bots answer when asked for the pot's counts, with `passedOn` payments passed on. */
+const botsCounts = (passedOn: number): Response => reply(200, { learners_passed_on: passedOn, sats_received: 60_000 * passedOn, coins_waiting: 0, coins_passed_to_newcomers: 0, faucet_payments: 9 });
+
+/**
+ * Runs `body` with the runtime's clock in the test's hands. index.ts reads
+ * Date.now itself: `move` puts it that many milliseconds after the moment
+ * the test took it over. The real clock is put back at the end.
+ */
+async function withClock(body: (move: (ms: number) => void) => Promise<void>): Promise<void> {
+  const real = Date.now;
+  const began = real.call(Date);
+  let ahead = 0;
+  Date.now = () => began + ahead;
+  try {
+    await body((ms) => {
+      ahead = ms;
+    });
+  } finally {
+    Date.now = real;
+  }
+}
+
+/** A look at the pot's counts by reader number `n`, with bindings of its own, as every request to the deployed Worker has. */
+async function look(n: number, isolate: Entry = worker): Promise<{ response: Response; limiters: Limiters }> {
+  const { env, limiters } = bindings();
+  const request = new Request(`${APP}${API.potStats}`, { headers: { 'CF-Connecting-IP': `198.51.100.${n + 1}` } });
+  return { response: await send(request, env, isolate), limiters };
+}
+
+test('the pot counts outlive a request: one isolate asks the origin once for many readers, again when the counts are 15 seconds old, and a new isolate starts with none', async () => {
+  let questions = 0;
+  outside = (call) => {
+    assert.equal(call.url, `${ORIGIN}/bots/pot/stats`);
+    questions += 1;
+    return botsCounts(questions);
+  };
+  await withClock(async (move) => {
+    // Twenty readers, one after another. For each the entry builds everything anew: the settings,
+    // the way to the origin, the handler. What it does not build anew is the holder of the counts.
+    for (let n = 0; n < 20; n += 1) {
+      const { response, limiters } = await look(n);
+      assert.equal(response.status, 200, `reader ${n}`);
+      assert.equal(await response.text(), '{"passedOn":1,"waiting":0,"handedOn":0}', `reader ${n}`);
+      for (const [name, value] of Object.entries(FIXED_HEADERS)) assert.equal(response.headers.get(name), value, name);
+      assert.equal(limiters.POT_LIMIT.keys.length, 1, 'each reader is counted at the pot limiter, kept counts or not');
+    }
+    assert.equal(asked.length, 1, 'the origin was asked once for the twenty of them');
+    // One line for each. The first asked the origin; the others were given the kept counts and asked nobody.
+    assert.deepEqual(
+      logged.map(({ level, line }) => [level, (line as LogLine).route, (line as LogLine).status, (line as LogLine).upstream, (line as LogLine).fault]),
+      [['log', 'pot_stats', 200, 200, null], ...Array.from({ length: 19 }, () => ['log', 'pot_stats', 200, null, null])],
+    );
+
+    // A millisecond before the counts are 15 seconds old they are still given. At 15 seconds the origin is asked.
+    move(POT_STATS_KEEP_MS - 1);
+    assert.deepEqual(await (await look(20)).response.json(), { passedOn: 1, waiting: 0, handedOn: 0 });
+    assert.equal(asked.length, 1);
+    move(POT_STATS_KEEP_MS);
+    assert.deepEqual(await (await look(21)).response.json(), { passedOn: 2, waiting: 0, handedOn: 0 });
+    assert.deepEqual(await (await look(22)).response.json(), { passedOn: 2, waiting: 0, handedOn: 0 });
+    assert.equal(asked.length, 2);
+
+    // Another isolate of the same Worker (another machine, another location, or this one started
+    // again) has kept nothing: it asks for itself, once.
+    const other = await newIsolate();
+    assert.deepEqual(await (await look(23, other)).response.json(), { passedOn: 3, waiting: 0, handedOn: 0 });
+    assert.deepEqual(await (await look(24, other)).response.json(), { passedOn: 3, waiting: 0, handedOn: 0 });
+    assert.equal(asked.length, 3);
+    // And the first isolate still has its own.
+    assert.deepEqual(await (await look(25)).response.json(), { passedOn: 2, waiting: 0, handedOn: 0 });
+    assert.equal(asked.length, 3);
+  });
+  assert.ok(!JSON.stringify(asked).includes('198.51.100.'), 'no reader address went to the origin');
+});
+
+test('requests that reach one isolate while the origin is being asked for the pot counts share that one question, and it is handed to waitUntil once', async () => {
+  let answer: (response: Response) => void = () => {};
+  outside = () =>
+    new Promise<Response>((resolve) => {
+      answer = resolve;
+    });
+  const readers = Array.from({ length: 25 }, () => bindings());
+  const answers = readers.map(({ env }, n) => worker.fetch(new Request(`${APP}${API.potStats}`, { headers: { 'CF-Connecting-IP': `198.51.100.${n + 1}` } }), env, context));
+  // Every one of them is counted at its limiter first. One turn later each has asked the origin or waits for the question that is out.
+  for (let turns = 0; readers.some(({ limiters }) => limiters.POT_LIMIT.keys.length === 0); turns += 1) {
+    assert.ok(turns < 10_000, 'not every request reached its limiter');
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(asked.length, 1, 'one question is out, not twenty-five');
+  assert.equal(waiting.length, 1, 'handed to waitUntil by the request that asked, so that it is seen through if that reader leaves');
+
+  answer(botsCounts(4));
+  for (const each of answers) {
+    const response = await each;
+    assert.equal(response.status, 200);
+    assert.equal(await response.text(), '{"passedOn":4,"waiting":0,"handedOn":0}');
+    assert.equal(response.headers.get('Cache-Control'), 'no-store');
+  }
+  await Promise.all(waiting);
+  assert.equal(asked.length, 1);
+  assert.equal(logged.length, 25);
+  for (const { level, line } of logged) assert.deepEqual([level, (line as LogLine).route, (line as LogLine).status, (line as LogLine).upstream], ['log', 'pot_stats', 200, 200]);
+});
+
+test('pot counts the origin could not give are not kept by the isolate: the next request asks again, and old counts are not given once they have run out', async () => {
+  await withClock(async (move) => {
+    // A 200 whose body is not the three counts, then an origin that is down, then one that never answers in time.
+    const bad: Array<[answer: () => Response, upstream: number | null, fault: string]> = [
+      [() => reply(200, { learners_passed_on: '4', coins_waiting: 1, coins_passed_to_newcomers: 3 }), 200, 'origin_shape'],
+      [() => reply(200, '<html>sign in</html>', 'text/html'), 200, 'origin_shape'],
+      [() => reply(502, '<html>Bad gateway</html>', 'text/html'), 502, 'origin_down'],
+      [() => reply(302, null), 302, 'origin_auth'],
+    ];
+    for (const [n, [respond, upstream, fault]] of bad.entries()) {
+      logged = [];
+      outside = respond;
+      const { response } = await look(n);
+      assert.equal(response.status, 502, fault);
+      assert.deepEqual(await response.json(), { error: 'unavailable' }, fault);
+      assert.equal(asked.length, n + 1, 'each of them asked: nothing was kept from the one before');
+      assert.deepEqual(
+        logged.map(({ level, line }) => ({ level, line: { ...(line as LogLine), ms: 0 } })),
+        [{ level: 'error', line: { route: 'pot_stats', status: 502, upstream, ms: 0, fault } }],
+      );
+    }
+
+    // A good answer is kept, and given while it is young, also when the origin has gone down meanwhile.
+    outside = () => botsCounts(6);
+    assert.deepEqual(await (await look(10)).response.json(), { passedOn: 6, waiting: 0, handedOn: 0 });
+    assert.equal(asked.length, bad.length + 1);
+    outside = () => reply(502, '<html>Bad gateway</html>', 'text/html');
+    move(POT_STATS_KEEP_MS - 1);
+    assert.deepEqual(await (await look(11)).response.json(), { passedOn: 6, waiting: 0, handedOn: 0 });
+    assert.equal(asked.length, bad.length + 1, 'not asked: the kept counts were young enough');
+    // Once they are 15 seconds old they are not given any more: the reader is told "unavailable".
+    move(POT_STATS_KEEP_MS);
+    const late = await look(12);
+    assert.equal(late.response.status, 502);
+    assert.deepEqual(await late.response.json(), { error: 'unavailable' });
+    assert.equal(asked.length, bad.length + 2);
+  });
 });
 
 test('with a widget configured, the faucet asks the verify service with the secret, then the bots with their token', async () => {

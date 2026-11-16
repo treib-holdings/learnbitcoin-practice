@@ -119,7 +119,25 @@ test('a field that fails its check is dropped alone', () => {
   const bad: Record<keyof StepNote, unknown[]> = {
     started: [false, 1, 'true', null, {}],
     doneAt: [-1, 1.5, '1800000000000', null, Number.MAX_SAFE_INTEGER, 8_640_000_000_000_001, {}],
-    from: ['journey/x', '//evil.example/x', 'https://evil.example', '/Journey', '/a b', `/${'a'.repeat(200)}`, 7, null, ''],
+    // Anything but the step's own chapter page: a plain path of the main site that is another page, another
+    // step's chapter, the right page written another way, another host, something that is no text.
+    from: [
+      '/newsletter',
+      '/',
+      '/journey',
+      '/journey/what-bitcoin-actually-is',
+      '/es/recorrido/se-tu-propio-banco',
+      '/journey/how-bitcoin-works/',
+      '/Journey/How-Bitcoin-Works',
+      'journey/how-bitcoin-works',
+      '//evil.example/x',
+      'https://evil.example',
+      '/a b',
+      `/${'a'.repeat(200)}`,
+      7,
+      null,
+      '',
+    ],
     wallet: ['73C5DA0A', '73c5da0', '73c5da0a0', 'zzzzzzzz', 7, null, FP.split('')],
     was: ['Passkey', 'seed', true, null, 0],
     tx: [TX.toUpperCase(), TX.slice(1), `${TX}0`, 'g'.repeat(64), 7, null],
@@ -408,15 +426,20 @@ test('"Start this step again" clears one step, and only a step that is started a
 test('opening: started once, followed unless done, and the way back is the latest valid one', () => {
   let progress = applyChange(emptyProgress(), open('no-balances', NOW, '/journey/how-bitcoin-works'));
   assert.deepEqual(progress, { v: 1, following: 'no-balances', followedAt: NOW, steps: { 'no-balances': { started: true, from: '/journey/how-bitcoin-works' } } });
-  // Opened again with no way back, or with one that is none: the earlier one stays.
-  for (const from of [null, '//evil.example', 'https://evil.example/journey', '/Journey/X']) {
+  // Opened again with no way back, or with one that is none: the earlier one stays. Another step's chapter is
+  // none, and neither is any other page of the main site.
+  for (const from of [null, '//evil.example', 'https://evil.example/journey', '/Journey/X', '/journey/be-your-own-bank', '/es/recorrido/que-es-bitcoin-en-realidad', '/newsletter', '/journey/how-bitcoin-works/']) {
     progress = applyChange(progress, open('no-balances', NOW + 1, from));
     assert.equal(progress.steps['no-balances']?.from, '/journey/how-bitcoin-works', String(from));
   }
-  // With another valid one: that one.
+  // With the other valid one, the chapter's Spanish page: that one.
   progress = applyChange(progress, open('no-balances', NOW + 2, '/es/recorrido/como-funciona-bitcoin'));
   assert.equal(progress.steps['no-balances']?.from, '/es/recorrido/como-funciona-bitcoin');
   assert.equal(progress.followedAt, NOW + 2);
+  // A first opening with a way back that is none keeps none: the note of the step holds nothing of what the address said.
+  for (const from of ['/newsletter', '/journey/be-your-own-bank', '/', `/${'reader-4f1c9a7e/'.repeat(10)}campaign-77`]) {
+    assert.deepEqual(applyChange(emptyProgress(), open('no-balances', NOW, from)).steps, { 'no-balances': { started: true } }, from);
+  }
 
   // Another step's screen: that one is followed now, and the first keeps what it had.
   progress = applyChange(progress, open('the-seed', NOW + 3));
@@ -518,7 +541,7 @@ test('what is written once is never cleared by a later change: started, each tic
   const steps: StepId[] = [...STEPS];
   const changes: Change[] = [];
   for (const step of steps) {
-    changes.push(open(step, NOW, null), open(step, NOW, '/journey/x'), { kind: 'follow', step, at: NOW }, { kind: 'stop', step });
+    changes.push(open(step, NOW, null), open(step, NOW, STEP_DEFS[step].chapter.path.es), open(step, NOW, '/journey/x'), { kind: 'follow', step, at: NOW }, { kind: 'stop', step });
     changes.push({ kind: 'payment', step, tx: TX, sentAt: NOW }, { kind: 'send-another', step }, { kind: 'checked', step, wallet: OTHER_FP });
     for (let part = 0; part <= 5; part++) changes.push(tick(step, part, NOW, { tx: TX, sentAt: NOW, wallet: FP, was: 'words' }));
   }
@@ -549,6 +572,8 @@ test('what is written once is never cleared by a later change: started, each tic
       // Ticks are always the first so many parts: none was ever written out of turn.
       const ticked = Object.keys(is?.parts ?? {}).map(Number).sort((a, b) => a - b);
       assert.deepEqual(ticked, ticked.map((_, at) => at + 1), `${id}: ${ticked.join(',')}`);
+      // The way back is the step's own chapter page or it is not there: no change ever wrote another path.
+      assert.ok(is?.from === undefined || is.from === STEP_DEFS[id].chapter.path.es, `${id}: the way back is ${String(is?.from)} after ${change.kind}`);
     }
     progress = after;
   }
@@ -635,74 +660,167 @@ test('whatever is written, the stored text holds the listed fields and nothing e
 
 // -- the way back -----------------------------------------------------------------------------
 
-test('a way back counts only when it is a plain path of the main site', () => {
-  const good = ['/', '/journey', '/journey/how-bitcoin-works', '/es/recorrido/como-funciona-bitcoin', '/a-b/c-d/0-9', '/journey/', `/${'a'.repeat(199)}`];
-  for (const path of good) assert.equal(validFrom(path), path, path);
-  const hostile: unknown[] = [
-    // Another site, by every spelling a browser would follow there.
-    '//evil.example',
-    '//evil.example/journey/how-bitcoin-works',
-    '/journey//evil.example',
-    '/\\evil.example',
-    '\\\\evil.example',
-    'https://evil.example/journey',
-    'http://www.learnbitcoin.com/journey',
-    'https://www.learnbitcoin.com/journey/how-bitcoin-works',
-    '/journey@evil.example',
-    '/.evil.example',
-    '/journey/..',
-    '/../etc',
-    // A script, or data.
-    'javascript:alert(1)',
-    '/javascript:alert(1)',
-    'data:text/html,x',
-    // Not a path, or not a plain one.
-    '',
-    'journey/how-bitcoin-works',
-    ' /journey',
-    '/journey ',
-    '/Journey',
-    '/journey/How-Bitcoin-Works',
-    '/journey/how_bitcoin_works',
-    '/journey/how-bitcoin-works?x=1',
-    '/journey/how-bitcoin-works#done=hold-some',
-    '/journey/how-bitcoin-works.html',
-    '/journey/%2e%2e',
-    '/journey/%2F%2Fevil.example',
-    '/journey\n/x',
-    '/journey\t',
-    '/journey\u0000',
-    '/caf\u00e9',
-    '/\u202ejourney',
-    // Too long.
-    `/${'a'.repeat(200)}`,
-    `/${'a/'.repeat(150)}`,
-    // Not a text at all.
-    null,
-    undefined,
-    7,
-    true,
-    ['/journey'],
-    { toString: () => '/journey' },
-  ];
-  for (const value of hostile) assert.equal(validFrom(value), null, JSON.stringify(value));
+/**
+ * The six pages a way back can name: for each step the English and the Spanish page of its own chapter, as the
+ * main site writes its own addresses. Written out here, and not read from steps.ts, so that a change to a
+ * chapter's path is a change somebody made on purpose in two places.
+ */
+const CHAPTER_PAGES: Record<StepId, readonly [en: string, es: string]> = {
+  'hold-some': ['/journey/what-bitcoin-actually-is', '/es/recorrido/que-es-bitcoin-en-realidad'],
+  'pass-it-on': ['/journey/how-bitcoin-works', '/es/recorrido/como-funciona-bitcoin'],
+  'no-balances': ['/journey/how-bitcoin-works', '/es/recorrido/como-funciona-bitcoin'],
+  'waiting-room': ['/journey/how-bitcoin-works', '/es/recorrido/como-funciona-bitcoin'],
+  'the-seed': ['/journey/be-your-own-bank', '/es/recorrido/se-tu-propio-banco'],
+  'prove-the-backup': ['/journey/be-your-own-bank', '/es/recorrido/se-tu-propio-banco'],
+};
+
+/** Every one of the six, once. */
+const ALL_PAGES = [...new Set(Object.values(CHAPTER_PAGES).flat())];
+
+/** What is no way back for any step, though some of it is a plain path of the main site. */
+const NO_WAY_BACK: unknown[] = [
+  // Other pages of the main site: plain paths, each of them, and none of them the chapter of a step.
+  '/',
+  '/journey',
+  '/journey/',
+  '/newsletter',
+  '/glossary/utxo-unspent-transaction-output',
+  '/archive/t/2015/any-page-of-the-main-site',
+  '/a-b/c-d/0-9',
+  '/u/reader-4f1c9a7e-2b6d-4c1e-9d0a-7e5f3b2a1c0d/campaign-77',
+  `/${'a'.repeat(199)}`,
+  // A chapter that has no step, and a path that only starts like a chapter's.
+  '/journey/the-problem-bitcoin-solves',
+  '/journey/how-bitcoin-works-2',
+  '/journey/how-bitcoin-works/extra',
+  '/es/journey/how-bitcoin-works',
+  '/recorrido/como-funciona-bitcoin',
+  // A chapter's page, written another way. The main site's own address has no slash at its end.
+  '/journey/how-bitcoin-works/',
+  '/es/recorrido/como-funciona-bitcoin/',
+  '/journey//how-bitcoin-works',
+  '/journey/./how-bitcoin-works',
+  '/journey/x/../how-bitcoin-works',
+  '/Journey/How-Bitcoin-Works',
+  '/JOURNEY/HOW-BITCOIN-WORKS',
+  '/journey/how_bitcoin_works',
+  '/journey/how-bitcoin-works.html',
+  '/journey/how-bitcoin-works?x=1',
+  '/journey/how-bitcoin-works#done=pass-it-on',
+  '/journey/how%2Dbitcoin%2Dworks',
+  '%2Fjourney%2Fhow-bitcoin-works',
+  'journey/how-bitcoin-works',
+  ' /journey/how-bitcoin-works',
+  '/journey/how-bitcoin-works ',
+  '/journey/how-bitcoin-works\n',
+  '/journey/how-bitcoin-works\u0000',
+  // Another site, by every spelling a browser would follow there.
+  '//evil.example',
+  '//evil.example/journey/how-bitcoin-works',
+  '/journey//evil.example',
+  '/\\evil.example',
+  '\\\\evil.example',
+  'https://evil.example/journey/how-bitcoin-works',
+  'http://www.learnbitcoin.com/journey/how-bitcoin-works',
+  'https://www.learnbitcoin.com/journey/how-bitcoin-works',
+  '//www.learnbitcoin.com/journey/how-bitcoin-works',
+  '/journey@evil.example',
+  '/.evil.example',
+  '/journey/..',
+  '/../etc',
+  // A script, or data.
+  'javascript:alert(1)',
+  '/javascript:alert(1)',
+  'data:text/html,x',
+  // Nothing, and letters that are not plain.
+  '',
+  '/café',
+  '/‮journey',
+  // Too long for anything.
+  `/${'a'.repeat(200)}`,
+  `/${'a/'.repeat(150)}`,
+  // Not a text at all, even where it would read as a chapter's page.
+  null,
+  undefined,
+  7,
+  true,
+  ['/journey/how-bitcoin-works'],
+  { toString: () => '/journey/how-bitcoin-works' },
+  new String('/journey/how-bitcoin-works'),
+];
+
+test('the six chapter pages: the main site\'s own addresses, with no slash at the end', () => {
+  assert.deepEqual(ALL_PAGES, [
+    '/journey/what-bitcoin-actually-is',
+    '/es/recorrido/que-es-bitcoin-en-realidad',
+    '/journey/how-bitcoin-works',
+    '/es/recorrido/como-funciona-bitcoin',
+    '/journey/be-your-own-bank',
+    '/es/recorrido/se-tu-propio-banco',
+  ]);
+  for (const id of STEPS) {
+    assert.deepEqual([STEP_DEFS[id].chapter.path.en, STEP_DEFS[id].chapter.path.es], [...CHAPTER_PAGES[id]], id);
+    assert.deepEqual(Object.keys(STEP_DEFS[id].chapter.path).sort(), [...LANGS].sort(), `${id}: one page for each language, and no third`);
+  }
+  const spanishPages = new Set(Object.values(CHAPTER_PAGES).map(([, spanish]) => spanish));
+  for (const path of ALL_PAGES) {
+    // One slash in front, lower-case names of letters, digits and hyphens, and nothing after the last name.
+    assert.match(path, /^(\/[a-z0-9]+(-[a-z0-9]+)*)+$/, path);
+    assert.ok(!path.endsWith('/'), `${path}: the main site's own address of a page has no slash at its end`);
+    assert.equal(path.startsWith('/es/'), spanishPages.has(path), `${path}: the Spanish pages are the ones under /es/`);
+  }
 });
 
-test('the way back in a step\'s address: the decoded value of the first "from", and nothing else', () => {
-  assert.equal(fromOfSearch('?from=/journey/how-bitcoin-works'), '/journey/how-bitcoin-works');
-  assert.equal(fromOfSearch('from=/journey/how-bitcoin-works'), '/journey/how-bitcoin-works');
+test('a way back counts only when it is the step\'s own chapter page, in English or in Spanish', () => {
+  for (const id of STEPS) {
+    const own = CHAPTER_PAGES[id];
+    // The step's own chapter, in either language: kept, as it is.
+    for (const path of own) assert.equal(validFrom(id, path), path, `${id}: ${path}`);
+    // Another step's chapter is none: the reader would be sent to a page that has no card for this step.
+    for (const path of ALL_PAGES) {
+      if (!own.includes(path)) assert.equal(validFrom(id, path), null, `${id}: ${path}`);
+    }
+    // And nothing else is one, for any step.
+    for (const value of NO_WAY_BACK) assert.equal(validFrom(id, value), null, `${id}: ${JSON.stringify(value)}`);
+  }
+  // So, over every step, the rule lets exactly two values through.
+  const tried = [...ALL_PAGES, ...NO_WAY_BACK];
+  for (const id of STEPS) {
+    assert.deepEqual(tried.filter((value) => validFrom(id, value) !== null), [...CHAPTER_PAGES[id]], id);
+  }
+});
+
+test('the way back in a step\'s address: the decoded value of the first "from", when it is the step\'s own chapter page', () => {
+  assert.equal(fromOfSearch('pass-it-on', '?from=/journey/how-bitcoin-works'), '/journey/how-bitcoin-works');
+  assert.equal(fromOfSearch('pass-it-on', 'from=/journey/how-bitcoin-works'), '/journey/how-bitcoin-works');
+  assert.equal(fromOfSearch('pass-it-on', '?from=/es/recorrido/como-funciona-bitcoin'), '/es/recorrido/como-funciona-bitcoin');
   // As a browser writes it in a link: the slashes percent-encoded.
-  assert.equal(fromOfSearch('?from=%2Fes%2Frecorrido%2Fse-tu-propio-banco'), '/es/recorrido/se-tu-propio-banco');
-  assert.equal(fromOfSearch('?state=funded&from=%2Fjourney%2Fbe-your-own-bank&x=1'), '/journey/be-your-own-bank');
+  assert.equal(fromOfSearch('the-seed', '?from=%2Fes%2Frecorrido%2Fse-tu-propio-banco'), '/es/recorrido/se-tu-propio-banco');
+  assert.equal(fromOfSearch('prove-the-backup', '?state=funded&from=%2Fjourney%2Fbe-your-own-bank&x=1'), '/journey/be-your-own-bank');
   // The first one decides: a good one after a bad one does not rescue it, and a bad one after a good one changes nothing.
-  assert.equal(fromOfSearch('?from=//evil.example&from=/journey/how-bitcoin-works'), null);
-  assert.equal(fromOfSearch('?from=/journey/how-bitcoin-works&from=//evil.example'), '/journey/how-bitcoin-works');
+  assert.equal(fromOfSearch('pass-it-on', '?from=//evil.example&from=/journey/how-bitcoin-works'), null);
+  assert.equal(fromOfSearch('pass-it-on', '?from=/newsletter&from=/journey/how-bitcoin-works'), null);
+  assert.equal(fromOfSearch('pass-it-on', '?from=/journey/how-bitcoin-works&from=//evil.example'), '/journey/how-bitcoin-works');
+  // The same address on another chapter's step names a page that is not that step's chapter: no way back.
+  for (const id of ['hold-some', 'the-seed', 'prove-the-backup'] as const) {
+    assert.equal(fromOfSearch(id, '?from=/journey/how-bitcoin-works'), null, id);
+    assert.equal(fromOfSearch(id, '?from=%2Fes%2Frecorrido%2Fcomo-funciona-bitcoin'), null, id);
+  }
+  // Every step takes its own two pages from its address, and no other step's.
+  for (const id of STEPS) {
+    for (const path of ALL_PAGES) {
+      const expected = CHAPTER_PAGES[id].includes(path) ? path : null;
+      assert.equal(fromOfSearch(id, `?from=${path}`), expected, `${id}: ${path}`);
+      assert.equal(fromOfSearch(id, `?from=${encodeURIComponent(path)}`), expected, `${id}: ${path}, encoded`);
+    }
+  }
   const hostile = [
     '',
     '?',
     '?from',
     '?from=',
-    '?From=/journey',
+    '?From=/journey/how-bitcoin-works',
+    '?FROM=/journey/how-bitcoin-works',
     '?from=//evil.example',
     '?from=%2F%2Fevil.example',
     '?from=https%3A%2F%2Fevil.example',
@@ -710,52 +828,205 @@ test('the way back in a step\'s address: the decoded value of the first "from", 
     '?from=javascript%3Aalert(1)',
     '?from=/journey/%252e%252e',
     '?from=%2Fjourney%2F..%2F..',
+    // A plain path of the main site that is no chapter of this step.
+    '?from=/',
+    '?from=/journey',
+    '?from=/newsletter',
+    '?from=/glossary/utxo-unspent-transaction-output',
+    '?from=/journey/what-bitcoin-actually-is',
+    // The chapter's page, written another way.
+    '?from=/journey/how-bitcoin-works/',
+    '?from=/journey/how-bitcoin-works%2F',
+    '?from=/Journey/How-Bitcoin-Works',
+    '?from=%252Fjourney%252Fhow-bitcoin-works',
     // A plus sign is a space once decoded.
-    '?from=/journey+x',
-    '?from=/journey%20x',
-    '?from=/journey%0a',
+    '?from=/journey/how+bitcoin+works',
+    '?from=/journey/how%20bitcoin%20works',
+    '?from=/journey/how-bitcoin-works%0a',
+    '?from=/journey/how-bitcoin-works%00',
     '?from=%',
     '?from=%E0%A4%A',
-    '?from[]=/journey',
-    '?from=/journey?x=1',
-    '?from=/journey%23done%3Dhold-some',
+    '?from[]=/journey/how-bitcoin-works',
+    '?from=/journey/how-bitcoin-works?x=1',
+    '?from=/journey/how-bitcoin-works%23done%3Dpass-it-on',
   ];
-  for (const search of hostile) assert.equal(fromOfSearch(search), null, search);
+  for (const search of hostile) assert.equal(fromOfSearch('pass-it-on', search), null, search);
 });
 
-test('"Back to the chapter": the card until the step is done, the stamp once it is', () => {
+test('"Back to the chapter" leads to the step\'s own chapter and nowhere else: the card until the step is done, the stamp once it is', () => {
   for (const id of STEPS) {
+    const [english, spanish] = CHAPTER_PAGES[id];
     for (const lang of LANGS) {
-      const own = STEP_DEFS[id].chapter.path[lang];
+      const own = lang === 'en' ? english : spanish;
       // No way back was given: the step's own chapter, in the language of the page.
       assert.equal(chapterLink(SITE, id, lang, undefined), `${SITE}${own}#do-${id}`);
       assert.equal(chapterLink(SITE, id, lang, { started: true }), `${SITE}${own}#do-${id}`);
       assert.equal(chapterLink(SITE, id, lang, started(1)), `${SITE}${own}#do-${id}`, 'under way is not done');
       assert.equal(chapterLink(SITE, id, lang, { started: true, doneAt: NOW }), `${SITE}${own}#done=${id}`);
-      // The page the reader came from, in both states.
-      const from = '/journey/how-bitcoin-works';
-      assert.equal(chapterLink(SITE, id, lang, { started: true, from }), `${SITE}${from}#do-${id}`);
-      assert.equal(chapterLink(SITE, id, lang, { started: true, from, doneAt: NOW }), `${SITE}${from}#done=${id}`);
+      // The reader came from one of the chapter's two pages: that page, in both states, whatever language this page is in.
+      for (const from of [english, spanish]) {
+        assert.equal(chapterLink(SITE, id, lang, { started: true, from }), `${SITE}${from}#do-${id}`);
+        assert.equal(chapterLink(SITE, id, lang, { started: true, from, doneAt: NOW }), `${SITE}${from}#done=${id}`);
+      }
+      // The rule is applied again when the link is built. A note that names any other page (written by hand, or
+      // handed in by a caller that never read it through this file) does not get to choose the address: the link
+      // is the step's own chapter in the page's language, as if the note named no page at all.
+      const others = [...ALL_PAGES.filter((path) => path !== english && path !== spanish), ...NO_WAY_BACK.filter((value): value is string => typeof value === 'string')];
+      for (const from of others) {
+        assert.equal(chapterLink(SITE, id, lang, { started: true, from }), `${SITE}${own}#do-${id}`, `${id} ${lang}: ${from}`);
+        assert.equal(chapterLink(SITE, id, lang, { started: true, from, doneAt: NOW }), `${SITE}${own}#done=${id}`, `${id} ${lang}: ${from}`);
+      }
     }
   }
-  // The rule is applied again when the link is built: a note that was written by hand does not get to choose the address.
-  for (const from of ['//evil.example/x', 'https://evil.example', '/journey/../..', '/Journey', 'javascript:alert(1)']) {
-    const link = chapterLink(SITE, 'the-seed', 'en', { started: true, from, doneAt: NOW });
-    assert.equal(link, `${SITE}/journey/be-your-own-bank#done=the-seed`, from);
+  // So every link there can be is one of 6 steps x 2 pages x 2 marks: the main site's address, a chapter's page,
+  // and the mark. Nothing else is ever in it.
+  const links = new Set<string>();
+  for (const id of STEPS) {
+    for (const lang of LANGS) {
+      for (const from of [undefined, ...ALL_PAGES, ...NO_WAY_BACK.filter((value): value is string => typeof value === 'string')]) {
+        for (const doneAt of [undefined, NOW]) {
+          const link = chapterLink(SITE, id, lang, { started: true, ...(from === undefined ? {} : { from }), ...(doneAt === undefined ? {} : { doneAt }) });
+          assert.ok(link !== null);
+          links.add(link);
+        }
+      }
+    }
   }
+  const possible = STEPS.flatMap((id) => CHAPTER_PAGES[id].flatMap((path) => [`${SITE}${path}#do-${id}`, `${SITE}${path}#done=${id}`]));
+  assert.equal(possible.length, 24);
+  assert.deepEqual([...links].sort(), [...possible].sort());
   // The settings' address with a slash at its end, or with a path: still the main site.
   assert.equal(chapterLink(`${SITE}/`, 'hold-some', 'es', undefined), `${SITE}/es/recorrido/que-es-bitcoin-en-realidad#do-hold-some`);
   assert.equal(chapterLink('http://localhost:4321', 'hold-some', 'en', undefined), 'http://localhost:4321/journey/what-bitcoin-actually-is#do-hold-some');
   // Every link that comes out is on the main site's origin.
   for (const id of STEPS) {
-    const link = chapterLink(SITE, id, 'en', { started: true, from: '/a/b', doneAt: NOW });
+    const link = chapterLink(SITE, id, 'en', { started: true, from: CHAPTER_PAGES[id][1], doneAt: NOW });
     assert.equal(new URL(link ?? '').origin, new URL(SITE).origin);
+    assert.equal(new URL(link ?? '').pathname, CHAPTER_PAGES[id][1]);
     assert.equal(new URL(link ?? '').hash, `#done=${id}`);
   }
   // Settings that name no web address give no link at all.
   for (const site of ['', 'not a url', 'javascript:alert(1)//', 'data:text/html,x', 'file:///etc', 'mailto:a@b.example', '//www.learnbitcoin.com']) {
-    assert.equal(chapterLink(site, 'hold-some', 'en', { started: true, from: '/journey/x' }), null, site);
+    assert.equal(chapterLink(site, 'hold-some', 'en', { started: true, from: '/journey/what-bitcoin-actually-is' }), null, site);
+    assert.equal(chapterLink(site, 'hold-some', 'en', undefined), null, site);
   }
+});
+
+test('the way back, walked from the address to the link: from the English chapter, with no "from", and from another step\'s chapter', () => {
+  /** Opens a step's screen with this query string, as the runner does, and gives the step's note. */
+  const arrive = (progress: Progress, id: StepId, search: string, at = NOW): Progress => applyChange(progress, open(id, at, fromOfSearch(id, search)));
+
+  // 1. A reader arrives from the English chapter, and then switches the wallet to Spanish. The switch keeps the
+  //    address's query string and opens no step anew, so the note is as it was: the way back is the English
+  //    chapter still, on the Spanish page as on the English one, before the step is done and after.
+  let progress = arrive(emptyProgress(), 'pass-it-on', '?from=/journey/how-bitcoin-works');
+  assert.equal(progress.steps['pass-it-on']?.from, '/journey/how-bitcoin-works');
+  for (const lang of LANGS) {
+    assert.equal(chapterLink(SITE, 'pass-it-on', lang, progress.steps['pass-it-on']), `${SITE}/journey/how-bitcoin-works#do-pass-it-on`, lang);
+  }
+  // The Spanish page loaded again with the same address is an opening, and reads the same way back from it.
+  progress = arrive(progress, 'pass-it-on', '?from=/journey/how-bitcoin-works', NOW + 1);
+  for (const part of [1, 2, 3]) progress = applyChange(progress, tick('pass-it-on', part, NOW + 2, part === 2 ? { tx: TX, sentAt: NOW + 2 } : {}));
+  assert.equal(progress.steps['pass-it-on']?.doneAt, NOW + 2);
+  for (const lang of LANGS) {
+    assert.equal(chapterLink(SITE, 'pass-it-on', lang, progress.steps['pass-it-on']), `${SITE}/journey/how-bitcoin-works#done=pass-it-on`, lang);
+  }
+  // The other way round: from the Spanish chapter, read in English.
+  const spanish = arrive(emptyProgress(), 'the-seed', '?from=%2Fes%2Frecorrido%2Fse-tu-propio-banco');
+  for (const lang of LANGS) {
+    assert.equal(chapterLink(SITE, 'the-seed', lang, spanish.steps['the-seed']), `${SITE}/es/recorrido/se-tu-propio-banco#do-the-seed`, lang);
+  }
+
+  // 2. A reader arrives with no "from" (a bookmark, the list of steps): the note keeps no way back, and the link
+  //    is the step's chapter in the language of the page that shows it.
+  const plain = arrive(emptyProgress(), 'pass-it-on', '');
+  assert.deepEqual(plain.steps['pass-it-on'], { started: true });
+  assert.equal(chapterLink(SITE, 'pass-it-on', 'en', plain.steps['pass-it-on']), `${SITE}/journey/how-bitcoin-works#do-pass-it-on`);
+  assert.equal(chapterLink(SITE, 'pass-it-on', 'es', plain.steps['pass-it-on']), `${SITE}/es/recorrido/como-funciona-bitcoin#do-pass-it-on`);
+
+  // 3. A "from" that names another step's chapter is refused: nothing of it is kept, and the link is this
+  //    step's own chapter. So is one that names any other page.
+  for (const search of ['?from=/journey/be-your-own-bank', '?from=/es/recorrido/que-es-bitcoin-en-realidad', '?from=/newsletter', '?from=/', '?from=//evil.example']) {
+    const refused = arrive(emptyProgress(), 'pass-it-on', search);
+    assert.deepEqual(refused.steps['pass-it-on'], { started: true }, search);
+    assert.equal(chapterLink(SITE, 'pass-it-on', 'en', refused.steps['pass-it-on']), `${SITE}/journey/how-bitcoin-works#do-pass-it-on`, search);
+    assert.equal(chapterLink(SITE, 'pass-it-on', 'es', refused.steps['pass-it-on']), `${SITE}/es/recorrido/como-funciona-bitcoin#do-pass-it-on`, search);
+    // And it does not take the place of a way back the note already has.
+    const kept = arrive(progress, 'pass-it-on', search, NOW + 3);
+    assert.equal(kept.steps['pass-it-on']?.from, '/journey/how-bitcoin-works', search);
+  }
+});
+
+test('a stored note that names any other page loses that field when it is read, and no write puts it back', () => {
+  const storage = new MemoryStorage();
+  // As a hand, another program or an earlier build of this page might have left it: free text, and another step's chapter.
+  const planted = {
+    v: 1,
+    following: 'pass-it-on',
+    followedAt: NOW,
+    steps: {
+      'hold-some': { started: true, doneAt: NOW - 9, from: '/es/recorrido/que-es-bitcoin-en-realidad', parts: ticks(1, 2, 3, 4) },
+      'pass-it-on': { started: true, from: '/u/reader-4f1c9a7e-2b6d-4c1e-9d0a-7e5f3b2a1c0d/campaign-77', parts: ticks(1) },
+      'waiting-room': { started: true, from: '/journey/be-your-own-bank' },
+      'the-seed': { from: '/newsletter' },
+    },
+  };
+  put(storage, planted);
+  const text = stored(storage);
+
+  // Read: the field is gone where it is not the step's own chapter, and stands where it is. A step that held
+  // nothing else is not there at all. Reading writes nothing.
+  const read = readProgress(storage as Storage);
+  assert.equal(read.state, 'kept');
+  assert.deepEqual(read.progress.steps, {
+    'hold-some': { started: true, doneAt: NOW - 9, from: '/es/recorrido/que-es-bitcoin-en-realidad', parts: ticks(1, 2, 3, 4) },
+    'pass-it-on': { started: true, parts: ticks(1) },
+    'waiting-room': { started: true },
+  });
+  assert.equal(storage.writes, 0);
+  assert.equal(stored(storage), text);
+  // The links built from what was read lead to each step's own chapter.
+  assert.equal(chapterLink(SITE, 'pass-it-on', 'en', read.progress.steps['pass-it-on']), `${SITE}/journey/how-bitcoin-works#do-pass-it-on`);
+  assert.equal(chapterLink(SITE, 'waiting-room', 'es', read.progress.steps['waiting-room']), `${SITE}/es/recorrido/como-funciona-bitcoin#do-waiting-room`);
+  assert.equal(chapterLink(SITE, 'hold-some', 'en', read.progress.steps['hold-some']), `${SITE}/es/recorrido/que-es-bitcoin-en-realidad#done=hold-some`);
+
+  // A change with nothing to change writes nothing (what is stored stays until there is something to write).
+  const idle = writeProgress(storage as Storage, { kind: 'stop', step: 'the-seed' });
+  assert.deepEqual([idle.ok, idle.ok && idle.changed, stored(storage)], [true, false, text]);
+  // The first write that has something to write stores the note as it was read: without the three fields.
+  const after = write(storage, tick('pass-it-on', 2, NOW + 1, { tx: TX, sentAt: NOW + 1 }));
+  assert.deepEqual(after.steps, {
+    'hold-some': { started: true, doneAt: NOW - 9, from: '/es/recorrido/que-es-bitcoin-en-realidad', parts: ticks(1, 2, 3, 4) },
+    'pass-it-on': { started: true, tx: TX, sentAt: NOW + 1, parts: ticks(1, 2) },
+    'waiting-room': { started: true },
+  });
+  const written = stored(storage) ?? '';
+  assert.doesNotMatch(written, /reader-4f1c9a7e|campaign|newsletter|be-your-own-bank/);
+  assert.deepEqual(JSON.parse(written), after);
+
+  // Whatever is done to a note that was handed in with such a field (never read through this file), what comes
+  // back holds no such field: every change ends in the same checks a read makes.
+  const handed: Progress = { v: 1, following: 'pass-it-on', followedAt: NOW, steps: { 'pass-it-on': { started: true, from: '/newsletter', parts: ticks(1) } } };
+  const changes: Change[] = [
+    open('pass-it-on', NOW + 1),
+    open('pass-it-on', NOW + 1, '/newsletter'),
+    { kind: 'follow', step: 'pass-it-on', at: NOW + 1 },
+    { kind: 'stop', step: 'pass-it-on' },
+    tick('pass-it-on', 2, NOW + 1, { tx: TX, sentAt: NOW + 1 }),
+    { kind: 'send-another', step: 'pass-it-on' },
+    // "Start this step again" keeps the way back the step has: only one that is its own chapter.
+    { kind: 'restart', step: 'pass-it-on', at: NOW + 1 },
+    // A change for another step, and one that does not apply.
+    open('the-seed', NOW + 1),
+    tick('pass-it-on', 3, NOW + 1),
+  ];
+  for (const change of changes) {
+    assert.equal(applyChange(handed, change).steps['pass-it-on']?.from, undefined, change.kind);
+  }
+  assert.equal(handed.steps['pass-it-on']?.from, '/newsletter', 'the note that was handed in is left as it was');
+  // "Start this step again" on a step that has a way back of its own keeps it.
+  const own: Progress = { v: 1, following: null, steps: { 'pass-it-on': { started: true, from: '/es/recorrido/como-funciona-bitcoin', parts: ticks(1) } } };
+  assert.deepEqual(applyChange(own, { kind: 'restart', step: 'pass-it-on', at: NOW }).steps['pass-it-on'], { started: true, from: '/es/recorrido/como-funciona-bitcoin' });
 });
 
 // -- what the wallet is told -------------------------------------------------------------------
@@ -793,7 +1064,7 @@ test('the strip shows the followed step for 24 hours after it was last followed'
   assert.equal(stripStep({ v: 1, following: 'waiting-room', steps: {} }, NOW), null);
   // A note that follows a step it does not hold as started (edited by hand: this page never writes one) gets no strip.
   assert.equal(stripStep({ v: 1, following: 'hold-some', followedAt: NOW, steps: {} }, NOW), null);
-  assert.equal(stripStep({ v: 1, following: 'hold-some', followedAt: NOW, steps: { 'hold-some': { from: '/journey/x' }, 'waiting-room': started(1) } }, NOW), null);
+  assert.equal(stripStep({ v: 1, following: 'hold-some', followedAt: NOW, steps: { 'hold-some': { from: '/journey/what-bitcoin-actually-is' }, 'waiting-room': started(1) } }, NOW), null);
   // A done step is a started one: its strip stays, to say that it is done.
   assert.equal(stripStep({ v: 1, following: 'hold-some', followedAt: NOW, steps: { 'hold-some': { ...started(4), doneAt: NOW } } }, NOW), 'hold-some');
   // A tick of the followed step counts as following it: the day starts again.

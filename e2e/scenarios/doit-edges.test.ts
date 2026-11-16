@@ -164,7 +164,6 @@ scenario(
         view('/wallet'),
       ],
       { records: [record], words: [words], addresses: [record.firstAddress], txids: [funding] },
-      { from: [CHAPTER_4] },
     );
   },
 );
@@ -196,10 +195,13 @@ scenario(
     // -- "Forget my progress", in that same state: the step is started afresh, with no wallet here. --
     await page.click('step-list');
     await arrivesAt(page, '/do');
-    // What the list says of its note is held against what this page has sent so far: the note is in no
-    // request, and the opening of the step was counted (About lists it), so the list does not say "nothing is sent".
+    // What the list says of its note is held against the note and against what this page has sent so far. The
+    // note does hold a wallet fingerprint, as the line says a note can; the note is in no request; and the
+    // opening of the step's screen was counted (About lists it), so the list does not say "nothing is sent".
     assert.ok((await page.page.$eval('main', (main) => (main.textContent ?? '').replace(/\s+/g, ' '))).includes(en.forgetWhat));
-    assert.match(en.forgetWhat, /The note itself is never sent to us\. Opening a step and finishing one are counted/);
+    assert.match(en.forgetWhat, /^This browser keeps a note of your progress: .*, such as a wallet fingerprint and a payment it waits for\. The About page lists it all\. /);
+    assert.match(en.forgetWhat, /The note itself is never sent to us\. Opening a step's screen and finishing a step are counted, as the About page says\.$/);
+    assert.equal((await noteOf(page))?.steps[DRILL]?.wallet, record.fingerprint);
     const sent = reader.requests().map((request) => request.body);
     assert.ok(sent.includes(JSON.stringify(view(`/do/${DRILL}`))), sent.join(' '));
     for (const body of sent) assert.ok(!body.includes(record.fingerprint) && !body.includes('"parts"'), body);
@@ -740,14 +742,14 @@ scenario(
     assert.deepEqual(stepsCounted(s), { [STEP]: 1 });
     await first.page.settle();
     await tab.settle();
-    await storedIsPublic(first.page, { records: [record], words: [wordsOf(record)], addresses: [...funded.map((coin) => coin.address), paid.to], txids: [...funded.map((coin) => coin.txid), paid.txid] }, { from: [FROM] });
+    await storedIsPublic(first.page, { records: [record], words: [wordsOf(record)], addresses: [...funded.map((coin) => coin.address), paid.to], txids: [...funded.map((coin) => coin.txid), paid.txid] });
   },
 );
 
 // -- headings ---------------------------------------------------------------------------------------------------------
 
 scenario(
-  'A done step\'s screen has its headings in order: the done card is found by its heading, and "What has changed" stands one level under it; and it asks the practice network nothing, block or no block',
+  'A done step\'s screen has its headings in order: the done card is found by its heading, and "What the restore changed" stands one level under it; and it asks the practice network nothing, block or no block',
   { localOnly: true, timeout: 120_000 },
   async (s) => {
     const record = testRecord();

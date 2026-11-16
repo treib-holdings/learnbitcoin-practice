@@ -19,16 +19,23 @@
 // route and never a path, and for a request for chain data no line at all
 // unless something is broken (the end of this file says why).
 //
+// One thing is kept from one request to the next, and it is about no
+// request and no reader: the pot's three counts, which are the same for
+// everybody. The origin is asked for them once for everyone and not once
+// for each request (pot-stats.ts). Every other request that reaches the
+// practice network is asked there for itself.
+//
 // Nothing in this file exists only on Cloudflare. makeHandler() is given
 // everything from outside as a Deps (deps.ts), so the same code answers in
 // the deployed Worker and under node --test.
 
 import { ADDRESS_PATTERN, API, TXID_PATTERN, isEventBody } from '@learnbitcoin/practice-contract';
-import type { ErrorCode, PotStats } from '@learnbitcoin/practice-contract';
+import type { ErrorCode } from '@learnbitcoin/practice-contract';
 import { readText } from './body.ts';
 import { TOKEN_MAX } from './bot-check.ts';
 import type { Deps, Fault, Handler, Limiter, OriginAnswer, RouteName } from './deps.ts';
 import { answer, jsonAnswer, refusal } from './headers.ts';
+import { potStatsForAll } from './pot-stats.ts';
 import { readerKey } from './reader-key.ts';
 import type { LimiterName } from './reader-key.ts';
 
@@ -250,6 +257,13 @@ export function chainReadCost(upstream: string): number {
  * limiter under a second key of the reader's, in a count of their own, as
  * the older pages of a long list are at the chain's limiter (OLDER_PAGES
  * above). Each look counts as one.
+ *
+ * This count is a brake on one reader, and that is all it is. It does not
+ * keep the looks of many readers away from the practice network: nothing
+ * counted for each reader could. What does is that the origin is asked
+ * once for everyone (pot-stats.ts). The count comes first all the same: a
+ * reader who is over it is refused, whether or not there is an answer to
+ * give.
  */
 export const POT_STATS = 'stats';
 
@@ -397,15 +411,22 @@ export function makeHandler(deps: Deps): Handler {
   }
 
   async function potStats(request: Request): Promise<Reply> {
-    // Counted apart from the pot's address, so that looking can never use up "Pass it on" (POT_STATS).
+    // The reader's own count comes first, whatever is kept. It is counted
+    // apart from the pot's address, so that looking can never use up
+    // "Pass it on" (POT_STATS).
     if (!(await within(deps.limits.pot, 'pot', request, 1, POT_STATS))) return refuse('limit');
-    const result = await deps.origin.potStats();
+    // One answer for everyone: the kept counts while they are young enough,
+    // or else the origin's, asked for once for all who wait (pot-stats.ts).
+    // Nothing of this request has a say in which: not its address, not a
+    // header, and a path with a query string never gets here.
+    const result = await potStatsForAll(deps);
     if (!result.ok) return refused(result);
-    // The answer is written here, from the three counts and nothing else:
-    // whatever the origin's answer held beside them is not passed on.
+    // The answer is written here, for this request, from the three counts
+    // and nothing else: whatever the origin's answer held beside them was
+    // left behind where the counts were taken out of it. `upstream` is null
+    // when the counts are the kept ones: nobody was asked for this request.
     const { passedOn, waiting, handedOn } = result.value;
-    const stats: PotStats = { passedOn, waiting, handedOn };
-    return { response: jsonAnswer(200, stats), upstream: result.upstream, fault: null };
+    return { response: jsonAnswer(200, { passedOn, waiting, handedOn }), upstream: result.upstream, fault: null };
   }
 
   async function event(request: Request, started: number): Promise<Reply> {

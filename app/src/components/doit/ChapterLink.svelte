@@ -6,12 +6,14 @@
   // goes back to where they were: a new tab for the way back would leave
   // them with two copies of the chapter.
   //
-  // The main site is told where the reader comes from, and no more than
-  // the site's name (referrerpolicy="origin"): it may check that a "done"
-  // mark in the address really comes from here. The page's own policy
-  // sends no referrer at all, so this attribute is what lets that one fact
-  // through, for this link alone. No path travels with it, and so no step,
-  // no transaction ID and nothing the reader typed.
+  // It sends no referrer, like every other request this page makes: the
+  // page's own policy is "no-referrer" (public/_headers), and this link is
+  // no exception to it. So the main site is not told by the browser where
+  // the reader comes from. What the link carries is its address and
+  // nothing else: a chapter's page and, on "Back to the chapter", the mark
+  // that names the step and says whether it is done (chapterLink in
+  // lib/doit/progress.ts). About says so to the reader, and
+  // test/info-text.test.ts holds that sentence to this file.
   //
   //   link     a link in a line of text
   //   heading  a chapter's name as a heading of the list of steps: the
@@ -42,4 +44,4 @@
   } as const;
 </script>
 
-<a {...rest} {href} referrerpolicy="origin" class={[LOOK[look], extra]}>{@render children()}</a>
+<a {...rest} {href} class={[LOOK[look], extra]}>{@render children()}</a>

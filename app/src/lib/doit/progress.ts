@@ -3,9 +3,12 @@
 //
 // The note says which steps the reader has started and finished, which
 // parts of each are ticked, and which step they are following. It holds
-// public things only: ticks, times, a path of the main site, a wallet
-// fingerprint, a transaction ID. Never one of the 12 words, never a key,
-// never an answer the reader typed.
+// public things only: ticks, times, which of a chapter's two pages the
+// reader came from, a wallet fingerprint, a transaction ID. Never one of the
+// 12 words, never a key, never an answer the reader typed. And no free
+// text: every field is a tick, a time, one of a few fixed values, or hex
+// characters of a fixed length (8 for a wallet fingerprint, 64 for a
+// transaction ID).
 //
 // The rules this file keeps:
 //
@@ -33,7 +36,7 @@
 // runs every rule on a Map. This file and the wallet's key store are the
 // only two that write to the browser's storage.
 
-import { STEPS, TXID_PATTERN, isStepId, type Lang, type StepId } from '@learnbitcoin/practice-contract';
+import { LANGS, STEPS, TXID_PATTERN, isStepId, type Lang, type StepId } from '@learnbitcoin/practice-contract';
 import type { Route } from '../router.ts';
 import { STEP_DEFS, sendPart } from './steps.ts';
 
@@ -48,7 +51,11 @@ export interface StepNote {
   started?: true;
   /** When the step was done, in ms since 1970. Written once. */
   doneAt?: number;
-  /** The page of the main site the reader came from: a plain path (validFrom). The latest valid one. */
+  /**
+   * The page of the step's own chapter that the reader came from: that
+   * chapter's English path or its Spanish one, and nothing else (validFrom).
+   * The latest valid one.
+   */
   from?: string;
   /** A wallet fingerprint: the wallet whose words were checked (the-seed), or the one to remove and restore (prove-the-backup). */
   wallet?: string;
@@ -95,45 +102,44 @@ function isPayment(tx: unknown, sentAt: unknown): boolean {
   return typeof tx === 'string' && TXID_PATTERN.test(tx) && isTime(sentAt);
 }
 
-/** The longest way back that is kept. */
-const FROM_MAX = 200;
-
-/** A plain path: lower-case letters, digits, slashes and hyphens after its first slash. */
-const PLAIN_PATH = /^\/[a-z0-9/-]*$/;
-
 /**
- * The way back to the main site, checked: `value` if it is a plain path of
- * that site, otherwise null.
+ * The way back to the main site for a step, checked: `value` if it is the
+ * page of the step's own chapter, in English or in Spanish, character for
+ * character as steps.ts has the two paths. Otherwise null.
  *
- * The reader arrives on a step with "?from=<path>", the page of the main
- * site they came from, and "Back to the chapter" leads there. Whatever
- * stands in an address can have been written by anybody, so a way back
- * counts only when it can be nothing but a page of the main site: it
- * starts with one slash, holds only lower-case letters, digits, slashes and
- * hyphens, is at most 200 characters long and has no two slashes in a row
- * (a browser reads "//example.org" as another site). No dot, no colon, no
- * backslash, no percent sign, no query and no "#": none of the ways to
- * name another host or a script fits through. Anything else is ignored
- * without a word.
+ * The reader arrives on a step with "?from=<path>": the chapter page whose
+ * card they pressed. "Back to the chapter" leads there. Whatever stands in
+ * an address can have been written by anybody, so a way back counts only
+ * when it is one of those two pages. Every other value is ignored without a
+ * word, and the way back is then the step's chapter in the language of the
+ * page: another page of the main site (it has no card for this step, so a
+ * reader sent there would find nothing to come back to), another step's
+ * chapter, the right path with a slash at its end or in capitals, a full
+ * address, a path that names another host.
+ *
+ * So the note never keeps text of anybody's choosing. For each step this
+ * field is one of two fixed strings, or it is not there: all it can say is
+ * which of the chapter's two pages the reader came from.
  *
  * The same check runs when the address is read, when the note is read,
  * when it is written, and again each time a link is built from it.
  */
-export function validFrom(value: unknown): string | null {
-  if (typeof value !== 'string' || value.length > FROM_MAX) return null;
-  if (!PLAIN_PATH.test(value) || value.includes('//')) return null;
-  return value;
+export function validFrom(id: StepId, value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const own = STEP_DEFS[id].chapter.path;
+  for (const lang of LANGS) if (value === own[lang]) return own[lang];
+  return null;
 }
 
 /**
  * The way back named in a step's address, or null: the decoded value of the
  * first "from" in the query string ("?from=/journey/how-bitcoin-works"),
- * if it passes validFrom. `search` is location.search, with or without its
- * question mark.
+ * if it passes validFrom for the step whose screen the address opens.
+ * `search` is location.search, with or without its question mark.
  */
-export function fromOfSearch(search: string): string | null {
+export function fromOfSearch(id: StepId, search: string): string | null {
   try {
-    return validFrom(new URLSearchParams(search).get('from'));
+    return validFrom(id, new URLSearchParams(search).get('from'));
   } catch {
     return null;
   }
@@ -147,7 +153,8 @@ function soundNote(id: StepId, value: unknown): StepNote | null {
   const note: StepNote = {};
   if (has('started') && fields.started === true) note.started = true;
   if (has('doneAt') && isTime(fields.doneAt)) note.doneAt = fields.doneAt;
-  const from = has('from') ? validFrom(fields.from) : null;
+  // A way back that is not one of this step's two chapter pages is dropped here: no write puts it back.
+  const from = has('from') ? validFrom(id, fields.from) : null;
   if (from !== null) note.from = from;
   if (has('wallet') && typeof fields.wallet === 'string' && FINGERPRINT.test(fields.wallet)) note.wallet = fields.wallet;
   if (has('was') && (fields.was === 'passkey' || fields.was === 'words')) note.was = fields.was;
@@ -260,9 +267,10 @@ export function readProgress(local: Storage): Read {
 export type Change =
   /**
    * The step's screen was opened. The step is started, `from` becomes its
-   * way back if it is a valid one, and the step is the one followed,
-   * unless it is done: a done step that was still followed is let go
-   * instead (the reader has now seen that it is done).
+   * way back if it is a valid one (one of the two pages of the step's own
+   * chapter: validFrom), and the step is the one followed, unless it is
+   * done: a done step that was still followed is let go instead (the
+   * reader has now seen that it is done).
    */
   | { kind: 'open'; step: StepId; at: number; from: string | null }
   /** The step's tab came back into view, or its action link was used: it is the one followed, unless it is done or was never started. */
@@ -334,8 +342,8 @@ export function applyChange(progress: Progress, change: Change): Progress {
       if (!isTime(change.at)) break;
       const opened: StepNote = note ?? {};
       opened.started = true;
-      // The latest valid way back. An opening without one leaves the earlier one alone.
-      const from = validFrom(change.from);
+      // The latest valid way back: one of this step's two chapter pages. An opening without one leaves the earlier one alone.
+      const from = validFrom(id, change.from);
       if (from !== null) opened.from = from;
       next.steps[id] = opened;
       if (opened.doneAt === undefined) {
@@ -504,28 +512,30 @@ function onSite(siteUrl: string, address: string): string | null {
 /**
  * The link back to the main site for a step: "Back to the chapter".
  *
- * The page is the one the reader came from (the note's `from`), or the
- * step's own chapter in the language of this page. Until the step is done
- * the address ends "#do-<id>": the chapter scrolls to the step's card and
- * nothing is stamped. Once it is done it ends "#done=<id>", which is what
- * the main site stamps on.
+ * The page is always the step's own chapter: the one of its two pages the
+ * reader came from (the note's `from`), or, with no such note, the one in
+ * the language of this page. Until the step is done the address ends
+ * "#do-<id>": the chapter scrolls to the step's card and nothing is
+ * stamped. Once it is done it ends "#done=<id>", which is what the main
+ * site stamps on.
+ *
+ * That is all the address holds: the main site's own address, one of the
+ * chapter's two paths, and the mark. The mark names the step and says
+ * whether it is done (About says so to the reader). Nothing of the wallet
+ * is in it, and the link sends no referrer (ChapterLink.svelte).
  *
  * `siteUrl` is the main site's address from the settings, with no slash at
- * its end. The way back is checked once more here (validFrom), and the
- * built address is used only if its origin is the main site's: one that is
- * not falls back to the step's own chapter, and null means that not even
- * that can be built from these settings, so the screen shows no link.
+ * its end. The way back is checked once more here (validFrom), so a note
+ * handed in from anywhere cannot choose the page. The built address is used
+ * only if its origin is the main site's: null means that it cannot be built
+ * from these settings, so the screen shows no link.
  */
 export function chapterLink(siteUrl: string, id: StepId, lang: Lang, note: StepNote | undefined): string | null {
   const site = siteUrl.replace(/\/+$/, '');
   const mark = note?.doneAt === undefined ? `#do-${id}` : `#done=${id}`;
-  const own = STEP_DEFS[id].chapter.path[lang];
-  const from = validFrom(note?.from);
-  for (const path of from === null ? [own] : [from, own]) {
-    const link = onSite(site, `${site}${path}${mark}`);
-    if (link !== null) return link;
-  }
-  return null;
+  // One of the chapter's two pages, whatever the note holds: the one the reader came from, or this page's language.
+  const path = validFrom(id, note?.from) ?? STEP_DEFS[id].chapter.path[lang];
+  return onSite(site, `${site}${path}${mark}`);
 }
 
 // -- what the wallet is told ---------------------------------------------------------
