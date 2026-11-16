@@ -20,6 +20,8 @@ export const API = {
   faucet: '/api/faucet',
   /** POST (empty body): PotAddress. */
   potAddress: '/api/pot/address',
+  /** GET: PotStats. */
+  potStats: '/api/pot/stats',
   /** POST EventBody: 202, no body worth reading. */
   event: '/p/event',
 } as const;
@@ -76,6 +78,19 @@ export interface FaucetPayment {
 /** POST /api/pot/address: where to send coins to pass them on. */
 export interface PotAddress {
   address: string;
+}
+
+/**
+ * GET /api/pot/stats: the pay-it-forward pot in three counts. Each is a whole
+ * number from 0. They say how many, never who: no address, no transaction ID.
+ */
+export interface PotStats {
+  /** Payments that readers have passed on to the pot and that a block has taken in. */
+  passedOn: number;
+  /** Coins in the pot that wait for a newcomer. */
+  waiting: number;
+  /** Pot coins the faucet has handed on to a newcomer. */
+  handedOn: number;
 }
 
 // -- refusals -----------------------------------------------------------------
@@ -152,6 +167,21 @@ export function isErrorCode(value: unknown): value is ErrorCode {
   return typeof value === 'string' && (ERROR_CODES as readonly string[]).includes(value);
 }
 
+// -- the "Do it" steps --------------------------------------------------------
+
+/**
+ * The guided steps, in the order the chapters teach them: one for chapter 2,
+ * three for chapter 3, two for chapter 4. An ID is part of an address
+ * (/do/<id>), of a counted event and of the link back to the main site, so
+ * it is lower-case letters and hyphens and nothing else.
+ */
+export const STEPS = ['hold-some', 'pass-it-on', 'no-balances', 'waiting-room', 'the-seed', 'prove-the-backup'] as const;
+export type StepId = (typeof STEPS)[number];
+
+export function isStepId(value: unknown): value is StepId {
+  return typeof value === 'string' && (STEPS as readonly string[]).includes(value);
+}
+
 // -- screens and languages ----------------------------------------------------
 
 export const LANGS = ['en', 'es'] as const;
@@ -172,11 +202,15 @@ export const SCREENS = [
   'tx',
   'backup',
   'settings',
+  // The list of "Do it" steps, and one step.
+  'do',
+  'step',
   'not-found',
 ] as const;
 export type ScreenName = (typeof SCREENS)[number];
 
-const SCREEN_PATHS: Record<ScreenName, string> = {
+/** A step's screen has no path of its own here: it is counted under its step's (STEP_PREFIX and the ID). */
+const SCREEN_PATHS: Record<Exclude<ScreenName, 'step'>, string> = {
   home: '/',
   new: '/new',
   restore: '/restore',
@@ -191,22 +225,44 @@ const SCREEN_PATHS: Record<ScreenName, string> = {
   tx: '/wallet/tx',
   backup: '/wallet/backup',
   settings: '/wallet/settings',
+  do: '/do',
   // One path for every unknown address: what the reader typed is never counted.
   'not-found': '/not-found',
 };
 
-/** The path a screen is counted under: fixed per screen and language, never the address bar's text. */
-export function eventPath(screen: ScreenName, lang: Lang): string {
-  const path = SCREEN_PATHS[screen];
+/** A step's screen is this plus its ID: /do/hold-some. */
+const STEP_PREFIX = '/do/';
+
+/**
+ * The path a screen is counted under: fixed per screen and language, never
+ * the address bar's text.
+ *
+ * A step's screen is counted under its own step, so `step` says which one:
+ * eventPath('step', 'es', 'hold-some') is "/es/do/hold-some". The six IDs
+ * are a closed list, so nothing a reader typed can ride on it: without an
+ * ID, or with one that is not on the list, the answer is the one path of
+ * every unknown address (the router shows "not found" for such an address
+ * too). For every other screen `step` is not looked at.
+ */
+export function eventPath(screen: ScreenName, lang: Lang, step?: string): string {
+  let path: string;
+  if (screen !== 'step') path = SCREEN_PATHS[screen];
+  else path = isStepId(step) ? `${STEP_PREFIX}${step}` : SCREEN_PATHS['not-found'];
   if (lang === 'en') return path;
   return path === '/' ? '/es' : `/es${path}`;
 }
 
 let allEventPaths: readonly string[] | null = null;
 
-/** Every path an event may carry: the closed list the Worker checks against. */
+/**
+ * Every path an event may carry: the closed list the Worker checks against.
+ * It holds each screen in both languages, and for the step screen the path
+ * of each of the six steps.
+ */
 export function eventPaths(): readonly string[] {
-  allEventPaths ??= LANGS.flatMap((lang) => SCREENS.map((screen) => eventPath(screen, lang)));
+  allEventPaths ??= LANGS.flatMap((lang) =>
+    SCREENS.flatMap((screen) => (screen === 'step' ? STEPS.map((step) => eventPath(screen, lang, step)) : [eventPath(screen, lang)])),
+  );
   return allEventPaths;
 }
 
@@ -261,6 +317,8 @@ export const EVENTS = {
   'Words shown': { prop: 'wallet', values: ['passkey', 'words'] },
   /** The wallet was removed from this browser. */
   'Wallet removed': { prop: 'wallet', values: ['passkey', 'words'] },
+  /** A "Do it" step was done. The value is the step: which one, never whose. */
+  'Do it': { prop: 'step', values: STEPS },
 } as const;
 
 export type EventName = keyof typeof EVENTS;

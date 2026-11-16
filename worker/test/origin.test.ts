@@ -30,15 +30,19 @@ function origin(fetch: FetchLike, extra: { access?: boolean; botsToken?: string;
   });
 }
 
-/** The four calls, so a rule that holds for all of them can be checked on all of them. */
+/** The five calls, so a rule that holds for all of them can be checked on all of them. */
 const CALLS: Array<[name: string, run: (o: ReturnType<typeof makeOrigin>) => Promise<{ ok: boolean }>]> = [
   ['esplora', (o) => o.esplora('/blocks/tip/height')],
   ['broadcast', (o) => o.broadcast(HEX)],
   ['faucet', (o) => o.faucet(ADDRESS)],
   ['potAddress', (o) => o.potAddress()],
+  ['potStats', (o) => o.potStats()],
 ];
 
-/** The two calls to the bots. */
+/** The pot's counter as the bots answer it (bots/practice_bots/bots.py, pot_stats): five fields, of which the Worker takes three. */
+const POT_ANSWER = { learners_passed_on: 12, sats_received: 180_000, coins_waiting: 3, coins_passed_to_newcomers: 9, faucet_payments: 40 };
+
+/** The two calls to the bots that take the bearer token, and can end in one of the faucet's own refusals. */
 const BOTS: Array<(o: ReturnType<typeof makeOrigin>) => Promise<{ ok: boolean }>> = [
   (o) => o.faucet(ADDRESS),
   (o) => o.potAddress(),
@@ -98,6 +102,8 @@ test('every request is written from scratch: path, method, headers and nothing e
       body: JSON.stringify({ address: ADDRESS }),
     },
     { url: `${ORIGIN}/bots/pot/address`, method: 'GET', headers: { ...access, authorization: 'Bearer bots-token' }, body: null },
+    // The pot's counts: the bots answer them without their token, so it is not sent.
+    { url: `${ORIGIN}/bots/pot/stats`, method: 'GET', headers: access, body: null },
     { url: `${ORIGIN}/esplora/address/${ADDRESS}/utxo`, method: 'GET', headers: access, body: null },
   ]);
   for (const call of fetch.calls) {
@@ -112,7 +118,7 @@ test('the bearer token goes to the two bots routes only, and the Access headers 
   for (const [, run] of CALLS) await run(origin(fetch));
   assert.deepEqual(
     fetch.calls.map((call) => Object.keys(call.headers).sort()),
-    [['x-real-ip'], ['content-type', 'x-real-ip'], ['authorization', 'content-type', 'x-real-ip'], ['authorization', 'x-real-ip']],
+    [['x-real-ip'], ['content-type', 'x-real-ip'], ['authorization', 'content-type', 'x-real-ip'], ['authorization', 'x-real-ip'], ['x-real-ip']],
   );
 
   const half = fakeFetch(() => reply(500, 'x'));
@@ -582,6 +588,131 @@ test('the pot address comes back as a string', async () => {
   assert.deepEqual(answer, { ok: true, value: POT_ADDRESS, upstream: 200 });
 });
 
+// -- the pot's counts -------------------------------------------------------------------
+
+test("the pot's counts: three of the bots' five fields become the contract's PotStats", async () => {
+  const fetch = fakeFetch(() => reply(200, POT_ANSWER));
+  const answer = await origin(fetch).potStats();
+  assert.deepEqual(answer, { ok: true, value: { passedOn: 12, waiting: 3, handedOn: 9 }, upstream: 200 });
+  assert.ok(answer.ok);
+  assert.deepEqual(Object.keys(answer.value), ['passedOn', 'waiting', 'handedOn'], 'these three and nothing beside them');
+  // Asked with a GET, no body and no bearer token.
+  assert.deepEqual(
+    fetch.calls.map((call) => [call.url, call.init.method, call.init.body ?? null, call.headers.authorization]),
+    [[`${ORIGIN}/bots/pot/stats`, 'GET', null, undefined]],
+  );
+
+  // Zeros are counts, and so is a large one. Fields the Worker does not take may be anything, or missing.
+  const zero = await origin(fakeFetch(() => reply(200, { learners_passed_on: 0, coins_waiting: 0, coins_passed_to_newcomers: 0 }))).potStats();
+  assert.deepEqual(zero, { ok: true, value: { passedOn: 0, waiting: 0, handedOn: 0 }, upstream: 200 });
+  const large = { learners_passed_on: 9_007_199_254_740_991, coins_waiting: 1, coins_passed_to_newcomers: 2, sats_received: 'a lot', faucet_payments: null, more: [1] };
+  assert.deepEqual(await origin(fakeFetch(() => reply(200, large))).potStats(), {
+    ok: true,
+    value: { passedOn: 9_007_199_254_740_991, waiting: 1, handedOn: 2 },
+    upstream: 200,
+  });
+  // The stand-in network answers the same five fields (e2e/src/fake-bots.ts): the names are spelled here once more.
+  assert.deepEqual(Object.keys(POT_ANSWER), ['learners_passed_on', 'sats_received', 'coins_waiting', 'coins_passed_to_newcomers', 'faucet_payments']);
+});
+
+test("the pot's counts: a 200 that is not three whole numbers from 0 is origin_shape", async () => {
+  const wrong = { ok: false, code: 'unavailable', detail: null, upstream: 200, fault: 'origin_shape' };
+  const good = { learners_passed_on: 12, coins_waiting: 3, coins_passed_to_newcomers: 9 };
+  const bodies: Array<string | object> = [
+    '',
+    'ok',
+    '12',
+    'null',
+    '[]',
+    '<html>sign in</html>',
+    {},
+    [good],
+    // One of the three is missing.
+    { coins_waiting: 3, coins_passed_to_newcomers: 9 },
+    { learners_passed_on: 12, coins_passed_to_newcomers: 9 },
+    { learners_passed_on: 12, coins_waiting: 3 },
+    // The contract's own names are not the bots'.
+    { passedOn: 12, waiting: 3, handedOn: 9 },
+    // Too long to be the bots' answer.
+    { ...good, padding: 'x'.repeat(10_000) },
+  ];
+  // Each field in turn holds something that is not a whole number from 0.
+  const notCounts: unknown[] = [-1, 1.5, '12', null, true, [12], { n: 12 }, 9_007_199_254_740_992, Number.MAX_VALUE];
+  for (const field of Object.keys(good)) {
+    for (const value of notCounts) bodies.push({ ...good, [field]: value });
+  }
+  for (const body of bodies) {
+    assert.deepEqual(await origin(fakeFetch(() => reply(200, body))).potStats(), wrong, JSON.stringify(body).slice(0, 80));
+  }
+  // What JSON cannot carry as a number arrives as null or not at all.
+  for (const text of ['{"learners_passed_on":NaN,"coins_waiting":3,"coins_passed_to_newcomers":9}', '{"learners_passed_on":1e400,"coins_waiting":3,"coins_passed_to_newcomers":9}']) {
+    assert.deepEqual(await origin(fakeFetch(() => reply(200, text, 'application/json'))).potStats(), wrong, text);
+  }
+  // A whole number written with a fraction of zero is still that whole number.
+  const written = await origin(fakeFetch(() => reply(200, '{"learners_passed_on":12.0,"coins_waiting":3e0,"coins_passed_to_newcomers":9}', 'application/json'))).potStats();
+  assert.deepEqual(written, { ok: true, value: { passedOn: 12, waiting: 3, handedOn: 9 }, upstream: 200 });
+});
+
+test("the pot's counts: nothing but a 200 is read, so no refusal passes, not even one of the faucet's own", async () => {
+  const answers: Array<[status: number, body: string | object, type?: string]> = [
+    // The counts themselves, under a status that is not 200.
+    [201, POT_ANSWER],
+    [202, POT_ANSWER],
+    [206, POT_ANSWER],
+    // The faucet's own six, each under the status the bots give it: on the two routes
+    // that take the token they pass. Here they are not an answer to what was asked.
+    [400, { error: 'x', code: 'bad_address' }],
+    [400, { error: 'x', code: 'own_address' }],
+    [429, { error: 'x', code: 'already_paid' }],
+    [429, { error: 'x', code: 'busy' }],
+    [503, { error: 'x', code: 'refilling' }],
+    [500, { error: 'x', code: 'failed' }],
+    // The bots' other codes.
+    [404, { error: 'not found', code: 'not_found' }],
+    [502, { error: 'The practice network could not do that just now', code: 'unavailable' }],
+    [500, { error: 'Something went wrong', code: 'error' }],
+    [400, { error: 'x', code: 'bad_request' }],
+    // Pages from something in between.
+    [404, '<html><head><title>404 Not Found</title></head></html>', 'text/html'],
+    [502, '<html><head><title>502 Bad Gateway</title></head></html>', 'text/html'],
+    [429, 'Too many requests'],
+    [418, ''],
+  ];
+  for (const [status, body, type] of answers) {
+    const answer = await origin(fakeFetch(() => replyWith(status, body, type))).potStats();
+    const what = `${status} ${JSON.stringify(body).slice(0, 60)}`;
+    assert.deepEqual(answer, { ok: false, code: 'unavailable', detail: null, upstream: status, fault: faultFor(status) }, what);
+  }
+});
+
+test("the pot's counts: an answer that breaks off is unavailable, with a fault", async () => {
+  for (const status of [200, 404, 500]) {
+    let cancelled = false;
+    const fetch = fakeFetch(() => {
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode('{"learners_passed_on":1'));
+        },
+        pull(controller) {
+          controller.error(new TypeError('terminated'));
+        },
+        cancel() {
+          cancelled = true;
+        },
+      });
+      return new Response(body, { status, headers: { 'Content-Type': 'application/json' } });
+    });
+    const answer = await origin(fetch).potStats();
+    // A 200 is read, and the read fails: the origin went away. Any other status is not read at all.
+    assert.deepEqual(
+      answer,
+      { ok: false, code: 'unavailable', detail: null, upstream: status, fault: status === 200 ? 'origin_down' : faultFor(status) },
+      String(status),
+    );
+    assert.equal(cancelled, status !== 200, `${status}: a body nobody reads is let go`);
+  }
+});
+
 test("the faucet's own six refusals pass through, each with its status", async () => {
   // Each with the status the bots give it (bots/practice_bots/bots.py).
   const own: Array<[status: number, code: ErrorCode, fault: Fault | null]> = [
@@ -722,6 +853,11 @@ test('without the bots token the bots are not asked at all', async () => {
   await o.esplora('/blocks/tip/height');
   assert.equal(fetch.calls.length, 1);
   assert.equal(fetch.calls[0]?.headers.authorization, undefined);
+  // Nor do the pot's counts: they are asked for too, without one.
+  await o.potStats();
+  assert.equal(fetch.calls.length, 2);
+  assert.equal(fetch.calls[1]?.url, `${ORIGIN}/bots/pot/stats`);
+  assert.equal(fetch.calls[1]?.headers.authorization, undefined);
 });
 
 // -- the recorded samples -------------------------------------------------------------
@@ -847,6 +983,8 @@ test('whatever status the origin answers with, an "unavailable" always carries a
     ['broadcast', (o) => o.broadcast(HEX)],
     ['faucet', (o) => o.faucet(ADDRESS)],
     ['potAddress', (o) => o.potAddress()],
+    // The pot's counts: no refusal of theirs passes, whatever the status and the body.
+    ['potStats', (o) => o.potStats()],
   ];
   const passed = new Set<string>();
   let unavailable = 0;

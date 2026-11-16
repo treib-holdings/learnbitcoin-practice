@@ -18,7 +18,7 @@
 // That is the only difference between a test run and production. The handler
 // has no test mode, and no setting can relax a check.
 
-import type { AppConfig, ErrorCode, EventBody, FaucetPayment } from '@learnbitcoin/practice-contract';
+import type { AppConfig, ErrorCode, EventBody, FaucetPayment, PotStats } from '@learnbitcoin/practice-contract';
 
 export type Handler = (request: Request) => Promise<Response>;
 
@@ -34,6 +34,7 @@ export type RouteName =
   | 'esplora_broadcast'
   | 'faucet'
   | 'pot_address'
+  | 'pot_stats'
   | 'event'
   | 'unknown';
 
@@ -114,6 +115,13 @@ export interface Origin {
   faucet(address: string): Promise<OriginAnswer<FaucetPayment>>;
   /** An address of the pay-it-forward pot. */
   potAddress(): Promise<OriginAnswer<string>>;
+  /**
+   * The pot's three counts. The bots answer this one to anybody the origin
+   * lets in, so no bearer token goes with it. It has no refusal of its own:
+   * anything but a 200 that holds the three counts, each a whole number from
+   * 0, is `unavailable` with a fault.
+   */
+  potStats(): Promise<OriginAnswer<PotStats>>;
 }
 
 // -- the bot check --------------------------------------------------------------
@@ -175,6 +183,12 @@ export interface Limits {
   chain: Limiter;
   broadcast: Limiter;
   faucet: Limiter;
+  /**
+   * The pot: its address (POST /api/pot/address) and its counts (GET
+   * /api/pot/stats). The counts are counted apart, under a second key of the
+   * reader's (handler.ts, POT_STATS), so asking for them can never use up
+   * what "Pass it on" needs.
+   */
   pot: Limiter;
   events: Limiter;
 }

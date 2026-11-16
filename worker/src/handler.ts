@@ -3,7 +3,8 @@
 // The app is static files; this is the only code that runs on the server for
 // it. It does four small jobs: it tells the app its settings, it passes chain
 // questions and signed transactions to the practice network, it guards the
-// faucet, and it passes on the few events the app counts.
+// faucet (and asks the pot beside it for its address and its counts), and it
+// passes on the few events the app counts.
 //
 // It trusts nothing a request says about itself:
 //
@@ -23,7 +24,7 @@
 // the deployed Worker and under node --test.
 
 import { ADDRESS_PATTERN, API, TXID_PATTERN, isEventBody } from '@learnbitcoin/practice-contract';
-import type { ErrorCode } from '@learnbitcoin/practice-contract';
+import type { ErrorCode, PotStats } from '@learnbitcoin/practice-contract';
 import { readText } from './body.ts';
 import { TOKEN_MAX } from './bot-check.ts';
 import type { Deps, Fault, Handler, Limiter, OriginAnswer, RouteName } from './deps.ts';
@@ -42,7 +43,7 @@ const HEX = /^[0-9a-fA-F]+$/;
 
 /** A path the Worker knows, and what answers it. */
 type Match =
-  | { route: 'config' | 'esplora_broadcast' | 'faucet' | 'pot_address' | 'event' }
+  | { route: 'config' | 'esplora_broadcast' | 'faucet' | 'pot_address' | 'pot_stats' | 'event' }
   | { route: 'esplora_read'; upstream: string; cost: number };
 
 /** The one method each route takes. */
@@ -52,6 +53,7 @@ const METHOD: Record<Match['route'], 'GET' | 'POST'> = {
   esplora_broadcast: 'POST',
   faucet: 'POST',
   pot_address: 'POST',
+  pot_stats: 'GET',
   event: 'POST',
 };
 
@@ -235,10 +237,27 @@ export function chainReadCost(upstream: string): number {
   return upstream.includes('/txs/chain/') ? OLDER_PAGE_COST : 1;
 }
 
+/**
+ * What is added to a reader's key for the count of looks at the pot's
+ * counts (GET /api/pot/stats).
+ *
+ * The pot has one limiter, and "Pass it on" asks it for the pot's address.
+ * The counts are a nicety beside that: one line on a screen. They are read
+ * with a GET, which needs no page of ours, so anybody can ask for them as
+ * often as they like. Counted under the reader's own key, such asking
+ * would use up the budget that "Pass it on" draws on, for that reader and
+ * for everyone behind the same address. So they are counted at the same
+ * limiter under a second key of the reader's, in a count of their own, as
+ * the older pages of a long list are at the chain's limiter (OLDER_PAGES
+ * above). Each look counts as one.
+ */
+export const POT_STATS = 'stats';
+
 function matchPath(pathname: string): Match | null {
   if (pathname === API.config) return { route: 'config' };
   if (pathname === API.faucet) return { route: 'faucet' };
   if (pathname === API.potAddress) return { route: 'pot_address' };
+  if (pathname === API.potStats) return { route: 'pot_stats' };
   if (pathname === API.event) return { route: 'event' };
   if (pathname === `${API.esplora}/tx`) return { route: 'esplora_broadcast' };
   if (pathname.startsWith(`${API.esplora}/`)) {
@@ -377,6 +396,18 @@ export function makeHandler(deps: Deps): Handler {
     return { response: jsonAnswer(200, { address: result.value }), upstream: result.upstream, fault: null };
   }
 
+  async function potStats(request: Request): Promise<Reply> {
+    // Counted apart from the pot's address, so that looking can never use up "Pass it on" (POT_STATS).
+    if (!(await within(deps.limits.pot, 'pot', request, 1, POT_STATS))) return refuse('limit');
+    const result = await deps.origin.potStats();
+    if (!result.ok) return refused(result);
+    // The answer is written here, from the three counts and nothing else:
+    // whatever the origin's answer held beside them is not passed on.
+    const { passedOn, waiting, handedOn } = result.value;
+    const stats: PotStats = { passedOn, waiting, handedOn };
+    return { response: jsonAnswer(200, stats), upstream: result.upstream, fault: null };
+  }
+
   async function event(request: Request, started: number): Promise<Reply> {
     const body = await readBody(request, EVENT_BODY_MAX);
     if ('refused' in body) return refuse(body.refused);
@@ -430,6 +461,8 @@ export function makeHandler(deps: Deps): Handler {
         return faucet(request);
       case 'pot_address':
         return potAddress(request);
+      case 'pot_stats':
+        return potStats(request);
       case 'event':
         return event(request, started);
     }

@@ -5,7 +5,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { after } from 'node:test';
-import type { AppConfig, EventBody, FaucetPayment } from '@learnbitcoin/practice-contract';
+import type { AppConfig, EventBody, FaucetPayment, PotStats } from '@learnbitcoin/practice-contract';
 import type {
   BotCheckResult,
   Deps,
@@ -26,6 +26,9 @@ export const APP = 'https://practice.learnbitcoin.com';
 export const ADDRESS = 'bcrt1qdpwsxpwkt6dc0c0l9vq3xgaz6s0jsjjnnk6ppw';
 export const TXID = '2bfbd6c40dbd2ed74b3b180fb96a83a0c0c97cfc4b5d4fe788b99347127a2287';
 export const POT_ADDRESS = 'bcrt1qxagpc0v6mxg2dq230xmphn8nuzaasw8uk6v5l9';
+
+/** The pot's counts, as the contract carries them: three numbers that all differ, so that none can stand in for another. */
+export const POT_COUNTS: PotStats = { passedOn: 12, waiting: 3, handedOn: 9 };
 
 // Reader addresses from the ranges set aside for documentation: nobody's.
 export const READER_IP = '203.0.113.7';
@@ -238,7 +241,7 @@ export interface Harness {
   lines: LogLine[];
   /** Everything handed to waitUntil. */
   pending: Promise<unknown>[];
-  /** What was asked of the outside, in order: "limit:faucet", "botCheck", "origin:faucet", "forward". */
+  /** What was asked of the outside, in order: "limit:faucet", "botCheck", "origin:faucet", "origin:potStats", "forward". */
   trace: string[];
   /** The argument of each call to the origin. */
   originArgs: string[];
@@ -255,6 +258,7 @@ export interface HarnessOptions {
   broadcast?: (hex: string) => OriginAnswer<string>;
   faucet?: (address: string) => OriginAnswer<FaucetPayment>;
   potAddress?: () => OriginAnswer<string>;
+  potStats?: () => OriginAnswer<PotStats>;
   botCheck?: BotCheckResult;
   forward?: () => Promise<{ ok: boolean; upstream: number | null; fault: LogLine['fault'] }>;
 }
@@ -314,6 +318,10 @@ export function harness(options: HarnessOptions = {}): Harness {
     async potAddress() {
       trace.push('origin:potAddress');
       return options.potAddress?.() ?? { ok: true, value: POT_ADDRESS, upstream: 200 };
+    },
+    async potStats() {
+      trace.push('origin:potStats');
+      return options.potStats?.() ?? { ok: true, value: { ...POT_COUNTS }, upstream: 200 };
     },
   };
 

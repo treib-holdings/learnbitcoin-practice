@@ -3,7 +3,8 @@
 // The network's origin serves two things: the chain, through the Esplora API
 // under /esplora/, and the bots (the faucet and the pay-it-forward pot) under
 // /bots/. It is not open to the public. Requests reach it only with an Access
-// service token, and the bots ask for a bearer token as well.
+// service token, and the bots ask for a bearer token as well, for everything
+// but their counts.
 //
 // So every request made here is written from scratch:
 //
@@ -24,14 +25,15 @@
 //
 // A few answers that are not a 200 mean something to the reader: Esplora's
 // plain-text 404 for a transaction it does not know, the node's plain-text
-// 400 for a transaction it refuses, and the faucet's six refusals. Each is
-// taken for what it is only when everything about it fits: the status, the
-// kind of body, the question it answers. Everything else is "unavailable",
-// and every "unavailable" carries a fault code, so the owner's log never
-// holds a failure with no hint of where to look.
+// 400 for a transaction it refuses, and the faucet's six refusals (on the
+// two routes of the bots that take the bearer token). Each is taken for
+// what it is only when everything about it fits: the status, the kind of
+// body, the question it answers. Everything else is "unavailable", and
+// every "unavailable" carries a fault code, so the owner's log never holds
+// a failure with no hint of where to look.
 
 import { ADDRESS_PATTERN, DETAIL_MAX, ERROR_STATUS, TXID_PATTERN } from '@learnbitcoin/practice-contract';
-import type { BroadcastRefusal, ErrorCode, FaucetPayment } from '@learnbitcoin/practice-contract';
+import type { BroadcastRefusal, ErrorCode, FaucetPayment, PotStats } from '@learnbitcoin/practice-contract';
 import { drop, isRecord, readBytes, readText } from './body.ts';
 import type { Fault, FetchLike, Origin, OriginAnswer, OriginBody } from './deps.ts';
 
@@ -231,6 +233,25 @@ export function makeOrigin(options: OriginOptions): Origin {
     return failure('unavailable', status, faultOf(status));
   }
 
+  /**
+   * Reads the pot's counts. This question has no refusal a reader could do
+   * anything about, so nothing but a 200 is read at all: any other status is
+   * "unavailable", whatever its body says, a faucet's refusal included.
+   */
+  async function fromPotStats(response: Response): Promise<OriginAnswer<PotStats>> {
+    if (response.status !== 200) return unexpected(response);
+    let body: unknown = null;
+    try {
+      const { text, over } = await readText(response.body, ANSWER_MAX);
+      if (!over) body = JSON.parse(text);
+    } catch (error) {
+      // As in fromBots: a body that is not JSON is no body, and a read that broke off is the origin failing.
+      if (!(error instanceof SyntaxError)) return thrown(error, 200);
+    }
+    const value = potStats(body);
+    return value === null ? failure('unavailable', 200, 'origin_shape') : { ok: true, value, upstream: 200 };
+  }
+
   return {
     async esplora(path) {
       // The handler builds this path from validated parts. Should a later
@@ -331,6 +352,13 @@ export function makeOrigin(options: OriginOptions): Origin {
       const sent = await call({ method: 'GET', path: '/bots/pot/address', bearer: true, timeoutMs });
       return sent.ok ? fromBots(sent.response, potAddress) : sent;
     },
+
+    async potStats() {
+      // The bots answer this to anybody the origin lets in: no bearer token
+      // is sent, and so it is asked even when none is configured.
+      const sent = await call({ method: 'GET', path: '/bots/pot/stats', timeoutMs });
+      return sent.ok ? fromPotStats(sent.response) : sent;
+    },
   };
 }
 
@@ -360,6 +388,24 @@ function faucetPayment(body: unknown): FaucetPayment | null {
 function potAddress(body: unknown): string | null {
   if (!isRecord(body)) return null;
   return typeof body.address === 'string' && ADDRESS_PATTERN.test(body.address) ? body.address : null;
+}
+
+/** A count as the bots give one: a whole number from 0. */
+function isCount(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+}
+
+/**
+ * The bots' pot counter as the contract's PotStats, or null if it is
+ * anything else. Exactly three of its fields are taken, and the answer is
+ * built from them here: whatever else the bots say beside them (the sats
+ * the pot has received, how often the faucet has paid) goes no further.
+ */
+function potStats(body: unknown): PotStats | null {
+  if (!isRecord(body)) return null;
+  const { learners_passed_on: passedOn, coins_waiting: waiting, coins_passed_to_newcomers: handedOn } = body;
+  if (!isCount(passedOn) || !isCount(waiting) || !isCount(handedOn)) return null;
+  return { passedOn, waiting, handedOn };
 }
 
 /**

@@ -8,6 +8,7 @@ import {
   FAUCET_BODY_MAX,
   OLDER_PAGES,
   OLDER_PAGE_COST,
+  POT_STATS,
   TX_HEX_MAX,
   chainReadCost,
   esploraReadPath,
@@ -21,6 +22,7 @@ import {
   APP,
   CONFIG,
   POT_ADDRESS,
+  POT_COUNTS,
   READER_IP,
   READER_IP6,
   TXID,
@@ -648,8 +650,14 @@ test('other unknown paths under /api/ and /p/ get the same JSON 404', async () =
     '/api/faucet?address=x',
     '/api/pot',
     '/api/pot/',
-    '/api/pot/stats',
     '/api/pot/address/',
+    // The pot's counts have a path of their own. These only look like it.
+    '/api/pot/stats/',
+    '/api/pot/stats?x=1',
+    '/api/pot/stats/x',
+    '/api/pot/Stats',
+    '/api/pot/stat',
+    '/api/stats',
     '/p',
     '/p/',
     '/p/event/',
@@ -678,6 +686,7 @@ test('a wrong method on a known path is 405, with the method that is right', asy
     [`${API.esplora}/tx`, 'POST', 'esplora_broadcast'],
     [API.faucet, 'POST', 'faucet'],
     [API.potAddress, 'POST', 'pot_address'],
+    [API.potStats, 'GET', 'pot_stats'],
     [API.event, 'POST', 'event'],
   ];
   for (const [path, right, route] of known) {
@@ -754,7 +763,7 @@ test('the origin a POST must match is the one the request was sent to, whatever 
 
 test('GET routes are not origin-checked', async () => {
   const foreign = { Origin: 'https://www.learnbitcoin.com', 'Sec-Fetch-Site': 'cross-site' };
-  for (const path of [API.config, ...READS.map(([read]) => read)]) {
+  for (const path of [API.config, API.potStats, ...READS.map(([read]) => read)]) {
     assert.equal((await run(get(path, foreign))).response.status, 200, path);
     assert.equal((await run(get(path, { 'Sec-Fetch-Site': 'none' }))).response.status, 200, path);
     assert.equal((await run(get(path))).response.status, 200, path);
@@ -771,11 +780,14 @@ test('no answer carries a CORS header', async () => {
   const requests: Request[] = [
     get(API.config),
     get(API.config, foreign),
+    get(API.potStats),
+    get(API.potStats, foreign),
     ...READS.map(([path]) => get(path, foreign)),
     ...POSTS.map(([path, body]) => post(path, body)),
     ...POSTS.map(([path, body]) => post(path, body, foreign)),
     ...POSTS.map(([path]) => preflight(path)),
     preflight(API.config),
+    preflight(API.potStats),
     preflight(READS[0]![0]),
     get('/api/nothing', foreign),
     get(`${API.esplora}/tx`, foreign),
@@ -1015,6 +1027,145 @@ test('the pot address is answered as { address }', async () => {
   assert.deepEqual(h2.lines, [{ route: 'pot_address', status: 502, upstream: 401, fault: 'origin_auth', ms: 5 }]);
 });
 
+test('the pot counts are answered as three whole numbers, and the answer is written here', async () => {
+  const { response, h } = await run(get(API.potStats));
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('Content-Type'), 'application/json; charset=utf-8');
+  const text = await response.text();
+  assert.equal(text, '{"passedOn":12,"waiting":3,"handedOn":9}');
+  assert.deepEqual(JSON.parse(text), POT_COUNTS);
+  // The pot's limiter, then the origin. No bot check: looking costs nothing.
+  assert.deepEqual(h.trace, ['limit:pot', 'origin:potStats']);
+  assert.deepEqual(h.originArgs, [], 'nothing of the request goes to the origin');
+  assert.deepEqual(h.lines, [{ route: 'pot_stats', status: 200, upstream: 200, ms: 5, fault: null }]);
+
+  // Whatever else an origin's answer holds beside the three counts is not passed on: the
+  // Worker writes the body from those three fields itself.
+  const padded = { ...POT_COUNTS, satsReceived: 180_000, faucetPayments: 4, address: ADDRESS, txid: TXID } as typeof POT_COUNTS;
+  const lean = await run(get(API.potStats), { potStats: () => ({ ok: true, value: padded, upstream: 200 }) });
+  assert.equal(await lean.response.text(), '{"passedOn":12,"waiting":3,"handedOn":9}');
+  // Zeros are counts too.
+  const none = await run(get(API.potStats), { potStats: () => ({ ok: true, value: { passedOn: 0, waiting: 0, handedOn: 0 }, upstream: 200 }) });
+  assert.deepEqual(await none.response.json(), { passedOn: 0, waiting: 0, handedOn: 0 });
+});
+
+test('the pot counts: GET only, no query string, open to any asker, and never with a CORS header', async () => {
+  // Any other method is the wrong one, from our own page or anywhere else, and nothing is asked.
+  for (const method of ['POST', 'PUT', 'DELETE', 'HEAD', 'OPTIONS', 'PATCH']) {
+    const body = method === 'HEAD' ? undefined : 'x';
+    const { response, h } = await run(new Request(`${APP}${API.potStats}`, { method, headers: { Origin: APP }, body }));
+    assert.equal(response.status, 405, method);
+    assert.equal(response.headers.get('Allow'), 'GET', method);
+    assert.deepEqual(h.trace, [], method);
+    assert.deepEqual(h.lines, [{ route: 'pot_stats', status: 405, upstream: null, ms: 5, fault: null }], method);
+  }
+  // A query string makes it a path the Worker does not know.
+  for (const query of ['?x=1', '?address=' + ADDRESS, '?callback=alert']) {
+    const h = await refusedWith(get(`${API.potStats}${query}`), 'not_found');
+    assert.deepEqual(h.lines, [{ route: 'unknown', status: 404, upstream: null, ms: 5, fault: null }], query);
+  }
+  // A bare "?" is no query string.
+  assert.equal((await run(get(`${API.potStats}?`))).response.status, 200);
+  // Reading is open: another site's page, a script with no page at all. None of them is told it may read the answer.
+  const askers: Array<Record<string, string>> = [
+    {},
+    { Origin: 'https://www.learnbitcoin.com', 'Sec-Fetch-Site': 'cross-site' },
+    { Origin: 'https://evil.example' },
+    { Origin: 'null' },
+    { 'Sec-Fetch-Site': 'none' },
+  ];
+  for (const headers of askers) {
+    const { response } = await run(get(API.potStats, headers));
+    assert.equal(response.status, 200, JSON.stringify(headers));
+    response.headers.forEach((_value, name) => assert.ok(!name.toLowerCase().startsWith('access-control-'), name));
+    assert.equal(response.headers.get('Vary'), null);
+  }
+});
+
+test('the pot counts are counted apart from the pot address, under a second key of the same reader', async () => {
+  assert.equal(POT_STATS, 'stats');
+  const key = await readerKey('pot', READER_IP);
+  const { h } = await run(get(API.potStats, { 'CF-Connecting-IP': READER_IP }));
+  // One call, to the pot's limiter and to no other: the reader's key for the pot with a word added, counted as one.
+  assert.deepEqual(h.limiters.pot.keys, [`${key}:stats`]);
+  assert.deepEqual(h.limiters.pot.costs, [1]);
+  assert.deepEqual(h.limiters.pot.asked, [{ key: `${key}:stats` }], 'the key and nothing else: a look counts as one');
+  assert.ok(!h.limiters.pot.keys[0]!.includes(READER_IP), 'the key does not hold the reader address');
+  for (const name of ['chain', 'broadcast', 'faucet', 'events'] as const) assert.deepEqual(h.limiters[name].keys, [], name);
+  // The pot's address is counted under the reader's key as it always was.
+  const address = await run(post(API.potAddress, null, { 'CF-Connecting-IP': READER_IP }));
+  assert.deepEqual(address.h.limiters.pot.asked, [{ key }]);
+  // IPv6: a neighbour in the same /64 shares both counts. With no address at all, one shared key.
+  const six = (await run(get(API.potStats, { 'CF-Connecting-IP': READER_IP6 }))).h.limiters.pot.keys[0];
+  const neighbour = (await run(get(API.potStats, { 'CF-Connecting-IP': '2001:db8:aa:bb:ffff::1' }))).h.limiters.pot.keys[0];
+  assert.equal(six, neighbour);
+  assert.equal(six, `${await readerKey('pot', READER_IP6)}:stats`);
+  assert.equal((await run(get(API.potStats, { 'CF-Connecting-IP': '' }))).h.limiters.pot.keys[0], `${await readerKey('pot', null)}:stats`);
+
+  // Over the budget, the origin is not asked.
+  const limited = await refusedWith(get(API.potStats), 'limit', ['limit:pot'], { over: ['pot'] });
+  assert.deepEqual(limited.lines, [{ route: 'pot_stats', status: 429, upstream: null, ms: 5, fault: null }]);
+});
+
+test('a flood of looks at the pot counts cannot use up "Pass it on", nor the other way round', async () => {
+  // The limiter here counts as Cloudflare's does, up to what wrangler.jsonc sets for the pot: 60 a minute.
+  const budget = (wranglerConfig().ratelimits as Array<{ name: string; simple: { limit: number; period: number } }>).find(
+    (limiter) => limiter.name === 'POT_LIMIT',
+  );
+  assert.deepEqual(budget?.simple, { limit: 60, period: 60 });
+  const flooded = harness();
+  const pot = countingLimiter(60);
+  flooded.deps.limits = { ...flooded.deps.limits, pot };
+  const handler = makeHandler(flooded.deps);
+  const key = await readerKey('pot', READER_IP);
+
+  // 500 looks from one reader in one minute: 60 are answered, and the origin hears of no more.
+  let answered = 0;
+  for (let n = 0; n < 500; n += 1) {
+    const response = await handler(get(API.potStats));
+    if (response.status === 200) answered += 1;
+    else assert.deepEqual([response.status, await errorOf(response)], [429, { error: 'limit' }]);
+  }
+  assert.equal(answered, 60);
+  assert.equal(flooded.trace.filter((step) => step === 'origin:potStats').length, 60);
+  assert.deepEqual([pot.count(`${key}:stats`), pot.count(key)], [60, 0]);
+  // The same reader still gets the pot's address, 60 times over.
+  for (let n = 0; n < 60; n += 1) assert.equal((await handler(post(API.potAddress, null))).status, 200, String(n));
+  assert.equal((await handler(post(API.potAddress, null))).status, 429);
+  assert.deepEqual([pot.count(`${key}:stats`), pot.count(key)], [60, 60]);
+  // And another reader has counts of their own.
+  assert.equal((await handler(get(API.potStats, { 'CF-Connecting-IP': '203.0.113.8' }))).status, 200);
+
+  // The other way round: a reader with no address requests left can still look.
+  const spent = harness();
+  const counted = countingLimiter(60);
+  spent.deps.limits = { ...spent.deps.limits, pot: counted };
+  const again = makeHandler(spent.deps);
+  for (let n = 0; n < 61; n += 1) await again(post(API.potAddress, null));
+  assert.equal((await again(post(API.potAddress, null))).status, 429);
+  assert.equal((await again(get(API.potStats))).status, 200);
+});
+
+test('pot counts the origin cannot give come back as "unavailable", with the fault in the log', async () => {
+  const cases: Array<[number | null, Fault]> = [
+    [200, 'origin_shape'],
+    [404, 'origin_shape'],
+    [429, 'origin_shape'],
+    [500, 'origin_down'],
+    [502, 'origin_down'],
+    [302, 'origin_auth'],
+    [401, 'origin_auth'],
+    [null, 'origin_timeout'],
+    [null, 'origin_down'],
+  ];
+  for (const [upstream, fault] of cases) {
+    const h = await refusedWith(get(API.potStats), 'unavailable', ['limit:pot', 'origin:potStats'], {
+      potStats: () => ({ ok: false, code: 'unavailable', detail: null, upstream, fault }),
+    });
+    assert.deepEqual(h.lines, [{ route: 'pot_stats', status: 502, upstream, ms: 5, fault }], `${upstream} ${fault}`);
+  }
+});
+
 // -- chain reads that fail ------------------------------------------------------------------------
 
 test('a chain read the origin cannot answer comes back as a code, never as the origin body', async () => {
@@ -1120,6 +1271,7 @@ test('each limiter is asked with a hash of the reader, never the address itself'
     ['chain', (ip) => get(READS[0]![0], ip)],
     ['broadcast', (ip) => post(`${API.esplora}/tx`, HEX, ip)],
     ['faucet', (ip) => post(API.faucet, FAUCET_BODY, ip)],
+    // (The pot's counts go to this limiter too, under a second key: they have a test of their own.)
     ['pot', (ip) => post(API.potAddress, null, ip)],
     ['events', (ip) => post(API.event, EVENT, ip)],
   ];
@@ -1170,6 +1322,7 @@ test('every answer carries the fixed headers: a success, a refusal, the 404 and 
     ['a broadcast', post(`${API.esplora}/tx`, HEX), 200, 'text/plain; charset=utf-8'],
     ['the faucet', post(API.faucet, FAUCET_BODY), 200, 'application/json; charset=utf-8'],
     ['the pot', post(API.potAddress, null), 200, 'application/json; charset=utf-8'],
+    ['the pot counts', get(API.potStats), 200, 'application/json; charset=utf-8'],
     ['an event', post(API.event, EVENT), 202, null],
     ['a refusal (bad_address)', post(API.faucet, { address: 'x', token: TOKEN }), 400, 'application/json; charset=utf-8'],
     ['a refusal (forbidden)', post(API.faucet, FAUCET_BODY, { Origin: 'https://evil.example' }), 403, 'application/json; charset=utf-8'],
@@ -1389,6 +1542,17 @@ test('every other request writes exactly one line, whether it went well or was r
     ['the pot address from another site', post(API.potAddress, null, foreign), {}, line('pot_address', 403)],
     ['the pot address, wrong method', get(API.potAddress), {}, line('pot_address', 405)],
 
+    ['the pot counts', get(API.potStats), {}, line('pot_stats', 200, 200)],
+    ['the pot counts from another site', get(API.potStats, foreign), {}, line('pot_stats', 200, 200)],
+    [
+      'the pot counts, origin down',
+      get(API.potStats),
+      { potStats: () => ({ ok: false, code: 'unavailable', detail: null, upstream: 502, fault: 'origin_down' }) },
+      line('pot_stats', 502, 502, 'origin_down'),
+    ],
+    ['the pot counts over the limit', get(API.potStats), { over: ['pot'] }, line('pot_stats', 429)],
+    ['the pot counts, wrong method', post(API.potStats, null), {}, line('pot_stats', 405)],
+
     ['an event', post(API.event, EVENT), {}, line('event', 202, 202)],
     ['an event, with events off', post(API.event, EVENT), { config: { events: false } }, line('event', 202)],
     [
@@ -1422,6 +1586,7 @@ test('a log line is five fields, and nothing a reader sent', async () => {
   const secretish = [ADDRESS, TXID, TOKEN, READER_IP, HEX, POT_ADDRESS, 'Mozilla', 'evil.example', '/api/', 'esplora/'];
   const requests: Request[] = [
     get(API.config),
+    get(API.potStats, { 'User-Agent': 'Mozilla/5.0', Origin: 'https://evil.example' }),
     ...READS.map(([path]) => get(path, { 'User-Agent': 'Mozilla/5.0' })),
     ...POSTS.map(([path, body]) => post(path, body, { 'User-Agent': 'Mozilla/5.0' })),
     ...POSTS.map(([path, body]) => post(path, body, { Origin: 'https://evil.example' })),
@@ -1439,7 +1604,7 @@ test('a log line is five fields, and nothing a reader sent', async () => {
     assert.equal(h.lines.length, 1, `${request.method} ${request.url}`);
     const line = h.lines[0]!;
     assert.deepEqual(Object.keys(line).sort(), ['fault', 'ms', 'route', 'status', 'upstream']);
-    assert.ok(['config', 'esplora_read', 'esplora_broadcast', 'faucet', 'pot_address', 'event', 'unknown'].includes(line.route));
+    assert.ok(['config', 'esplora_read', 'esplora_broadcast', 'faucet', 'pot_address', 'pot_stats', 'event', 'unknown'].includes(line.route));
     assert.equal(typeof line.status, 'number');
     assert.ok(line.upstream === null || typeof line.upstream === 'number');
     assert.equal(typeof line.ms, 'number');
@@ -1457,6 +1622,7 @@ test('when a part throws, the answer is unavailable and the log says the handler
     [post(`${API.esplora}/tx`, HEX), { broadcast: boom }, 'esplora_broadcast'],
     [post(API.faucet, FAUCET_BODY), { faucet: boom }, 'faucet'],
     [post(API.potAddress, null), { potAddress: boom }, 'pot_address'],
+    [get(API.potStats), { potStats: boom }, 'pot_stats'],
   ];
   for (const [request, options, route] of cases) {
     const { response, h } = await run(request, options);

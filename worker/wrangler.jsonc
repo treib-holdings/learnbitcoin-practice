@@ -40,6 +40,12 @@
   // reader gets 120 of them a minute beside the 6,000 other chain reads
   // (src/handler.ts, OLDER_PAGE_COST).
   //
+  // The pot's limiter counts two things apart in the same way: asking for
+  // the pot's address ("Pass it on"), and looking at the pot's counts, which
+  // anybody can do with a plain GET. The looks are counted under a second
+  // key of the reader's, so they can never use up what "Pass it on" needs
+  // (src/handler.ts, POT_STATS): 60 a minute of each for one reader.
+  //
   // namespace_id is a number we pick; it only has to be unique in the account.
   "ratelimits": [
     { "name": "CHAIN_LIMIT", "namespace_id": "2620", "simple": { "limit": 6000, "period": 60 } },

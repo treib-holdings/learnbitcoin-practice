@@ -2,17 +2,23 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
   ADDRESS_PATTERN,
+  API,
   BROADCAST_REFUSALS,
   ERROR_CODES,
   ERROR_STATUS,
   EVENTS,
   LANGS,
   SCREENS,
+  STEPS,
   TXID_PATTERN,
   eventPath,
   eventPaths,
   isErrorCode,
   isEventBody,
+  isStepId,
+  type PotStats,
+  type StepId,
+  type ValueOf,
 } from '../src/index.ts';
 
 test('every error code has a status, and only error codes do', () => {
@@ -35,10 +41,84 @@ test('event paths are fixed per screen and language', () => {
   assert.equal(eventPath('tx', 'es'), '/es/wallet/tx');
   assert.equal(eventPath('not-found', 'es'), '/es/not-found');
   const all = eventPaths();
-  assert.equal(all.length, SCREENS.length * LANGS.length);
+  // Every screen but one has one path in each language. The step screen has one for each step.
+  assert.equal(all.length, (SCREENS.length - 1) * LANGS.length + STEPS.length * LANGS.length);
+  assert.equal(all.length, 42);
   assert.equal(new Set(all).size, all.length);
   for (const path of all) assert.match(path, /^\/[a-z/-]*$/);
   assert.equal(eventPaths(), all, 'the list is built once');
+});
+
+test('the six steps, in the order the chapters teach them', () => {
+  assert.deepEqual([...STEPS], ['hold-some', 'pass-it-on', 'no-balances', 'waiting-room', 'the-seed', 'prove-the-backup']);
+  assert.equal(new Set(STEPS).size, STEPS.length);
+  // An ID is part of an address, of a counted event and of a link to the main site.
+  for (const step of STEPS) {
+    assert.match(step, /^[a-z]+(-[a-z]+)*$/);
+    assert.ok(isStepId(step));
+  }
+  for (const not of ['', 'hold', 'Hold-some', 'hold-some ', 'hold-some/', 'first-payment', 'toString', '__proto__', 0, null, undefined, ['hold-some']]) {
+    assert.equal(isStepId(not), false, String(not));
+  }
+});
+
+test('the list of steps and each step are screens, counted under /do and /do/<id>', () => {
+  assert.ok(SCREENS.includes('do') && SCREENS.includes('step'));
+  assert.equal(eventPath('do', 'en'), '/do');
+  assert.equal(eventPath('do', 'es'), '/es/do');
+  for (const step of STEPS) {
+    assert.equal(eventPath('step', 'en', step), `/do/${step}`);
+    assert.equal(eventPath('step', 'es', step), `/es/do/${step}`);
+    // For any other screen the step is not looked at.
+    assert.equal(eventPath('do', 'en', step), '/do');
+    assert.equal(eventPath('tx', 'es', step), '/es/wallet/tx');
+  }
+  // The twelve step paths are on the closed list, and "/do/" with anything else after it is not.
+  const all = eventPaths();
+  const stepPaths = all.filter((path) => /\/do\/./.test(path));
+  assert.deepEqual(
+    [...stepPaths].sort(),
+    LANGS.flatMap((lang) => STEPS.map((step) => `${lang === 'en' ? '' : '/es'}/do/${step}`)).sort(),
+  );
+  assert.ok(all.includes('/do') && all.includes('/es/do'));
+
+  // A step's screen without its step, or with text that is no step, is counted as an unknown
+  // address is: under one fixed path. What was typed never becomes part of a counted path.
+  for (const typed of [undefined, '', 'first-payment', 'hold-some/x', '../wallet', 'HOLD-SOME', 'bcrt1qp7th3dvtkx9vrktcrn5erq0dgjzgc4wjxzl8d6']) {
+    assert.equal(eventPath('step', 'en', typed), '/not-found', String(typed));
+    assert.equal(eventPath('step', 'es', typed), '/es/not-found', String(typed));
+    assert.ok(all.includes(eventPath('step', 'en', typed)));
+  }
+  for (const lang of LANGS) {
+    for (const screen of SCREENS) assert.ok(all.includes(eventPath(screen, lang, 'hold-some')), `${lang} ${screen}`);
+  }
+});
+
+test('"Do it" is counted with the step that was done, and with nothing else', () => {
+  assert.deepEqual(EVENTS['Do it'], { prop: 'step', values: STEPS });
+  // The compiler holds a counted step to the list.
+  const value: ValueOf<'Do it'> = 'the-seed';
+  const step: StepId = value;
+  assert.equal(step, 'the-seed');
+  for (const id of STEPS) {
+    assert.ok(isEventBody({ name: 'Do it', path: `/do/${id}`, value: id }));
+    assert.ok(isEventBody({ name: 'Do it', path: '/es/wallet/tx', value: id }), 'a step can be done on another screen');
+    assert.ok(isEventBody({ name: 'pageview', path: `/es/do/${id}` }));
+  }
+  assert.equal(isEventBody({ name: 'Do it', path: '/do/hold-some' }), false);
+  assert.equal(isEventBody({ name: 'Do it', path: '/do/hold-some', value: 'first-payment' }), false);
+  assert.equal(isEventBody({ name: 'Do it', path: '/do/first-payment', value: 'hold-some' }), false);
+  assert.equal(isEventBody({ name: 'pageview', path: '/do/' }), false);
+  assert.equal(isEventBody({ name: 'pageview', path: '/do/hold-some/' }), false);
+  assert.equal(isEventBody({ name: 'Do it', path: '/do/hold-some', value: 'hold-some', wallet: '73c5da0a' }), false);
+});
+
+test('the pot count has a path of its own, and three whole numbers for a body', () => {
+  assert.equal(API.potStats, '/api/pot/stats');
+  assert.equal(API.potAddress, '/api/pot/address');
+  assert.equal(new Set(Object.values(API)).size, Object.values(API).length);
+  const stats: PotStats = { passedOn: 3, waiting: 1, handedOn: 2 };
+  assert.deepEqual(Object.keys(stats), ['passedOn', 'waiting', 'handedOn']);
 });
 
 test('a screen view carries no value', () => {

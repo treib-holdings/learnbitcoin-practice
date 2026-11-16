@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { afterEach, beforeEach, test } from 'node:test';
 import { API } from '@learnbitcoin/practice-contract';
 import type { LogLine } from '../src/deps.ts';
-import { OLDER_PAGE_COST } from '../src/handler.ts';
+import { OLDER_PAGE_COST, POT_STATS } from '../src/handler.ts';
 import { FIXED_HEADERS } from '../src/headers.ts';
 import worker from '../src/index.ts';
 import { ADDRESS, APP, POT_ADDRESS, READER_IP, TXID, fakeFetch, fakeLimiter, post, reply, wranglerConfig } from './fakes.ts';
@@ -396,6 +396,7 @@ test('each route counts against its own limiter binding', async () => {
   outside = (call) => {
     if (call.url.endsWith('/esplora/tx')) return reply(200, TXID);
     if (call.url.endsWith('/bots/pot/address')) return reply(200, { address: POT_ADDRESS });
+    if (call.url.endsWith('/bots/pot/stats')) return reply(200, { learners_passed_on: 1, coins_waiting: 1, coins_passed_to_newcomers: 0 });
     return reply(200, '1', 'text/plain');
   };
   const routes: Array<[keyof Limiters, Request]> = [
@@ -403,6 +404,7 @@ test('each route counts against its own limiter binding', async () => {
     ['BROADCAST_LIMIT', post(`${API.esplora}/tx`, '00ff')],
     ['FAUCET_LIMIT', post(API.faucet, { address: ADDRESS, token: 'a-token' })],
     ['POT_LIMIT', post(API.potAddress, null)],
+    ['POT_LIMIT', get(API.potStats)],
     ['EVENTS_LIMIT', post(API.event, { name: 'pageview', path: '/' })],
   ];
   for (const [name, request] of routes) {
@@ -412,6 +414,63 @@ test('each route counts against its own limiter binding', async () => {
       assert.equal(limiter.keys.length, other === name ? 1 : 0, `${name} / ${other}`);
     }
   }
+});
+
+test('the pot counts go to the configured origin with the Access token and no bearer token, and are counted apart at the pot limiter', async () => {
+  // What the bots answer (bots/practice_bots/bots.py): five fields. Three of them cross.
+  outside = () => reply(200, { learners_passed_on: 128, sats_received: 3_840_000, coins_waiting: 3, coins_passed_to_newcomers: 125, faucet_payments: 400 });
+  const { env, limiters } = bindings();
+  const response = await send(get(API.potStats), env);
+  assert.equal(response.status, 200);
+  assert.equal(await response.text(), '{"passedOn":128,"waiting":3,"handedOn":125}');
+  assert.equal(response.headers.get('Content-Type'), 'application/json; charset=utf-8');
+  for (const [name, value] of Object.entries(FIXED_HEADERS)) assert.equal(response.headers.get(name), value, name);
+  response.headers.forEach((_value, name) => assert.ok(!name.toLowerCase().startsWith('access-control-'), name));
+
+  assert.equal(asked.length, 1);
+  assert.equal(asked[0]?.url, `${ORIGIN}/bots/pot/stats`);
+  assert.equal(asked[0]?.init.method, 'GET');
+  assert.deepEqual(asked[0]?.headers, {
+    'cf-access-client-id': 'client-id',
+    'cf-access-client-secret': 'client-secret',
+    'x-real-ip': '192.0.2.1',
+  });
+  assert.ok(!JSON.stringify(asked).includes(READER_IP) && !JSON.stringify(asked).includes('bots-token'));
+
+  // The binding is told to count it under a second key of the reader's, as one.
+  const address = bindings();
+  outside = () => reply(200, { address: POT_ADDRESS });
+  await send(post(API.potAddress, null), address.env);
+  const reader = address.limiters.POT_LIMIT.keys[0]!;
+  assert.match(reader, /^[0-9a-f]{24}$/);
+  assert.equal(POT_STATS, 'stats');
+  assert.deepEqual(limiters.POT_LIMIT.asked, [{ key: `${reader}:stats` }]);
+  for (const name of ['CHAIN_LIMIT', 'BROADCAST_LIMIT', 'FAUCET_LIMIT', 'EVENTS_LIMIT'] as const) assert.equal(limiters[name].keys.length, 0, name);
+  assert.deepEqual(
+    logged.map(({ level, line }) => ({ level, line: { ...(line as LogLine), ms: 0 } })),
+    [
+      { level: 'log', line: { route: 'pot_stats', status: 200, upstream: 200, ms: 0, fault: null } },
+      { level: 'log', line: { route: 'pot_address', status: 200, upstream: 200, ms: 0, fault: null } },
+    ],
+  );
+
+  // With no bots token set the counts are still asked for: they need none. The address does.
+  logged = [];
+  outside = () => reply(200, { learners_passed_on: 0, coins_waiting: 0, coins_passed_to_newcomers: 0 });
+  const bare = bindings({ BOTS_API_TOKEN: undefined });
+  assert.deepEqual(await (await send(get(API.potStats), bare.env)).json(), { passedOn: 0, waiting: 0, handedOn: 0 });
+  assert.equal((await send(post(API.potAddress, null), bare.env)).status, 502);
+
+  // An origin that is down: "unavailable", and one error line.
+  logged = [];
+  outside = () => reply(502, '<html>Bad gateway</html>', 'text/html');
+  const failed = await send(get(API.potStats), bindings().env);
+  assert.equal(failed.status, 502);
+  assert.deepEqual(await failed.json(), { error: 'unavailable' });
+  assert.deepEqual(
+    logged.map(({ level, line }) => ({ level, line: { ...(line as LogLine), ms: 0 } })),
+    [{ level: 'error', line: { route: 'pot_stats', status: 502, upstream: 502, ms: 0, fault: 'origin_down' } }],
+  );
 });
 
 test('with a widget configured, the faucet asks the verify service with the secret, then the bots with their token', async () => {
