@@ -99,6 +99,7 @@ import type {
   UnlockResult,
   UnlockWordsResult,
   WalletStatus,
+  WordsAtResult,
   WordsCheck,
 } from './wallet-api.ts';
 import { strings } from '../strings/index.ts';
@@ -162,6 +163,8 @@ export interface SessionView {
   pendingSwitch: { tag: string | null; fingerprint: string } | null;
   pendingRestore: boolean;
   openedEmpty: boolean;
+  /** How many times this page has handed out a wallet's 12 words to be put on screen. A count, never a word. */
+  wordsShown: number;
 }
 
 export interface Session extends Published<SessionView> {
@@ -180,6 +183,7 @@ export interface Session extends Published<SessionView> {
   eraseRestored(): void;
   lock(): void;
   revealWords(): string[] | null;
+  checkWordsAt(positions: number[], typed: string[]): WordsAtResult;
   removeWallet(): 'removed' | 'gone';
   descriptors(): { receive: string; change: string } | null;
   beforeBotCheck(): void;
@@ -189,6 +193,13 @@ export interface Session extends Published<SessionView> {
   learnPasskeys(passkeyHost: string): Promise<void>;
   /** Call for every "storage" event of localStorage, with the event's key (null: the storage was cleared). */
   storageChanged(key: string | null): void;
+  /**
+   * Call when the tab comes back into view, and when the browser brings the
+   * page back whole from its memory (Back, or Forward). What is stored is
+   * read again, and if it is not what this page loaded, the page starts
+   * again from it, as it does for a "storage" event.
+   */
+  backInView(): void;
 }
 
 // -- small helpers ------------------------------------------------------------
@@ -317,8 +328,10 @@ export function makeSession(deps: SessionDeps): Session {
   let epoch = 0;
   /** The browser's answer to "will you keep this site's data?". Asked once in a page's life. */
   let persistAnswer: Promise<boolean | null> | null = null;
-  /** The wallets (by public key) whose words were shown since the page loaded. */
-  const wordsShown = new Set<string>();
+  /** The wallets (by public key) whose words were shown since the page loaded: each is counted as an event once. */
+  const countedShown = new Set<string>();
+  /** How many times the words were handed out to be shown since the page loaded, whichever wallet's. */
+  let timesShown = 0;
   /** Restores run one after another. */
   let restoreQueue: Promise<unknown> = Promise.resolve();
 
@@ -335,6 +348,7 @@ export function makeSession(deps: SessionDeps): Session {
     pendingSwitch: null,
     pendingRestore: false,
     openedEmpty: false,
+    wordsShown: 0,
   });
 
   function publish(): void {
@@ -352,6 +366,7 @@ export function makeSession(deps: SessionDeps): Session {
       pendingSwitch,
       pendingRestore: restoring !== null,
       openedEmpty,
+      wordsShown: timesShown,
     });
   }
 
@@ -947,13 +962,57 @@ export function makeSession(deps: SessionDeps): Session {
       if (record === null || words === null) return null;
       // A new list each time: nothing the caller does to it reaches the words kept here.
       const list = words.split(' ');
-      if (!wordsShown.has(record.xpub)) {
-        wordsShown.add(record.xpub);
+      if (!countedShown.has(record.xpub)) {
+        countedShown.add(record.xpub);
         count('Words shown', record.kind);
       }
+      // Every time they are handed out, the page is told that it happened, and nothing more
+      // than that: a number that goes up. The "Do it" step that asks the reader to look at
+      // their words goes by it. (The event above is sent once for a wallet; this counts each time.)
+      timesShown += 1;
+      publish();
       return list;
     } catch {
       return null;
+    }
+  }
+
+  /**
+   * Compares a few typed words with the wallet's own, by their place in the
+   * phrase, and says which places were wrong. The "Do it" steps that check
+   * a paper copy ask through this, so that the 12 words never have to be
+   * handed to a screen for a check: what comes back is positions, never a
+   * word. Nothing is counted, nothing is stored, and the wallet is left as
+   * it was.
+   *
+   * What was typed is handled as the 12 words themselves are: tidied
+   * without a regular expression (the wallet package's own way), compared
+   * as plain text, and the trace wiped when the call returns (tidy, below).
+   */
+  function checkWordsAt(positions: number[], typed: string[]): WordsAtResult {
+    try {
+      // Nothing takes typed words in a page the bot check has been let into, whatever kind of wallet is here.
+      if (botCheck) return { ok: false, reason: 'reload' };
+      // Another tab may have removed or replaced the wallet since this page last looked.
+      if (status !== 'broken') syncWithStorage();
+      if (record === null) return { ok: false, reason: 'gone' };
+      if (words === null) return { ok: false, reason: 'locked' };
+      const own = words.split(' ');
+      const asked: unknown[] = Array.isArray(positions) ? positions : [];
+      const given: unknown[] = Array.isArray(typed) ? typed : [];
+      const wrong: number[] = [];
+      for (let i = 0; i < asked.length; i++) {
+        const position = asked[i];
+        const text = given[i];
+        // A place the phrase does not have is wrong, and so is one with nothing typed for it.
+        const expected = typeof position === 'number' && Number.isInteger(position) && position >= 0 ? own[position] : undefined;
+        const right = expected !== undefined && typeof text === 'string' && normalizeMnemonic(text) === expected;
+        if (!right) wrong.push(typeof position === 'number' ? position : -1);
+      }
+      return { ok: true, wrong };
+    } catch {
+      // Nothing above should throw. If it did, this page is not fit to check words: load it again.
+      return { ok: false, reason: 'reload' };
     }
   }
 
@@ -1148,6 +1207,30 @@ export function makeSession(deps: SessionDeps): Session {
     }
   }
 
+  /**
+   * A page that was put aside hears nothing. When the reader leaves for
+   * another site in the same tab, the browser may keep this page whole in
+   * its memory and bring it back as it was when they press Back. While it
+   * lies there it gets no "storage" event, so a wallet removed or replaced
+   * in the meantime (in another tab, or in the same tab on a page loaded
+   * after this one) is still the wallet this page remembers. Shown again,
+   * the page would speak of a wallet that is not in the browser, and the
+   * "Do it" steps would judge by it.
+   *
+   * So the storage is read again whenever the page is back in front of the
+   * reader. If it holds what this page loaded, nothing happens: the keys of
+   * a passkey wallet stay loaded and nothing is read from the network. If
+   * it does not, the page starts again from what is stored, exactly as
+   * after a "storage" event.
+   */
+  function backInView(): void {
+    try {
+      if (status !== 'broken') syncWithStorage();
+    } catch {
+      // The next action reads the storage again.
+    }
+  }
+
   // -- starting up ----------------------------------------------------------------------
 
   // The self-test comes before the first derivation of the page, and reading the record derives.
@@ -1216,12 +1299,14 @@ export function makeSession(deps: SessionDeps): Session {
     eraseRestored: tidy(eraseRestored),
     lock: tidy(lock),
     revealWords: tidy(revealWords),
+    checkWordsAt: tidy(checkWordsAt),
     removeWallet: tidy(removeWallet),
     descriptors: tidy(descriptors),
     beforeBotCheck: tidy(beforeBotCheck),
     sign: tidy(sign),
     learnPasskeys: tidy(learnPasskeys),
     storageChanged: tidy(storageChanged),
+    backInView: tidy(backInView),
   };
 }
 

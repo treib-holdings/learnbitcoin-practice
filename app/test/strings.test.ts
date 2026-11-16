@@ -44,10 +44,11 @@ const ASCII = /^[\x20-\x7e]*$/;
 /** The same, plus the sixteen characters Spanish adds: its accented letters and its two inverted marks. */
 const SPANISH = /^[\x20-\x7eáéíóúüñÁÉÍÓÚÜÑ¿¡]*$/;
 
-test('the map holds the twelve areas, each with both languages', () => {
-  // The areas of SPEC section 12: the shell, the errors and one per screen.
+test('the map holds the thirteen areas, each with both languages', () => {
+  // The areas of SPEC section 12: the shell, the errors and one per screen. And one more for the
+  // "Do it" steps (SPEC-A3 section 10).
   const expected = ['common', 'errors', 'home', 'create', 'wallet', 'receive', 'send', 'backup', 'restore', 'settings'];
-  assert.deepEqual([...areas].sort(), [...expected, 'sparrow', 'about'].sort());
+  assert.deepEqual([...areas].sort(), [...expected, 'sparrow', 'about', 'doit'].sort());
   for (const area of areas) {
     assert.deepEqual(Object.keys(strings[area]).sort(), [...LANGS].sort(), area);
     for (const lang of LANGS) {

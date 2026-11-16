@@ -83,6 +83,15 @@ const boundedFetch = withDeadline(
 
 const local = browserStorage();
 
+/**
+ * The browser's storage for this site, as the wallet holds it (or the
+ * stand-in whose every use fails, where the browser hands out none). For
+ * main.ts, to pass on to the "Do it" progress: that keeps one note of its
+ * own there, beside the wallet's record, and this is the one file that
+ * reaches for the browser's storage.
+ */
+export const storage: Storage = local;
+
 /** The settings: the built-in ones until the Worker's arrive. A copy, because the built-in object is frozen. */
 let config = $state.raw<AppConfig>({ ...DEFAULT_CONFIG });
 /** Whether the Worker's settings have arrived. `config` cannot say: built in, it looks like a closed faucet. */
@@ -124,6 +133,7 @@ let createdName = $state.raw(session.createdName);
 let pendingSwitch = $state.raw(session.pendingSwitch);
 let pendingRestore = $state.raw(session.pendingRestore);
 let openedEmpty = $state.raw(session.openedEmpty);
+let wordsShown = $state.raw(session.wordsShown);
 
 const coins = engine.chain.view();
 let chain = $state.raw(coins.chain);
@@ -131,6 +141,7 @@ let history = $state.raw(coins.history);
 let historyError = $state.raw(coins.historyError);
 let receive = $state.raw(coins.receive);
 let notice = $state.raw(coins.notice);
+let lastSent = $state.raw(coins.lastSent);
 
 let faucet = $state.raw(engine.faucet.view());
 
@@ -148,6 +159,7 @@ engine.session.subscribe(() => {
   pendingSwitch = now.pendingSwitch;
   pendingRestore = now.pendingRestore;
   openedEmpty = now.openedEmpty;
+  wordsShown = now.wordsShown;
 });
 
 engine.chain.subscribe(() => {
@@ -157,6 +169,7 @@ engine.chain.subscribe(() => {
   historyError = now.historyError;
   receive = now.receive;
   notice = now.notice;
+  lastSent = now.lastSent;
 });
 
 engine.faucet.subscribe(() => {
@@ -171,8 +184,24 @@ window.addEventListener('storage', (event) => {
 });
 
 // A hidden tab reads nothing. Back in view, it looks once, at once.
+//
+// First it reads the stored record again. A tab that was only hidden has
+// heard every "storage" event. A page the browser kept whole in its memory
+// while the reader was on another site, and brings back when they press
+// Back, has heard none: the wallet it remembers may have been removed or
+// replaced since. This listener is set before the "Do it" steps set theirs
+// (main.ts makes them after this file has run), so the steps, which follow
+// their step again when the tab is back in view, judge by the wallet that
+// is really in the browser.
 document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'hidden') engine.session.backInView();
   engine.chain.visibilityChanged();
+});
+
+// The same when the browser shows a page it had kept in its memory
+// (event.persisted), whichever of the two events it sends first.
+window.addEventListener('pageshow', (event) => {
+  if (event.persisted) engine.session.backInView();
 });
 
 // -- the settings ----------------------------------------------------------------
@@ -290,6 +319,12 @@ export const wallet: WalletApi = {
   get notice() {
     return notice;
   },
+  get lastSent() {
+    return lastSent;
+  },
+  get wordsShown() {
+    return wordsShown;
+  },
 
   createWithPasskey: () => engine.session.createWithPasskey(),
   finishSetup: () => engine.session.finishSetup(),
@@ -307,6 +342,7 @@ export const wallet: WalletApi = {
 
   lock: () => engine.session.lock(),
   revealWords: () => engine.session.revealWords(),
+  checkWordsAt: (positions, typed) => engine.session.checkWordsAt(positions, typed),
   removeWallet: () => engine.session.removeWallet(),
   descriptors: () => engine.session.descriptors(),
 
@@ -329,4 +365,5 @@ export const wallet: WalletApi = {
   sign: (request) => engine.session.sign(request),
   broadcast: (payment) => engine.chain.broadcast(payment),
   potAddress: () => engine.chain.potAddress(),
+  potStats: () => engine.chain.potStats(),
 };

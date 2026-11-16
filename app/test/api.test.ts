@@ -102,6 +102,70 @@ test('potAddress posts an empty body', async () => {
   assert.equal(calls[0]?.init?.body, undefined);
 });
 
+test('potStats is a plain GET with nothing sent, and gives the three counts', async () => {
+  const { fetchFn, calls } = answering(200, JSON.stringify({ passedOn: 128, waiting: 3, handedOn: 125 }));
+  assert.deepEqual(await makeApi(fetchFn).potStats(), { passedOn: 128, waiting: 3, handedOn: 125 });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0]?.input, API.potStats);
+  assert.equal(calls[0]?.input, '/api/pot/stats');
+  // No method (so a GET), no body and no header of the app's own.
+  assert.equal(calls[0]?.init, undefined);
+
+  // Zeros are counts. Whatever else the answer holds is left behind: the three, and nothing beside them.
+  const padded = { passedOn: 0, waiting: 0, handedOn: 0, satsReceived: 180_000, address: ADDRESS, txid: TXID };
+  const lean = await makeApi(answering(200, JSON.stringify(padded)).fetchFn).potStats();
+  assert.deepEqual(lean, { passedOn: 0, waiting: 0, handedOn: 0 });
+  assert.deepEqual(Object.keys(lean), ['passedOn', 'waiting', 'handedOn']);
+});
+
+test('potStats: a 200 that is not three whole numbers from 0 is "unavailable"', async () => {
+  const good = { passedOn: 12, waiting: 3, handedOn: 9 };
+  const answers: string[] = [
+    'not json',
+    '',
+    'null',
+    '[]',
+    '12',
+    '{}',
+    JSON.stringify([good]),
+    // The bots' own field names: the Worker is meant to have turned these into the contract's.
+    JSON.stringify({ learners_passed_on: 12, coins_waiting: 3, coins_passed_to_newcomers: 9 }),
+  ];
+  for (const field of Object.keys(good)) {
+    for (const value of [-1, 1.5, '12', null, true, [12], 9_007_199_254_740_992]) answers.push(JSON.stringify({ ...good, [field]: value }));
+    const { [field as keyof typeof good]: _left, ...rest } = good;
+    answers.push(JSON.stringify(rest));
+  }
+  for (const body of answers) {
+    const e = await thrownBy(() => makeApi(answering(200, body).fetchFn).potStats());
+    assert.ok(e instanceof ApiError, body);
+    assert.equal(e.reason, 'unavailable', body);
+    assert.equal(e.status, 200, body);
+  }
+});
+
+test('potStats: a refusal, a page from in between and no answer each come out as their word', async () => {
+  for (const code of ERROR_CODES) {
+    const e = await thrownBy(() => makeApi(refusing(code).fetchFn).potStats());
+    assert.ok(e instanceof ApiError, code);
+    assert.equal(e.status, ERROR_STATUS[code]);
+    assert.equal(failureOf(e), code);
+  }
+  const cases: [fetchFn: FakeFetch, expect: string][] = [
+    [answering(429, 'error code: 1015', 'text/plain').fetchFn, 'limit'],
+    [answering(502, '<html>Bad gateway</html>', 'text/html').fetchFn, 'unavailable'],
+    // These paths ask the bots, not the chain: a 404 that is not the Worker's own is no "not found".
+    [answering(404, '<html>Not found</html>', 'text/html').fetchFn, 'unavailable'],
+    [answering(429, JSON.stringify({ error: 'a code from the future' })).fetchFn, 'unavailable'],
+    [() => Promise.reject(new TypeError('fetch failed')), 'network'],
+    [() => Promise.reject(new DOMException('took too long', 'TimeoutError')), 'network'],
+    [() => Promise.reject(new Error('a bug')), 'unavailable'],
+  ];
+  for (const [fetchFn, expect] of cases) {
+    assert.equal(failureOf(await thrownBy(() => makeApi(fetchFn).potStats())), expect, expect);
+  }
+});
+
 // -- refusals from the faucet and the pot -----------------------------------------
 
 test('every refusal code comes out as an ApiError with that code', async () => {

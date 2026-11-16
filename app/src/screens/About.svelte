@@ -11,7 +11,9 @@
   //
   //   - the network's facts come from the wallet's settings (info/facts.ts),
   //     with a line under the faucet's amount while the faucet is closed;
-  //   - "In this browser right now" says what is stored here at this moment;
+  //   - "In this browser right now" says what is stored here at this moment:
+  //     the wallet's record, and the note of the "Do it" steps where there
+  //     is one;
   //   - the list of what is counted is the contract's list of events, and
   //     the line above it says whether counting is switched on.
   //
@@ -36,26 +38,31 @@
   import Section from '../components/Section.svelte';
   import TextLink from '../components/TextLink.svelte';
   import { siteHome } from '../components/text.ts';
+  import { useDoit } from '../lib/doit/doit-context.ts';
   import { router } from '../lib/router.svelte.ts';
   import { useWallet } from '../lib/wallet-context.ts';
   import { strings } from '../strings/index.ts';
   import {
-    KEPT_KEYS,
     blocksText,
     countedEvents,
     faucetClosed,
     faucetText,
     keptNow,
+    keptNowLines,
     linkText,
   } from './info/facts.ts';
+  import { progressKept } from './doit/view.ts';
 
   const wallet = useWallet();
+  const doit = useDoit();
 
   let t = $derived(strings.about[router.lang]);
   let c = $derived(strings.common[router.lang]);
 
   /** What this browser holds for the page at this moment. */
   let kept = $derived(keptNow(wallet.status, wallet.record));
+  /** The same, in sentences: the wallet's record, and the note of the "Do it" steps where one is stored. */
+  let keptLines = $derived(kept === null ? null : keptNowLines(kept, progressKept(doit.read)));
 
   /** Whether the settings say that events are wanted. While they do not, the app sends none. */
   let counting = $derived(wallet.config.events);
@@ -68,6 +75,11 @@
   /** A page that exists in English only says so to a browser, as its link's words say so to a Spanish reader. */
   let english = $derived(router.lang === 'en' ? undefined : 'en');
 </script>
+
+<!-- Under the line about the wallet's record, when the note of the "Do it" steps is stored beside it. -->
+{#snippet alsoNote()}
+  <p data-testid="about-kept-note">{t.noteAlsoNow}</p>
+{/snippet}
 
 <Page title={t.title} titleName={c.linkAbout} lede={t.lede}>
   <Card tone="grey" title={t.shortTitle}>
@@ -126,9 +138,27 @@
         <li>{t.keepWords}</li>
       </ul>
       <p data-testid="about-kept-so">{t.keepSo}</p>
+      <!-- The note of the "Do it" steps, field by field. -->
+      <p data-testid="about-note">{t.keepNote}</p>
+      <ul data-testid="about-note-fields">
+        <li>{t.keepNoteSteps}</li>
+        <li>{t.keepNoteFollowing}</li>
+        <li>{t.keepNoteFrom}</li>
+        <li>{t.keepNoteWallet}</li>
+        <li>{t.keepNotePayment}</li>
+      </ul>
+      <p data-testid="about-note-never">{t.keepNoteNever}</p>
     </Prose>
-    {#if kept !== null}
-      <Notice kind="info" label={t.keepNowLabel} text={t[KEPT_KEYS[kept]]} data-testid="about-kept-now" data-kept={kept} />
+    {#if kept !== null && keptLines !== null}
+      <Notice
+        kind="info"
+        label={t.keepNowLabel}
+        text={t[keptLines.text]}
+        data-testid="about-kept-now"
+        data-kept={kept}
+        data-note={progressKept(doit.read) ? 'yes' : 'no'}
+        children={keptLines.also ? alsoNote : undefined}
+      />
     {/if}
   </Section>
 

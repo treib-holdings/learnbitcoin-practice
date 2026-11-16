@@ -23,6 +23,9 @@
   // here, and the wallet was replaced in another tab. This screen stays, so
   // it holds them and draws them at its top (read/ChooseAnswer.svelte).
   //
+  // One line near the foot points to the "Do it" steps, which are done in
+  // this wallet.
+  //
   // A restore ends here. For that one visit the screen says that the wallet
   // was restored and that its 12 words are now kept in this browser
   // (components/outcome.ts): the Overview would otherwise simply appear.
@@ -52,6 +55,7 @@
 
   let t = $derived(strings.wallet[router.lang]);
   let c = $derived(strings.common[router.lang]);
+  let d = $derived(strings.doit[router.lang]);
 
   let coins = $derived(wallet.chain.state?.coins ?? []);
   let body = $derived(overviewBody({ coins: coins.length, openedEmpty: wallet.openedEmpty }));
@@ -119,6 +123,12 @@
         </Section>
       {/if}
     {/if}
+
+    <!-- The steps that go with the main site's chapters are done in this wallet: one line, and the way to them. -->
+    <p class="text-pretty text-sm leading-relaxed text-ink-600" data-testid="overview-do">
+      {d.overviewLine}
+      <TextLink href={router.link({ name: 'do' })} data-testid="overview-do-link">{d.overviewLink}</TextLink>
+    </p>
 
     <!-- Which wallet this browser holds. In the list of causes above, the
          same two facts stand where they are spoken of, so they are not

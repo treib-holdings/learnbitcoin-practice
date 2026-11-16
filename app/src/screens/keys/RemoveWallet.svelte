@@ -11,6 +11,11 @@
   // words, or with its passkey if it was made with one, which this browser
   // cannot know; without either its practice coins are out of reach.
   //
+  // Removing the wallet leaves the note of the "Do it" steps where it is
+  // (the last step removes the wallet and has to know afterwards which one
+  // it was). So while this browser keeps such a note, the question says
+  // that it stays, what it can name, and where it is erased.
+  //
   // "Remove it" removes the wallet and goes Home, which says for that one
   // visit that the wallet was removed (components/outcome.ts): Home would
   // otherwise read as a first visit. "Keep it" closes the question. If another tab removed or replaced the wallet while the
@@ -32,18 +37,22 @@
   import Prose from '../../components/Prose.svelte';
   import Section from '../../components/Section.svelte';
   import TextLink from '../../components/TextLink.svelte';
+  import { useDoit } from '../../lib/doit/doit-context.ts';
   import { navigate, router } from '../../lib/router.svelte.ts';
   import { useWallet } from '../../lib/wallet-context.ts';
   import { strings } from '../../strings/index.ts';
+  import { progressKept } from '../doit/view.ts';
   import { afterRemove, removeBackKey, sameWallet } from './settings-flow.ts';
   import { answerCounts } from './taps.ts';
 
   const wallet = useWallet();
+  const doit = useDoit();
 
   /** For the id that ties what brings the wallet back to "Remove it". */
   const id = $props.id();
 
   let t = $derived(strings.settings[router.lang]);
+  let d = $derived(strings.doit[router.lang]);
 
   /** The reader has pressed Remove, and is being asked whether they mean it. */
   let asking = $state(false);
@@ -150,6 +159,10 @@
             <!-- tabindex="-1": it takes focus from code only, so that the question is read out. -->
             <p bind:this={question} tabindex="-1" class="font-semibold text-ink-800 outline-none">{t.removeAsk}</p>
             <p id="{id}-back" data-testid="remove-back">{t[removeBackKey(wallet.record.kind)]}</p>
+            <!-- What stays in this browser when the wallet goes: said only while there is such a note. -->
+            {#if progressKept(doit.read)}
+              <p data-testid="remove-progress">{d.staysOnRemove}</p>
+            {/if}
             <p><TextLink href={router.link({ name: 'backup' })}>{t.removeShowWords}</TextLink></p>
             <!-- Full-size buttons of one width on a phone, with room between
                  them: one of the two cannot be undone from this screen. What

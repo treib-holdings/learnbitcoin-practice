@@ -23,6 +23,7 @@ import {
   type CountedEvent,
   type ErrorCode,
   type Lang,
+  type PotStats,
 } from '@learnbitcoin/practice-contract';
 import {
   entropyFromPrf,
@@ -520,6 +521,8 @@ export class FakeNetwork {
   /** Every faucet request that reached it. */
   readonly faucetAsked: { address: string; token: string }[] = [];
   potAddress: string = POT;
+  /** What the pot's counter says when asked (GET /api/pot/stats). A test sets it. */
+  potStats: PotStats = { passedOn: 0, waiting: 0, handedOn: 0 };
   /** A signed payment the node refuses, by hex. */
   readonly refusing = new Map<string, { code: ErrorCode; detail?: string }>();
 
@@ -726,6 +729,7 @@ export class FakeNetwork {
       return json({ txid: this.pay(asked.address, this.faucetSats), amountSats: this.faucetSats, potTxid: null });
     }
     if (method === 'POST' && path === API.potAddress) return json({ address: this.potAddress });
+    if (method === 'GET' && path === API.potStats) return json(this.potStats);
     return refusal('not_found');
   }
 

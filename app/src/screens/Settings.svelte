@@ -9,8 +9,10 @@
   //       first address.
   //   What this browser keeps      the wallet's public key, always, so
   //       anyone who uses this browser can see the wallet; the 12 words
-  //       only for a wallet it opens without a passkey; and whether the
-  //       browser agreed to keep this page's data, where the wallet knows.
+  //       only for a wallet it opens without a passkey; the note of the
+  //       "Do it" steps, while there is one, with what it can name and that
+  //       it stays when the wallet is removed; and whether the browser
+  //       agreed to keep this page's data, where the wallet knows.
   //   Public descriptors           the receive and the change descriptor,
   //       each shown whole and with a copy button: another wallet program
   //       can watch this wallet with them, without the 12 words.
@@ -35,17 +37,21 @@
   import ReloadButton from '../components/wallet/ReloadButton.svelte';
   import WalletFrame from '../components/wallet/WalletFrame.svelte';
   import { SAFARI_KEEPS_DAYS } from '../components/wallet/frame.ts';
+  import { useDoit } from '../lib/doit/doit-context.ts';
   import { fill } from '../lib/format.ts';
   import { router } from '../lib/router.svelte.ts';
   import { useWallet } from '../lib/wallet-context.ts';
   import { strings } from '../strings/index.ts';
+  import { progressKept } from './doit/view.ts';
   import RemoveWallet from './keys/RemoveWallet.svelte';
   import { hereSince, keepsLines } from './keys/settings-flow.ts';
 
   const wallet = useWallet();
+  const doit = useDoit();
 
   let lang = $derived(router.lang);
   let t = $derived(strings.settings[lang]);
+  let d = $derived(strings.doit[lang]);
   let c = $derived(strings.common[lang]);
   let w = $derived(strings.wallet[lang]);
 
@@ -122,6 +128,10 @@
               <li data-testid="keeps-words">{t.keepsWords}</li>
             {:else}
               <li data-testid="keeps-no-words">{t.keepsPasskey}</li>
+            {/if}
+            <!-- Kept beside the wallet, and not removed with it: listed while there is such a note. -->
+            {#if progressKept(doit.read)}
+              <li data-testid="keeps-progress">{d.keepsProgress}</li>
             {/if}
           </ul>
           <!-- What the browser said about keeping it, where the wallet knows. -->

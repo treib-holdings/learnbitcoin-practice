@@ -184,6 +184,7 @@ test('the first scan: nothing is shown until it has finished, and never a total 
     historyError: null,
     receive: null,
     notice: null,
+    lastSent: null,
   });
 
   const first = w.chain.open(A.xpub);
@@ -355,6 +356,7 @@ test('a scan of a wallet that has left the page shows nothing', async () => {
     historyError: null,
     receive: null,
     notice: null,
+    lastSent: null,
   });
 
   // Replaced by another wallet while its scan was on its way: only the new wallet's coins are shown.
@@ -413,19 +415,21 @@ test('nothing polls unless the tab is in view and a wallet screen is open', asyn
 
   // No screen told yet, then screens that show no wallet.
   await w.advance(60_000);
-  for (const screen of ['home', 'new', 'restore', 'sparrow', 'about', 'not-found'] as const) {
+  // (The list of "Do it" steps is one of them: it shows no coin and no payment.)
+  for (const screen of ['home', 'new', 'restore', 'sparrow', 'about', 'do', 'not-found'] as const) {
     w.chain.watch(screen);
     await w.advance(60_000);
     assert.deepEqual(w.timers.dueIn(), [], screen);
   }
   assert.equal(w.net.requests.length, 0);
 
-  // Every wallet screen polls the height, every 15 s.
-  for (const screen of ['wallet', 'coins', 'send', 'activity', 'tx', 'backup', 'settings'] as const) {
+  // Every wallet screen polls the height, every 15 s. So does a step of "Do it", while a wallet is here.
+  for (const screen of ['wallet', 'coins', 'send', 'activity', 'tx', 'backup', 'settings', 'step'] as const) {
     w.chain.watch(null);
     w.chain.watch(screen);
     await w.settle();
-    assert.deepEqual(w.timers.dueIn(), [15_000], screen);
+    // This wallet has never seen a coin: a step's screen also looks at its receive address, as Receive does, until one comes.
+    assert.deepEqual(w.timers.dueIn(), screen === 'step' ? [5_000, 15_000] : [15_000], screen);
   }
   w.chain.watch(null);
   await w.settle();
@@ -487,6 +491,180 @@ test('a light refresh that finds a payment at an unused address is followed by a
   assert.deepEqual(w.timers.dueIn(), [15_000], 'and the poll goes on');
 });
 
+test('a step of "Do it" reads the chain and the list as a wallet screen does, and the list of steps reads nothing', async () => {
+  const w = await opened((net) => net.pay(receive(0), 100_000, { confirmed: true }));
+
+  // The list of steps: nothing, however long it stays open. It shows no coin and no payment.
+  w.chain.watch('do');
+  await w.advance(120_000);
+  assert.equal(w.net.requests.length, 0);
+  assert.deepEqual(w.timers.dueIn(), []);
+  assert.equal(w.chain.view().history, null, 'the list of transactions is not read for it either');
+
+  // One step: a look at once, as on entering a wallet screen, and the list of transactions,
+  // in which a step looks for the payment it waits for.
+  w.chain.watch('step');
+  await w.settle();
+  assert.deepEqual([w.net.count(TIP), w.net.count(TXS), w.net.requests.length], [1, 1, 2], 'the height, and the list of the one address in use');
+  assert.deepEqual(w.chain.view().history?.map((tx) => [tx.direction, tx.confirmed]), [['received', true]]);
+  assert.deepEqual(w.timers.dueIn(), [15_000]);
+
+  // What a step costs while nothing happens: four reads of the height a minute, and nothing else.
+  w.reset();
+  await w.advance(60_000);
+  assert.deepEqual([w.net.count(TIP), w.net.requests.length], [4, 4]);
+
+  // A payment arrives and waits; nothing is asked about it until the chain grows. Then, for that
+  // block: one light refresh (the coins of the address in use, and a look at the five next
+  // addresses of each chain) and one read of the list.
+  w.net.pay(receive(0), 5_000);
+  w.reset();
+  await w.advance(15_000);
+  assert.deepEqual([w.net.count(TIP), w.net.requests.length], [1, 1], 'the height has not moved');
+  w.net.mine();
+  w.reset();
+  await w.advance(15_000);
+  assert.deepEqual([w.net.count(TIP), w.net.count(UTXO), w.net.count(ADDRESS), w.net.count(TXS)], [1, 1, 10, 1]);
+  assert.equal(w.net.requests.length, 13);
+  assert.deepEqual(w.chain.view().history?.map((tx) => [tx.net, tx.confirmed]), [
+    [5_000n, true],
+    [100_000n, true],
+  ]);
+  assert.deepEqual(w.chain.view().notice, { id: 1, kind: 'coins-arrived', sats: 5_000n });
+  // A block that changes nothing for this wallet: the light refresh, and no read of the list.
+  w.net.mine();
+  w.reset();
+  await w.advance(15_000);
+  assert.deepEqual([w.net.count(TIP), w.net.count(UTXO), w.net.count(ADDRESS), w.net.count(TXS)], [1, 1, 10, 0]);
+
+  // A payment of the wallet's own that waits: the block that takes it in has the list read again, once.
+  const payment = signed(w.chain, { to: SOMEONE, amount: 60_000n, feeRate: 2n });
+  w.net.willTake(payment);
+  assert.equal((await w.chain.broadcast(payment)).ok, true);
+  await w.settle();
+  assert.deepEqual(w.chain.view().history?.map((tx) => [tx.txid === payment.txid, tx.confirmed])[0], [true, false]);
+  w.net.mine();
+  w.reset();
+  await w.advance(15_000);
+  assert.equal(w.chain.view().history?.find((tx) => tx.txid === payment.txid)?.confirmed, true, 'seen with no move and no reload');
+  // Two addresses hold the wallet's history now, the one it was paid at and its change address: each list is read once.
+  assert.equal(w.net.count(TXS), 2);
+  assert.equal(w.net.count(TIP), 1);
+
+  // A read that fails is tried again by itself, as on a wallet screen: after 15 seconds.
+  w.net.down = 'network';
+  await w.advance(15_000);
+  assert.deepEqual([w.view().error, w.view().retryAt, w.timers.dueIn()], ['network', w.clock.ms + 15_000, [15_000]]);
+  w.net.down = null;
+  await w.advance(15_000);
+  assert.deepEqual([w.view().error, w.timers.dueIn()], [null, [15_000]]);
+
+  // Hidden: nothing. Back in view: one look, at once.
+  w.show(false);
+  w.reset();
+  await w.advance(120_000);
+  assert.equal(w.net.requests.length, 0);
+  w.show(true);
+  await w.settle();
+  assert.deepEqual(w.net.requests, ['GET /api/esplora/blocks/tip/height']);
+
+  // From the step to its list of steps and back: the list reads nothing, the step looks at once.
+  w.chain.watch('do');
+  w.reset();
+  await w.advance(60_000);
+  assert.equal(w.net.requests.length, 0);
+  w.chain.watch('step');
+  await w.settle();
+  assert.deepEqual(w.net.requests, ['GET /api/esplora/blocks/tip/height']);
+});
+
+test('a step of "Do it" reads nothing while no wallet is here, and begins when one arrives', async () => {
+  // The first step is "make a wallet": its screen is open in a browser that has none.
+  const w = watching();
+  w.chain.watch('step');
+  await w.advance(120_000);
+  assert.equal(w.net.requests.length, 0);
+  assert.deepEqual(w.timers.dueIn(), []);
+  w.show(false);
+  w.show(true);
+  await w.settle();
+  assert.equal(w.net.requests.length, 0, 'not on coming back into view either');
+  assert.deepEqual(await w.chain.refresh(), undefined);
+  assert.equal(w.net.requests.length, 0);
+
+  // A wallet arrives (made in this page, or in another tab): its first scan, then the polls.
+  w.net.pay(receive(0), 100_000, { confirmed: true });
+  void w.chain.open(A.xpub);
+  await w.settle();
+  assert.equal(stateOf(w.chain).confirmed, 100_000n);
+  assert.equal(w.chain.view().history?.length, 1, 'and the list, for the step that is open');
+  assert.deepEqual(w.timers.dueIn(), [15_000]);
+
+  // It leaves again (removed here or elsewhere): everything stops, with the step still open.
+  w.chain.close();
+  w.reset();
+  await w.advance(120_000);
+  assert.equal(w.net.requests.length, 0);
+  assert.deepEqual(w.timers.dueIn(), []);
+});
+
+test('a step of "Do it" watches the receive address while the wallet has never seen a coin, and stops at the first one', async () => {
+  // The reader is back on "Hold some" straight from the faucet, and the chain's index has not listed the payment yet.
+  const w = await opened();
+  const shown = w.chain.view().receive;
+  assert.ok(shown);
+  const SHOWN = new RegExp(`GET /api/esplora/address/${shown.address}$`);
+  w.chain.watch('step');
+  await w.settle();
+  w.reset();
+  assert.deepEqual(w.timers.dueIn(), [5_000, 15_000], 'the address, as on Receive, beside the height');
+  // Nothing yet: one small request every five seconds.
+  await w.advance(15_000);
+  assert.deepEqual([w.net.count(SHOWN), w.net.count(TIP), w.net.requests.length], [3, 1, 4]);
+
+  // The payment is listed, unconfirmed, and no block has come. Five seconds later the wallet has the coin:
+  // the step can tick "coins arrived", and show the coin waiting for its block.
+  w.reset();
+  w.net.pay(shown.address, 100_000);
+  await w.advance(5_000);
+  const state = stateOf(w.chain);
+  assert.deepEqual([state.confirmed, state.unconfirmed, state.coins.length, w.view().tip], [0n, 100_000n, 1, 100]);
+  assert.equal(w.net.count(TIP) > 0 && w.net.count(UTXO) > 0, true, 'a look at the coins followed');
+
+  // From the first coin on, the step costs what any step costs: the height four times a minute, and no address.
+  assert.equal(w.timers.dueIn().length, 1);
+  w.reset();
+  await w.advance(60_000);
+  assert.deepEqual([w.net.count(TIP), w.net.requests.length], [4, 4]);
+
+  // The list of steps reads nothing for a wallet that waits for its first coin, either.
+  const list = await opened();
+  list.chain.watch('do');
+  await list.advance(60_000);
+  assert.equal(list.net.requests.length, 0);
+  // And while the tab is hidden, the step's screen asks nothing.
+  list.chain.watch('step');
+  await list.settle();
+  list.show(false);
+  list.reset();
+  await list.advance(60_000);
+  assert.equal(list.net.requests.length, 0);
+
+  // A wallet that had a coin and spent it whole holds none, and is not waiting for its first: its address was paid.
+  const spent = await opened((net) => net.pay(receive(0), 100_000, { confirmed: true }));
+  const all = signed(spent.chain, { to: SOMEONE, amount: 'all', feeRate: 2n });
+  spent.net.willTake(all);
+  assert.equal((await spent.chain.broadcast(all)).ok, true);
+  await spent.settle();
+  spent.net.mine();
+  spent.chain.watch('step');
+  await spent.settle();
+  assert.equal(stateOf(spent.chain).coins.length, 0);
+  spent.reset();
+  await spent.advance(60_000);
+  assert.equal(spent.net.count(ADDRESS), 0, 'no address is read while nothing moves');
+});
+
 test('a hidden tab reads nothing; back in view it looks once, at once', async () => {
   const w = await opened();
   w.chain.watch('receive');
@@ -538,7 +716,7 @@ test('a hidden tab reads nothing; back in view it looks once, at once', async ()
   assert.equal(stateOf(f.chain).coins.length, 0);
 });
 
-test('Receive: the address on screen is read every 5 s, and only there', async () => {
+test('Receive: the address on screen is read every 5 s, and on no other screen of the wallet', async () => {
   const w = await opened();
   const shown = w.chain.view().receive;
   assert.ok(shown);
@@ -1847,6 +2025,124 @@ test('broadcast: a refusal comes back with its code and the node\'s own words, a
   w.net.down = 'network';
   assert.deepEqual(await w.chain.broadcast(payment), { ok: false, reason: 'network', detail: null });
   assert.deepEqual(w.events, []);
+});
+
+test('lastSent: the payment this page last sent, whether it went to the pot, and when; gone when another wallet is here', async () => {
+  const w = await opened((net) => net.pay(receive(0), 100_000, { confirmed: true }));
+  assert.equal(w.chain.view().lastSent, null);
+  /** Each view in which the last payment changed, with the notice that stood beside it. */
+  const seen: string[] = [];
+  let last = w.chain.view().lastSent;
+  w.chain.subscribe(() => {
+    const now = w.chain.view();
+    if (now.lastSent !== last) seen.push(`${now.lastSent?.txid.slice(0, 8) ?? 'null'} beside ${now.notice?.kind ?? 'nothing'}`);
+    last = now.lastSent;
+  });
+
+  // An ordinary payment. Noted at the moment it is counted, with the page's clock.
+  w.clock.ms += 7_000;
+  const first = signed(w.chain, { to: SOMEONE, amount: 10_000n, feeRate: 2n });
+  w.net.willTake(first);
+  assert.equal((await w.chain.broadcast(first)).ok, true);
+  assert.deepEqual(w.chain.view().lastSent, { txid: first.txid, toPot: false, at: w.clock.ms });
+  assert.deepEqual(w.events, ['Payment: sent']);
+  await w.settle();
+  const noted = w.chain.view().lastSent;
+
+  // A refused payment was not sent: nothing changes.
+  const refused = signed(w.chain, { to: SOMEONE, amount: 2_000n, feeRate: 2n });
+  w.net.refusing.set(refused.hex, { code: 'dust', detail: 'dust' });
+  assert.equal((await w.chain.broadcast(refused)).ok, false);
+  assert.equal(w.chain.view().lastSent, noted, 'the very same object: nothing is drawn again');
+  // No answer, and the network does not know it: not sent either.
+  w.net.down = 'network';
+  assert.equal((await w.chain.broadcast(refused)).ok, false);
+  w.net.down = null;
+  assert.equal(w.chain.view().lastSent, noted);
+  // The same payment handed in again is one payment: the note keeps its first moment.
+  w.clock.ms += 60_000;
+  assert.deepEqual(await w.chain.broadcast(first), { ok: true, txid: first.txid });
+  assert.equal(w.chain.view().lastSent, noted);
+
+  // To an address the pot handed out in this page: "Pass it on".
+  assert.deepEqual(await w.chain.potAddress(), { ok: true, address: POT });
+  w.clock.ms += 5_000;
+  const gift = signed(w.chain, { to: POT, amount: 20_000n, feeRate: 2n });
+  w.net.willTake(gift);
+  assert.equal((await w.chain.broadcast(gift)).ok, true);
+  assert.deepEqual(w.chain.view().lastSent, { txid: gift.txid, toPot: true, at: w.clock.ms });
+  assert.deepEqual(w.events, ['Payment: sent', 'Payment: refused', 'Payment: sent-to-pot']);
+  await w.settle();
+  // Polls, blocks and a full scan leave it alone.
+  w.chain.watch('wallet');
+  w.net.mine();
+  await w.advance(30_000);
+  await w.chain.refresh();
+  assert.deepEqual(w.chain.view().lastSent, { txid: gift.txid, toPot: true, at: w.clock.ms - 30_000 });
+
+  // It is shown in the same change as the "payment sent" notice: whoever reads one has the other.
+  assert.deepEqual(seen, [`${first.txid.slice(0, 8)} beside payment-sent`, `${gift.txid.slice(0, 8)} beside payment-sent`]);
+
+  // Another wallet in the page: its "last sent" is not the wallet's before it. And no wallet: none.
+  void w.chain.open(B.xpub);
+  assert.equal(w.chain.view().lastSent, null);
+  await w.settle();
+  assert.equal(w.chain.view().lastSent, null);
+  void w.chain.open(A.xpub);
+  await w.settle();
+  assert.equal(w.chain.view().lastSent, null, 'back again, it is still gone: it lived in memory, for that one stay');
+  const again = signed(w.chain, { to: SOMEONE, amount: 3_000n, feeRate: 2n });
+  w.net.willTake(again);
+  assert.equal((await w.chain.broadcast(again)).ok, true);
+  assert.equal(w.chain.view().lastSent?.txid, again.txid);
+  w.chain.close();
+  assert.equal(w.chain.view().lastSent, null);
+  assert.deepEqual(w.unlisted, []);
+});
+
+test('lastSent: a payment that goes out as the wallet leaves the page is not noted for the wallet that comes', async () => {
+  const w = await opened((net) => net.pay(receive(0), 100_000, { confirmed: true }));
+  const payment = signed(w.chain, { to: SOMEONE, amount: 60_000n, feeRate: 2n });
+  w.net.willTake(payment);
+  const release = w.net.hold();
+  const sending = w.chain.broadcast(payment);
+  // Another wallet is put in its place while the payment is on its way.
+  void w.chain.open(B.xpub);
+  release();
+  assert.deepEqual(await sending, { ok: true, txid: payment.txid });
+  await w.settle();
+  assert.deepEqual(w.events, ['Payment: sent'], 'it was sent, and counted');
+  assert.equal(w.chain.view().lastSent, null, 'but it is not the last payment of the wallet that is here now');
+});
+
+test('potStats: the pot\'s three counts, or why they could not be had; one request, and nothing kept', async () => {
+  const w = await opened();
+  w.net.potStats = { passedOn: 128, waiting: 3, handedOn: 125 };
+  assert.deepEqual(await w.chain.potStats(), { ok: true, stats: { passedOn: 128, waiting: 3, handedOn: 125 } });
+  assert.deepEqual(w.net.requests, ['GET /api/pot/stats']);
+  // Asked again, it asks again: the wallet keeps no count.
+  w.net.potStats = { passedOn: 129, waiting: 4, handedOn: 125 };
+  assert.deepEqual(await w.chain.potStats(), { ok: true, stats: { passedOn: 129, waiting: 4, handedOn: 125 } });
+  assert.equal(w.net.requests.length, 2);
+  // It needs no wallet: the pot is everybody's.
+  const none = watching();
+  assert.deepEqual(await none.chain.potStats(), { ok: true, stats: { passedOn: 0, waiting: 0, handedOn: 0 } });
+
+  const failures: [Failure, string][] = [
+    ['limit', 'limit'],
+    ['unavailable', 'unavailable'],
+    ['network', 'network'],
+    ['page', 'unavailable'],
+    ['garbage', 'unavailable'],
+    ['not_found', 'not_found'],
+  ];
+  for (const [down, reason] of failures) {
+    w.net.down = down;
+    assert.deepEqual(await w.chain.potStats(), { ok: false, reason }, down);
+  }
+  w.net.down = null;
+  // Nothing of it is shown by the wallet, counted or announced.
+  assert.deepEqual([w.chain.view().notice, w.events, w.unlisted], [null, [], []]);
 });
 
 test('broadcast: a payment sent as the wallet leaves the page is still reported sent, and applied to nothing', async () => {

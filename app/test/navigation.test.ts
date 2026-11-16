@@ -4,7 +4,7 @@
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { LANGS, SCREENS } from '@learnbitcoin/practice-contract';
+import { LANGS, SCREENS, STEPS, type ScreenName } from '@learnbitcoin/practice-contract';
 import {
   entryIndex,
   judgeClick,
@@ -19,6 +19,13 @@ import { parsePath, pathFor, type Route } from '../src/lib/router.ts';
 const ORIGIN = 'https://practice.learnbitcoin.com';
 const HERE = `${ORIGIN}/wallet`;
 const TXID = '6c0443f5'.padEnd(64, 'a');
+
+/** A route for a screen name: a transaction's screen with an ID, a step's screen with one of the six steps. */
+function routeOf(name: ScreenName): Route {
+  if (name === 'tx') return { name, txid: TXID };
+  if (name === 'step') return { name, id: 'waiting-room' };
+  return { name } as Route;
+}
 
 /** A plain single left click, with what a test changes laid over it. */
 function click(changes: Partial<ClickFacts> = {}): ClickFacts {
@@ -149,7 +156,7 @@ test('once the bot check has loaded, links to screens are left to the browser, w
 test('every screen of the app, in both languages, is taken over', () => {
   for (const lang of LANGS) {
     for (const name of SCREENS) {
-      const route: Route = name === 'tx' ? { name, txid: TXID } : ({ name } as Route);
+      const route: Route = routeOf(name);
       const path = pathFor(route, lang);
       // Seen from About. Its own link is a "go" as well: navigate then finds there is nothing to do.
       const verdict = judgeClick(click(), link(path), `${ORIGIN}/about`, false);
@@ -256,7 +263,7 @@ test('Back and Forward: once the bot check has loaded, they load a page', () => 
 test('the language switch goes to the same screen in the other language', () => {
   for (const name of SCREENS) {
     if (name === 'not-found') continue;
-    const route: Route = name === 'tx' ? { name, txid: TXID } : ({ name } as Route);
+    const route: Route = routeOf(name);
     const en = pathFor(route, 'en');
     const es = pathFor(route, 'es');
     assert.equal(pathInLang(en, 'es'), es, name);
@@ -277,9 +284,16 @@ test('a path that is no screen keeps its text when the language changes', () => 
   assert.equal(pathInLang('/es/nothing/here', 'en'), '/nothing/here');
   assert.equal(pathInLang('/es/nothing/here', 'es'), '/es/nothing/here');
   assert.equal(pathInLang('/nothing/here', 'en'), '/nothing/here');
-  // The paths kept for the guided steps of a later phase.
+  // Text after /do/ that is no step: still no screen, and it keeps its text.
   assert.equal(pathInLang('/do/first-payment', 'es'), '/es/do/first-payment');
   assert.equal(pathInLang('/es/do/first-payment', 'en'), '/do/first-payment');
+  // The list of steps and each of the six steps are screens, and keep their step across the switch.
+  assert.equal(pathInLang('/do', 'es'), '/es/do');
+  assert.equal(pathInLang('/es/do/', 'en'), '/do');
+  for (const id of STEPS) {
+    assert.equal(pathInLang(`/do/${id}`, 'es'), `/es/do/${id}`);
+    assert.equal(pathInLang(`/es/do/${id}`, 'en'), `/do/${id}`);
+  }
   // A path that only looks like Spanish is English.
   assert.equal(pathInLang('/essay', 'es'), '/es/essay');
   // Still not found, in the language asked for.

@@ -26,6 +26,12 @@
   interface Props {
     /** The screen's heading. */
     title: string;
+    /**
+     * A test hook (data-testid) for the heading, on the one kind of screen
+     * whose scenarios read it by name: a "Do it" step, whose heading is the
+     * step's title.
+     */
+    titleHook?: string;
     /** The screen's name in the document title, when it should differ from the heading. */
     titleName?: string;
     /**
@@ -42,7 +48,7 @@
     children?: Snippet;
   }
 
-  let { title, titleName, documentTitle, eyebrow, lede, above, children }: Props = $props();
+  let { title, titleHook, titleName, documentTitle, eyebrow, lede, above, children }: Props = $props();
 
   let t = $derived(strings.common[router.lang]);
 </script>
@@ -61,6 +67,7 @@
   <!-- tabindex="-1": the heading takes focus from code only, never from the Tab key, so it shows no outline. -->
   <h1
     tabindex="-1"
+    data-testid={titleHook}
     class="break-words text-balance text-4xl font-bold leading-tight tracking-tight outline-none md:text-5xl"
   >
     {title}

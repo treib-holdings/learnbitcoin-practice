@@ -11,9 +11,12 @@
   // (read/read.ts, afterLookup):
   //
   //   found      which way the coins went and how much, in words; whether
-  //              it is in a block; what went in and what came out; the fee,
-  //              the size and the fee rate; whether it can still be
-  //              replaced; its ID, with a copy button; and a link to the
+  //              it is in a block; "What just happened", for a transaction
+  //              that touches this wallet: what was spent, what went where,
+  //              the change and the fee, in plain sentences
+  //              (read/Explained.svelte); what went in and what came out;
+  //              the fee, the size and the fee rate; whether it can still
+  //              be replaced; its ID, with a copy button; and a link to the
   //              same transaction on the practice explorer
   //   waiting    the faucet or a payment of this page returned the ID a
   //              moment ago and the network does not list it yet: the
@@ -54,6 +57,7 @@
   import { focusHeading, router } from '../lib/router.svelte.ts';
   import { useWallet } from '../lib/wallet-context.ts';
   import { strings } from '../strings/index.ts';
+  import Explained from './read/Explained.svelte';
   import {
     WAIT_LIMIT_MS,
     afterLookup,
@@ -305,6 +309,9 @@
           {/if}
           <p class="text-pretty leading-relaxed text-ink-600" data-testid="tx-status">{status}</p>
         </div>
+
+        <!-- What the table under it means for this wallet, in sentences. Nothing for another wallet's transaction. -->
+        <Explained view={shows.view} />
 
         <Section title={t.txPartsTitle}>
           <TxParts view={shows.view} />

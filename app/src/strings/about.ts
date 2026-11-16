@@ -6,7 +6,8 @@
 // Every sentence here that says what is stored, sent or seen is a claim
 // about the code, and has to stay true of it. Where each one comes from:
 //
-//   what this browser keeps   src/lib/keystore.ts (the one record, and what a record holds)
+//   what this browser keeps   src/lib/keystore.ts (the wallet's record, and what a record holds),
+//                             src/lib/doit/progress.ts (the note of the "Do it" steps, and its fields)
 //   passkey wallets           src/lib/passkey.ts, wallet/src/keys.ts
 //   what our server sees      worker/src/handler.ts (the log line, and which requests write one),
 //                             worker/src/reader-key.ts (the limit per reader)
@@ -79,7 +80,7 @@ export const en = {
   // -- what this browser keeps --
   keepTitle: 'What this browser keeps',
   keepBody:
-    "One record, in this browser's storage for this site. Nothing else is kept: no cookies set by us, and nothing in any other kind of browser storage.",
+    'At most two things, in this browser\'s storage for this site: the record of the wallet, and a note of your "Do it" progress once you have opened a step. Nothing else is kept: no cookies set by us, and nothing in any other kind of browser storage.',
   keepPublic:
     "Always in the record: the wallet's public key. With it the page lists the wallet's addresses and coins, and it cannot spend them. The wallet fingerprint, the first address and the time this browser began to keep the wallet are stored beside it.",
   keepPasskey:
@@ -88,9 +89,24 @@ export const en = {
     'For a wallet made without a passkey, and for any wallet restored here from its 12 words: the 12 words, as plain text, not encrypted.',
   keepSo:
     'So anyone who uses this browser can see the wallet. If its 12 words are stored here, they can also spend from it.',
+  // The note of the "Do it" steps: one line for each group of its fields (src/lib/doit/progress.ts, StepNote and Progress).
+  keepNote: 'The note of your "Do it" progress holds:',
+  keepNoteSteps: 'Which steps you have opened, which parts of each are ticked, and the time each step was done.',
+  keepNoteFollowing: 'Which step you are following, and when you last followed it.',
+  keepNoteFrom: 'The page of LearnBitcoin you came to a step from, so that "Back to the chapter" leads there.',
+  keepNoteWallet:
+    'For the two steps about the 12 words: the wallet fingerprint of the wallet they were checked for and, from the drill on, whether this browser opened that wallet with a passkey or with its words.',
+  keepNotePayment:
+    "While a step waits for a payment: that payment's transaction ID and the time it was sent. Both are erased when the step is done.",
+  keepNoteNever:
+    'The note never holds one of the 12 words, a key or an answer you typed. Removing the wallet leaves it in place: "Forget my progress" on the Do it screen erases it.',
   /** The label of the line that says what is stored here at this moment. One of the six lines below follows it. */
   keepNowLabel: 'In this browser right now',
   keepNowNone: 'Nothing. This browser has no practice wallet.',
+  /** In its place, when no wallet is here and the note of the "Do it" steps is. */
+  noteOnlyNow: 'No practice wallet. This browser keeps only the note of your "Do it" progress.',
+  /** Under any of the lines below, when the note is stored beside what they name. */
+  noteAlsoNow: 'This browser also keeps the note of your "Do it" progress.',
   keepNowPasskey: 'The record of a wallet that this browser opens with a passkey. Its 12 words are not stored.',
   keepNowWords: 'The record of a wallet kept with its 12 words, as plain text.',
   keepNowUnreadable: "Something is stored where the wallet's record goes, and this page cannot read it.",
@@ -114,7 +130,7 @@ export const en = {
     "The wallet asks our server which coins its addresses hold, and sends its payments through it. So the server sees the wallet's addresses and payments, and the IP address each request comes from. Any wallet that asks someone else's server shares the same.",
   serverLimit: 'It uses the IP address to slow down anyone who asks too fast.',
   serverLog:
-    "When the page asks about an address, a transaction or the height of the chain, the server writes nothing down, unless something on our side is broken. For every other request (the page's settings, the faucet, the address of the pot, a payment being sent, a count) it writes one line: what kind of request it was, how it ended and how long it took. The line itself holds no address, no transaction ID and no IP address.",
+    "When the page asks about an address, a transaction or the height of the chain, the server writes nothing down, unless something on our side is broken. For every other request (the page's settings, the faucet, the address of the pot, the pot's totals, a payment being sent, a count) it writes one line: what kind of request it was, how it ended and how long it took. The line itself holds no address, no transaction ID and no IP address.",
   // What Cloudflare keeps beside a line was read off a line the deployed Worker wrote, as Workers
   // Logs stored it (worker/wrangler.jsonc, above "observability"): the web address, the time and
   // the request's IDs, and no IP address. "No IP address" is said of that place only: the last
@@ -147,6 +163,8 @@ export const en = {
   count_wordsShown:
     'The 12 words were shown, and whether this browser opens the wallet with a passkey. The words themselves are never part of a count.',
   count_walletRemoved: 'The wallet was removed from this browser, and whether this browser opened it with a passkey.',
+  count_doIt:
+    'A "Do it" step was done, and which of the six steps it was. Nothing about the wallet is part of the count.',
   countSent:
     'Our server passes each count on to Plausible, the service that adds them up, with the IP address the request came from and what your browser says it is: its name, its version and its system. Plausible uses those to tell a person from a robot and to count a visitor once a day. No ID is sent with a count.',
 
@@ -156,9 +174,9 @@ export const en = {
     "The faucet hands out practice coins to whoever asks, and a bot check keeps scripts from emptying it. The check is Cloudflare's, and it is the only code this page loads from another site. It loads only when you ask the faucet for coins.",
   botSees:
     'It examines your browser to tell a person from a script, and it is given the address the coins are for.',
-  /** What its code could read beside that, for every kind of wallet: the record, and so the public key. */
+  /** What its code could read beside that, for every kind of wallet: the record, and so the public key; and the note of the steps, kept in the same storage. */
   botReads:
-    "Its code runs in this page, so it could also read the record this browser keeps for the wallet. The record holds the wallet's public key, and with that every address the wallet has and will have.",
+    'Its code runs in this page, so it could also read the record this browser keeps for the wallet. The record holds the wallet\'s public key, and with that every address the wallet has and will have. It could read the note of your "Do it" progress too.',
   /** What the lock does. No more is promised: see botPasskeyStill. */
   botPasskey:
     "A wallet opened with a passkey is locked before the check loads, and it stays locked until the page is loaded again. So the check's code cannot read keys that were in the page before it.",
@@ -209,7 +227,7 @@ export const es: Record<keyof typeof en, string> = {
 
   keepTitle: 'Qué guarda este navegador',
   keepBody:
-    'Un solo registro, en el almacenamiento de este navegador para este sitio. No se guarda nada más: ninguna cookie puesta por nosotros, y nada en ningún otro tipo de almacenamiento del navegador.',
+    'Como mucho dos cosas, en el almacenamiento de este navegador para este sitio: el registro de la billetera, y una nota de tu progreso de "Hazlo" una vez que abres un paso. No se guarda nada más: ninguna cookie puesta por nosotros, y nada en ningún otro tipo de almacenamiento del navegador.',
   keepPublic:
     'Siempre en el registro: la clave pública de la billetera. Con ella la página lista las direcciones y las monedas de la billetera, y no puede gastarlas. Junto a ella se guardan la huella de la billetera, la primera dirección y el momento en que este navegador empezó a guardar la billetera.',
   keepPasskey:
@@ -218,8 +236,20 @@ export const es: Record<keyof typeof en, string> = {
     'En una billetera creada sin llave de acceso, y en cualquier billetera restaurada aquí desde sus 12 palabras: las 12 palabras, como texto simple, sin cifrar.',
   keepSo:
     'Así que cualquiera que use este navegador puede ver la billetera. Si sus 12 palabras están guardadas aquí, también puede gastar sus monedas.',
+  keepNote: 'La nota de tu progreso de "Hazlo" contiene:',
+  keepNoteSteps: 'Qué pasos abriste, qué partes de cada uno están marcadas, y el momento en que se terminó cada paso.',
+  keepNoteFollowing: 'Qué paso estás siguiendo, y cuándo lo seguiste por última vez.',
+  keepNoteFrom: 'La página de LearnBitcoin desde la que llegaste a un paso, para que "Volver al capítulo" lleve ahí.',
+  keepNoteWallet:
+    'En los dos pasos sobre las 12 palabras: la huella de la billetera para la que se comprobaron y, desde el ejercicio en adelante, si este navegador abría esa billetera con llave de acceso o con sus palabras.',
+  keepNotePayment:
+    'Mientras un paso espera un pago: el txid de ese pago y el momento en que se envió. Los dos se borran cuando el paso se termina.',
+  keepNoteNever:
+    'La nota nunca contiene ninguna de las 12 palabras, ninguna clave ni ninguna respuesta que hayas escrito. Quitar la billetera la deja en su lugar: la borra "Olvidar mi progreso" en la pantalla Hazlo.',
   keepNowLabel: 'En este navegador, ahora mismo',
   keepNowNone: 'Nada. Este navegador no tiene billetera de práctica.',
+  noteOnlyNow: 'Ninguna billetera de práctica. Este navegador guarda solo la nota de tu progreso de "Hazlo".',
+  noteAlsoNow: 'Este navegador también guarda la nota de tu progreso de "Hazlo".',
   keepNowPasskey: 'El registro de una billetera que este navegador abre con llave de acceso. Sus 12 palabras no están guardadas.',
   keepNowWords: 'El registro de una billetera guardada con sus 12 palabras, como texto simple.',
   keepNowUnreadable: 'Hay algo guardado donde va el registro de la billetera, y esta página no puede leerlo.',
@@ -240,7 +270,7 @@ export const es: Record<keyof typeof en, string> = {
     'La billetera le pregunta a nuestro servidor qué monedas tienen sus direcciones, y envía sus pagos a través de él. Así que el servidor ve las direcciones y los pagos de la billetera, y la dirección IP desde la que llega cada solicitud. Cualquier billetera que le pregunta al servidor de otro comparte lo mismo.',
   serverLimit: 'Usa la dirección IP para frenar a quien pregunta demasiado rápido.',
   serverLog:
-    'Cuando la página pregunta por una dirección, una transacción o la altura de bloque actual, el servidor no anota nada, salvo que algo de nuestro lado esté fallando. Por cada una de las demás solicitudes (la configuración de la página, el faucet, la dirección del fondo común, un pago que se envía, un conteo) anota una línea: qué tipo de solicitud fue, cómo terminó y cuánto tardó. La línea en sí no contiene ninguna dirección, ningún txid ni ninguna dirección IP.',
+    'Cuando la página pregunta por una dirección, una transacción o la altura de bloque actual, el servidor no anota nada, salvo que algo de nuestro lado esté fallando. Por cada una de las demás solicitudes (la configuración de la página, el faucet, la dirección del fondo común, los totales del fondo común, un pago que se envía, un conteo) anota una línea: qué tipo de solicitud fue, cómo terminó y cuánto tardó. La línea en sí no contiene ninguna dirección, ningún txid ni ninguna dirección IP.',
   serverCloudflare:
     'El servidor funciona en la red de Cloudflare. Cloudflare guarda esas líneas por poco tiempo. Junto a cada una guarda la dirección web que se pidió, la hora y los identificadores que Cloudflare le da a la solicitud, y ninguna dirección IP. En una línea anotada mientras algo de nuestro lado está fallando, esa dirección web puede contener una dirección de la billetera o un txid. Cloudflare también lleva sus propios registros, y esos sí pueden contener la dirección IP.',
 
@@ -264,6 +294,8 @@ export const es: Record<keyof typeof en, string> = {
   count_wordsShown:
     'Se mostraron las 12 palabras, y si este navegador abre la billetera con llave de acceso. Las palabras mismas nunca forman parte de un conteo.',
   count_walletRemoved: 'Se quitó la billetera de este navegador, y si este navegador la abría con llave de acceso.',
+  count_doIt:
+    'Se completó un paso de "Hazlo", y cuál de los seis pasos fue. Nada de la billetera forma parte del conteo.',
   countSent:
     'Nuestro servidor le pasa cada conteo a Plausible, el servicio que los suma, junto con la dirección IP desde la que llegó la solicitud y lo que tu navegador dice ser: su nombre, su versión y su sistema. Plausible los usa para distinguir a una persona de un robot y para contar a cada visitante una vez al día. Con un conteo no se envía ningún identificador.',
 
@@ -273,7 +305,7 @@ export const es: Record<keyof typeof en, string> = {
   botSees:
     'Examina tu navegador para distinguir a una persona de un programa, y recibe la dirección a la que van las monedas.',
   botReads:
-    'Su código se ejecuta en esta página, así que también podría leer el registro que este navegador guarda de la billetera. El registro contiene la clave pública de la billetera, y con ella todas las direcciones que la billetera tiene y va a tener.',
+    'Su código se ejecuta en esta página, así que también podría leer el registro que este navegador guarda de la billetera. El registro contiene la clave pública de la billetera, y con ella todas las direcciones que la billetera tiene y va a tener. También podría leer la nota de tu progreso de "Hazlo".',
   botPasskey:
     'Una billetera que se abre con llave de acceso se bloquea antes de que la comprobación se cargue, y sigue bloqueada hasta que la página se cargue de nuevo. Así que el código de la comprobación no puede leer claves que estaban en la página antes que él.',
   botPasskeyStill:

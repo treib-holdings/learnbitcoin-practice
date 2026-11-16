@@ -24,7 +24,13 @@
   //
   // Under that, on every visit: what can be done here, and the two facts of
   // the practice network a newcomer wants first (how often a block comes,
-  // what the faucet gives), both read from the settings.
+  // what the faucet gives), both read from the settings. Then a short
+  // section on the "Do it" steps, which leads to their list.
+  //
+  // Removing a wallet leaves the note of the "Do it" steps in this browser.
+  // So the line that says the wallet was removed is followed, while there
+  // is such a note, by one that says it stays, what it can name, and where
+  // it is erased.
 
   import { onDestroy, onMount, tick } from 'svelte';
   import Button from '../components/Button.svelte';
@@ -40,15 +46,19 @@
   import { SAFARI_KEEPS_DAYS } from '../components/wallet/frame.ts';
   import OpenWithPasskey from '../components/wallet/OpenWithPasskey.svelte';
   import StoredTrouble from '../components/wallet/StoredTrouble.svelte';
+  import { useDoit } from '../lib/doit/doit-context.ts';
   import { fill, formatSats } from '../lib/format.ts';
   import { navigate, router } from '../lib/router.svelte.ts';
   import { useWallet } from '../lib/wallet-context.ts';
   import { strings } from '../strings/index.ts';
+  import { progressKept } from './doit/view.ts';
   import WalletHere from './front/WalletHere.svelte';
 
   const wallet = useWallet();
+  const doit = useDoit();
 
   let t = $derived(strings.home[router.lang]);
+  let d = $derived(strings.doit[router.lang]);
   let c = $derived(strings.common[router.lang]);
   let w = $derived(strings.wallet[router.lang]);
 
@@ -101,7 +111,16 @@
   {#if status === 'ready'}
     <WalletHere {arrived} />
   {:else if status === 'none'}
-    {#if removed}
+    {#if removed && progressKept(doit.read)}
+      <!-- The wallet is gone, and the note of the "Do it" steps is not: what it can name, and where it
+           is erased. The two lines belong together, and stand closer than the screen's other parts. -->
+      <div class="space-y-3">
+        <Notice kind="info" text={t.removed} data-testid="home-removed" />
+        <Notice kind="info" text={d.staysAfterRemove} data-testid="home-progress-stays">
+          <TextLink href={router.link({ name: 'do' })}>{d.name}</TextLink>
+        </Notice>
+      </div>
+    {:else if removed}
       <Notice kind="info" text={t.removed} data-testid="home-removed" />
     {/if}
     <div>
@@ -152,6 +171,18 @@
       </li>
       <li class="flex min-h-11 items-center">
         <TextLink class={LONE_LINK} href={router.link({ name: 'sparrow' })}>{c.linkSparrow}</TextLink>
+      </li>
+    </ul>
+  </Section>
+
+  <!-- The steps that go with the main site's chapters: one sentence, and the way to their list. -->
+  <Section title={d.name}>
+    <Prose>
+      <p data-testid="home-do">{d.homeBody}</p>
+    </Prose>
+    <ul>
+      <li class="flex min-h-11 items-center">
+        <TextLink class={LONE_LINK} href={router.link({ name: 'do' })} data-testid="home-do-link">{d.homeLink}</TextLink>
       </li>
     </ul>
   </Section>

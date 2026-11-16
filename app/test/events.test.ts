@@ -11,6 +11,7 @@ import {
   EVENTS,
   LANGS,
   SCREENS,
+  STEPS,
   eventPath as contractEventPath,
   isEventBody,
   type CountedEvent,
@@ -23,7 +24,9 @@ import type { Route } from '../src/lib/router.ts';
 const TXID = '6c0443f5'.padEnd(64, 'a');
 
 function routeOf(name: ScreenName): Route {
-  return name === 'tx' ? { name, txid: TXID } : ({ name } as Route);
+  if (name === 'tx') return { name, txid: TXID };
+  if (name === 'step') return { name, id: 'no-balances' };
+  return { name } as Route;
 }
 
 /** Turns events on with a recorder in place of the Worker. Strict: a bad event fails the test. */
@@ -55,10 +58,45 @@ test('a screen view is the contract path for the screen, in both languages', () 
       trackPage(routeOf(name), lang);
       assert.equal(sent.length, 1);
       const body: unknown = JSON.parse(sent[0] ?? '');
-      assert.deepEqual(body, { name: 'pageview', path: contractEventPath(name, lang) });
+      // (The step screen is counted with its step: the third argument, which no other screen looks at.)
+      assert.deepEqual(body, { name: 'pageview', path: contractEventPath(name, lang, 'no-balances') });
       assert.ok(isEventBody(body));
     }
   }
+});
+
+test('a step is counted under its own address, and "Do it" under the screen the reader is on when the step is done', () => {
+  const sent = recording();
+  for (const id of STEPS) {
+    trackPage({ name: 'step', id }, 'en');
+    trackPage({ name: 'step', id }, 'es');
+  }
+  assert.deepEqual(
+    sent.map((body) => JSON.parse(body) as unknown),
+    STEPS.flatMap((id) => [
+      { name: 'pageview', path: `/do/${id}` },
+      { name: 'pageview', path: `/es/do/${id}` },
+    ]),
+  );
+  sent.length = 0;
+  trackPage({ name: 'do' }, 'es');
+  // Done on the step's own screen (a question answered there)...
+  trackPage({ name: 'step', id: 'hold-some' }, 'en');
+  track('Do it', 'hold-some');
+  // ...or on a wallet screen, where the last thing the step waited for happened.
+  trackPage({ name: 'tx', txid: TXID }, 'en');
+  track('Do it', 'no-balances');
+  assert.deepEqual(sent.map((body) => JSON.parse(body) as unknown), [
+    { name: 'pageview', path: '/es/do' },
+    { name: 'pageview', path: '/do/hold-some' },
+    { name: 'Do it', path: '/do/hold-some', value: 'hold-some' },
+    { name: 'pageview', path: '/wallet/tx' },
+    { name: 'Do it', path: '/wallet/tx', value: 'no-balances' },
+  ]);
+  for (const body of sent) assert.ok(isEventBody(JSON.parse(body)), body);
+  // A step that is not one of the six is a bug in the app, never sent.
+  assert.throws(() => trackAnything('Do it', 'first-payment'), /not an event the contract lists/);
+  assert.equal(sent.length, 5);
 });
 
 test('a transaction screen is counted without its ID', () => {

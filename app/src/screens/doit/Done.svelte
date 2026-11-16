@@ -1,0 +1,152 @@
+<script lang="ts">
+  // A step that is done: the day it was done, two or three sentences on
+  // what the reader has now seen for themselves, and the ways on.
+  //
+  // The main way on is back to the chapter the step belongs to. The link
+  // carries the mark the chapter stamps its card on ("#done=<step>"), which
+  // it carries only for a step that is done (chapterLink in
+  // lib/doit/progress.ts). The next step is offered only when it belongs to
+  // the same chapter: a reader who has finished a chapter's last step has
+  // not read the next chapter yet.
+  //
+  // Three steps add a line of their own:
+  //
+  //   Pass it on        how many payments have been passed on to the pot so
+  //                     far, the reader's among them. Payments, not people:
+  //                     the pot cannot tell who sent one. The count is
+  //                     asked for once, when this piece is drawn, and the
+  //                     line is left out when it cannot be had or is 0.
+  //   The seed          the wallet fingerprint the three words were checked
+  //                     for. When another wallet is in this browser now,
+  //                     the piece says so, and offers the check again for
+  //                     that wallet.
+  //   Prove the backup  for a wallet that was opened with a passkey before
+  //                     the drill: what has changed. This browser now keeps
+  //                     it with its 12 words. Then the Sparrow page, as one
+  //                     more proof that the words are the wallet.
+
+  import { onMount } from 'svelte';
+  import ChapterLink from '../../components/doit/ChapterLink.svelte';
+  import Button from '../../components/Button.svelte';
+  import Card from '../../components/Card.svelte';
+  import Notice from '../../components/Notice.svelte';
+  import { busyWhile } from '../../components/status.svelte.ts';
+  import TextLink from '../../components/TextLink.svelte';
+  import { useDoit } from '../../lib/doit/doit-context.ts';
+  import { seedWallet } from '../../lib/doit/judge.ts';
+  import { chapterLink } from '../../lib/doit/progress.ts';
+  import { nextStep, stepDef, type StepId } from '../../lib/doit/steps.ts';
+  import { fill, formatDate, formatSats } from '../../lib/format.ts';
+  import { router } from '../../lib/router.svelte.ts';
+  import { useWallet } from '../../lib/wallet-context.ts';
+  import { strings } from '../../strings/index.ts';
+  import AskWords from './AskWords.svelte';
+  import Sentence from './Sentence.svelte';
+  import { doneKey } from './view.ts';
+
+  interface Props {
+    id: StepId;
+    /** The time, in ms since 1970. */
+    now: number;
+  }
+
+  let { id, now }: Props = $props();
+
+  const wallet = useWallet();
+  const doit = useDoit();
+
+  let lang = $derived(router.lang);
+  let t = $derived(strings.doit[lang]);
+
+  let note = $derived(doit.progress.steps[id]);
+  let day = $derived(note?.doneAt === undefined ? '' : fill(t.doneOn, { date: formatDate(note.doneAt / 1000, lang) }));
+  let back = $derived(chapterLink(wallet.config.siteUrl, id, lang, note));
+  let next = $derived(nextStep(id));
+
+  // -- Pass it on: the pot's count -------------------------------------------------
+
+  /** How many payments have been passed on to the pot. Null until the count is here, and when it could not be had. */
+  let passedOn = $state<number | null>(null);
+  /** True once this piece has left the screen: an answer that comes after that is for nobody. */
+  let gone = false;
+
+  // Asked once, when a done "Pass it on" is shown, and not again while it stays on screen.
+  onMount(() => {
+    if (id === 'pass-it-on') {
+      void busyWhile(wallet.potStats()).then((answer) => {
+        if (!gone && answer.ok) passedOn = answer.stats.passedOn;
+      });
+    }
+    return () => {
+      gone = true;
+    };
+  });
+
+  let potLine = $derived.by(() => {
+    // Left out for a count of 0: the reader's own payment is among them, so it cannot be right.
+    if (passedOn === null || passedOn < 1) return '';
+    return passedOn === 1 ? t.potCountOne : fill(t.potCount, { count: formatSats(passedOn) });
+  });
+
+  // -- The seed: which wallet the words were checked for ------------------------------
+
+  /** Whether the wallet in this browser is the one the three words were checked for. */
+  let seed = $derived(id === 'the-seed' ? seedWallet(doit.seen(now)) : 'none');
+  /** The check was passed again on this screen, for the wallet that is here. */
+  let rechecked = $state(false);
+</script>
+
+<Card tone="grey" data-testid="step-done">
+  <div class="space-y-4">
+    <div class="space-y-3 text-pretty text-base leading-relaxed text-ink-700">
+      <!-- A heading: "What has changed" below is one level under it, and a reader who moves by headings finds the card. -->
+      <h2 class="text-balance text-xl font-bold leading-snug text-ink-800" data-testid="step-done-on">{day}</h2>
+      <p data-testid="step-done-text">{t[doneKey(id)]}</p>
+      {#if potLine !== ''}
+        <p data-testid="step-pot-count">{potLine}</p>
+      {/if}
+      {#if id === 'the-seed' && note?.wallet !== undefined}
+        <p data-testid="step-seed-wallet">
+          <Sentence text={t.seedChecked} slots={{ fingerprint: note.wallet }} mono={['fingerprint']} />
+        </p>
+      {/if}
+    </div>
+
+    {#if id === 'the-seed' && rechecked}
+      <Notice kind="info" text={t.seedRechecked} data-testid="step-seed-rechecked" />
+    {:else if id === 'the-seed' && seed === 'other'}
+      <!-- Another wallet is here: its paper has not been checked, and the check is offered again for it. -->
+      <div class="space-y-4 border-t border-ink-200 pt-4" data-testid="step-seed-other">
+        <p class="text-pretty text-base leading-relaxed text-ink-700">
+          <Sentence text={t.seedOther} slots={{ here: wallet.record?.fingerprint ?? '' }} mono={['here']} />
+        </p>
+        <AskWords {id} mode="again" onpassed={() => (rechecked = true)} />
+      </div>
+    {/if}
+
+    {#if id === 'prove-the-backup'}
+      {#if note?.was === 'passkey'}
+        <div class="space-y-2 border-t border-ink-200 pt-4" data-testid="step-changed">
+          <h3 class="text-base font-bold text-ink-800">{t.changedTitle}</h3>
+          <p class="text-pretty text-base leading-relaxed text-ink-700">{t.changed}</p>
+        </div>
+      {/if}
+      <p class="text-base">
+        <TextLink href={router.link({ name: 'sparrow' })} data-testid="step-sparrow">{t.sparrow}</TextLink>
+      </p>
+    {/if}
+
+    <!-- One group: on a phone the buttons stand one under the other, at one width. -->
+    <div class="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
+      {#if back !== null}
+        <ChapterLink look="primary" class="w-full sm:w-auto" href={back} data-testid="step-back">{t.back}</ChapterLink>
+      {/if}
+      {#if next !== null}
+        <Button class="w-full sm:w-auto" href={router.link({ name: 'step', id: next })} data-testid="step-next">
+          {fill(t.next, { step: t[stepDef(next).title] })}
+        </Button>
+      {/if}
+      <Button class="w-full sm:w-auto" href={router.link({ name: 'do' })} data-testid="step-list">{t.allSteps}</Button>
+    </div>
+  </div>
+</Card>

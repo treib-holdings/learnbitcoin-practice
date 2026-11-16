@@ -1,6 +1,7 @@
 <script lang="ts">
   // The page around every screen: the PRACTICE banner, the header, the
-  // screen itself inside <main>, the status region and the footer.
+  // strip of the "Do it" step the reader is following (when there is one),
+  // the screen itself inside <main>, the status region and the footer.
   //
   // <main> carries aria-busy while the screen waits for the wallet, which
   // tells a screen reader that what it holds is still changing. Two things
@@ -11,6 +12,7 @@
   import type { Snippet } from 'svelte';
   import { router } from '../lib/router.svelte.ts';
   import Banner from './Banner.svelte';
+  import Strip from './doit/Strip.svelte';
   import Footer from './Footer.svelte';
   import Header from './Header.svelte';
   import Status from './Status.svelte';
@@ -34,6 +36,8 @@
 <div class="flex min-h-screen flex-col">
   <Banner />
   <Header />
+  <!-- Draws nothing unless a "Do it" step is followed, and never on that step's own screen. -->
+  <Strip />
   <!-- tabindex="-1": "Skip to content" moves focus here. It takes focus from code only, so it shows no outline.
        text-pretty: wherever a paragraph wraps, the browser avoids a last line of one short word. -->
   <main id="main" tabindex="-1" aria-busy={busy || working() ? 'true' : undefined} class="flex-1 text-pretty outline-none">

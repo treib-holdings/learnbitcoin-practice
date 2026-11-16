@@ -182,6 +182,7 @@ test('a failed self-test: status "broken", every way to a wallet answers "broken
       pendingSwitch: null,
       pendingRestore: false,
       openedEmpty: false,
+      wordsShown: 0,
     });
 
     assert.deepEqual(await t.session.createWithPasskey(), { kind: 'broken' });
@@ -240,6 +241,7 @@ test('what is stored decides the status: nothing, a wallet, something unreadable
     pendingSwitch: null,
     pendingRestore: false,
     openedEmpty: false,
+    wordsShown: 0,
   });
   assert.equal(none.chain.opened.length, 0);
   assert.equal(none.session.descriptors(), null);
@@ -465,6 +467,7 @@ test('createWithPasskey: the words come from the passkey, the record is stored w
     pendingSwitch: null,
     pendingRestore: false,
     openedEmpty: false,
+    wordsShown: 0,
   });
   // The "Wallet made" step shows the words with no second prompt.
   assert.deepEqual(t.session.revealWords(), words.split(' '));
@@ -1450,6 +1453,189 @@ test('revealWords: a fresh list each call, and counted once per wallet in a page
   assert.deepEqual(t.events.slice(3), ['Wallet removed: passkey', 'Wallet created: words', 'Words shown: words']);
 });
 
+test('wordsShown: it goes up by one each time the words are handed out, and at no other time', async () => {
+  const t = lockedTab();
+  /** Every value the count has shown, from the page's start on. */
+  const seen: number[] = [t.view().wordsShown];
+  t.session.subscribe(() => {
+    if (seen.at(-1) !== t.view().wordsShown) seen.push(t.view().wordsShown);
+  });
+  assert.equal(t.view().wordsShown, 0);
+  // Locked: no words, so nothing was shown.
+  assert.equal(t.session.revealWords(), null);
+  assert.equal(t.view().wordsShown, 0);
+
+  await t.session.unlock();
+  assert.equal(t.view().wordsShown, 0, 'unlocking shows nothing');
+  t.session.revealWords();
+  assert.equal(t.view().wordsShown, 1);
+  t.session.revealWords();
+  t.session.revealWords();
+  assert.equal(t.view().wordsShown, 3, 'each time, although the event is counted once for a wallet');
+  assert.deepEqual(t.events, ['Unlock: same', 'Words shown: passkey']);
+
+  // Nothing else moves it: locking, signing, checking words, descriptors, another tab's change.
+  t.session.lock();
+  assert.equal(t.session.revealWords(), null);
+  await t.session.unlock();
+  t.session.sign({ to: SOMEONE, amount: 1_000n, feeRate: 2n });
+  t.session.checkWords(t.wallet.words);
+  t.session.checkWordsAt([0], [t.wallet.words.split(' ')[0] ?? '']);
+  t.session.descriptors();
+  t.session.storageChanged('someone-elses-key');
+  assert.equal(t.view().wordsShown, 3);
+
+  // It counts for the page, whichever wallet is in it: another wallet's words go on from where it stood.
+  assert.equal(t.session.removeWallet(), 'removed');
+  assert.equal(t.view().wordsShown, 3, 'a removal does not start it again');
+  await t.session.createWithWords();
+  t.session.revealWords();
+  assert.equal(t.view().wordsShown, 4);
+  assert.deepEqual(seen, [0, 1, 2, 3, 4], 'and each step was shown as it happened');
+  // A count, and nothing of the words.
+  assert.equal(typeof t.view().wordsShown, 'number');
+
+  // A new page starts at 0 again: it is kept in memory only.
+  const reloaded = start({ storage: t.storage });
+  assert.equal(reloaded.view().wordsShown, 0);
+  assert.doesNotMatch(stored(t.storage) ?? '', /wordsShown/);
+});
+
+// -- checking a few of the 12 words -------------------------------------------------------
+
+test('checkWordsAt: the positions whose word is wrong, and never a word', async () => {
+  const storage = new MemoryStorage();
+  put(storage, makeRecord('words', A.mnemonic, START_MS));
+  const t = start({ storage });
+  // Wallet A's phrase is "abandon" eleven times and then "about": position 11 is the telling one.
+  const own = A.mnemonic.split(' ');
+  assert.deepEqual([own[0], own[10], own[11]], ['abandon', 'abandon', 'about']);
+  const writes = t.storage.writes;
+
+  // All right: nothing is wrong.
+  assert.deepEqual(t.session.checkWordsAt([0, 5, 11], ['abandon', 'abandon', 'about']), { ok: true, wrong: [] });
+  // Each wrong word is named by the position it was asked for, in the order asked.
+  assert.deepEqual(t.session.checkWordsAt([0, 5, 11], ['about', 'abandon', 'abandon']), { ok: true, wrong: [0, 11] });
+  assert.deepEqual(t.session.checkWordsAt([11, 0], ['abandon', 'zebra']), { ok: true, wrong: [11, 0] });
+  // The right word in the wrong place is wrong.
+  assert.deepEqual(t.session.checkWordsAt([10], ['about']), { ok: true, wrong: [10] });
+  assert.deepEqual(t.session.checkWordsAt([11], ['about']), { ok: true, wrong: [] });
+  // Capitals, and spaces around a word, do not count against it. Two words in one field are not one word.
+  assert.deepEqual(t.session.checkWordsAt([0, 11], ['  Abandon ', '\tABOUT\n']), { ok: true, wrong: [] });
+  assert.deepEqual(t.session.checkWordsAt([10], ['abandon about']), { ok: true, wrong: [10] });
+  assert.deepEqual(t.session.checkWordsAt([0], ['aban don']), { ok: true, wrong: [0] });
+  // Nothing typed, or less typed than was asked for, is wrong.
+  assert.deepEqual(t.session.checkWordsAt([0, 11], ['', '  ']), { ok: true, wrong: [0, 11] });
+  assert.deepEqual(t.session.checkWordsAt([0, 11], ['abandon']), { ok: true, wrong: [11] });
+  // A place the phrase does not have is wrong, whatever is typed for it.
+  assert.deepEqual(t.session.checkWordsAt([12, -1, 1.5, 0], ['abandon', 'abandon', 'abandon', 'abandon']), { ok: true, wrong: [12, -1, 1.5] });
+  // Nothing asked: nothing is wrong, and nothing is proved (the caller says what it asked for).
+  assert.deepEqual(t.session.checkWordsAt([], []), { ok: true, wrong: [] });
+
+  // It counts nothing, stores nothing, shows nothing new, and the words were not "shown".
+  assert.deepEqual(t.events, []);
+  assert.deepEqual(t.unlisted, []);
+  assert.equal(t.storage.writes, writes);
+  assert.equal(t.view().wordsShown, 0);
+  assert.equal(t.view().unlocked, true);
+});
+
+test('checkWordsAt: a locked passkey wallet answers "locked", no wallet "gone", and a page the bot check is in "reload"', async () => {
+  const t = lockedTab();
+  const own = t.wallet.words.split(' ');
+  const three = [own[2] ?? '', own[7] ?? '', own[9] ?? ''];
+  assert.deepEqual(t.session.checkWordsAt([2, 7, 9], three), { ok: false, reason: 'locked' });
+  assert.deepEqual(t.auth.calls, [], 'it never opens a prompt itself');
+
+  await t.session.unlock();
+  assert.deepEqual(t.session.checkWordsAt([2, 7, 9], three), { ok: true, wrong: [] });
+  assert.deepEqual(t.session.checkWordsAt([2, 7, 9], [three[1] ?? '', three[0] ?? '', 'zebra']), {
+    ok: true,
+    wrong: [2, 7, 9].filter((position, at) => own[position] !== [three[1], three[0], 'zebra'][at]),
+  });
+  // Unlocked with the 12 words works as well as with the passkey.
+  t.session.lock();
+  assert.deepEqual(t.session.checkWordsAt([2], [own[2] ?? '']), { ok: false, reason: 'locked' });
+  assert.equal(t.session.unlockWithWords(t.wallet.words), 'unlocked');
+  assert.deepEqual(t.session.checkWordsAt([2], [own[2] ?? '']), { ok: true, wrong: [] });
+  assert.deepEqual(t.events, ['Unlock: same', 'Unlock: words'], 'the checks themselves were not counted');
+
+  // The bot check has been let into the page: nothing here takes typed words until a reload,
+  // whatever kind of wallet is here and whether or not its keys are loaded.
+  t.session.beforeBotCheck();
+  assert.deepEqual(t.session.checkWordsAt([2], [own[2] ?? '']), { ok: false, reason: 'reload' });
+  const storage = new MemoryStorage();
+  put(storage, makeRecord('words', A.mnemonic, START_MS));
+  const words = start({ storage });
+  assert.deepEqual(words.session.checkWordsAt([11], ['about']), { ok: true, wrong: [] });
+  words.session.beforeBotCheck();
+  assert.deepEqual(words.session.checkWordsAt([11], ['about']), { ok: false, reason: 'reload' });
+  assert.deepEqual(words.session.revealWords(), A.mnemonic.split(' '), 'though such a wallet still shows its words');
+
+  // No wallet here.
+  const none = start();
+  assert.deepEqual(none.session.checkWordsAt([0], ['abandon']), { ok: false, reason: 'gone' });
+  // A browser that failed the self-test has no wallet to check against either.
+  const broken = start({ storage, selfTest: () => false });
+  assert.deepEqual(broken.session.checkWordsAt([11], ['about']), { ok: false, reason: 'gone' });
+  // Something stored that cannot be read, or a newer version's record: no wallet is here.
+  for (const odd of ['not json', JSON.stringify({ v: 2, anything: true })]) {
+    const s = new MemoryStorage();
+    put(s, odd);
+    assert.deepEqual(start({ storage: s }).session.checkWordsAt([0], ['abandon']), { ok: false, reason: 'gone' }, odd);
+  }
+});
+
+test('checkWordsAt reads the storage again first: a wallet removed or replaced in another tab is not checked against', async () => {
+  const storage = new MemoryStorage();
+  put(storage, makeRecord('words', A.mnemonic, START_MS));
+  const here = start({ storage });
+  const elsewhere = start({ storage });
+  assert.deepEqual(here.session.checkWordsAt([11], ['about']), { ok: true, wrong: [] });
+
+  // Removed in the other tab, and this page has not heard yet.
+  assert.equal(elsewhere.session.removeWallet(), 'removed');
+  assert.deepEqual(here.session.checkWordsAt([11], ['about']), { ok: false, reason: 'gone' });
+  assert.equal(here.view().status, 'none', 'and the page now shows what is stored');
+
+  // Another wallet was put in its place: the check is against that one, not the one the page held.
+  put(storage, makeRecord('words', B.mnemonic, START_MS));
+  const second = B.mnemonic.split(' ');
+  assert.deepEqual(here.session.checkWordsAt([11], ['about']), { ok: true, wrong: second[11] === 'about' ? [] : [11] });
+  assert.deepEqual(here.session.checkWordsAt([0, 11], [second[0] ?? '', second[11] ?? '']), { ok: true, wrong: [] });
+  assert.equal(here.view().record?.fingerprint, B.masterFingerprint);
+});
+
+test('checkWordsAt answers for anything it is handed, and never throws', () => {
+  const storage = new MemoryStorage();
+  put(storage, makeRecord('words', A.mnemonic, START_MS));
+  const t = start({ storage });
+  const check = t.session.checkWordsAt as (positions: unknown, typed: unknown) => { ok: boolean; wrong?: unknown };
+  // Not lists at all: nothing was asked.
+  for (const odd of [undefined, null, 'abandon', 7, {}]) {
+    assert.deepEqual(check(odd, odd), { ok: true, wrong: [] }, String(odd));
+  }
+  // A list of things that are not places or not words: each is wrong.
+  assert.deepEqual(check([0, 11], undefined), { ok: true, wrong: [0, 11] });
+  assert.deepEqual(check([0, 11], [7, null]), { ok: true, wrong: [0, 11] });
+  assert.deepEqual(check(['0', null, Number.NaN, Number.POSITIVE_INFINITY, 2 ** 40], ['abandon', 'abandon', 'abandon', 'abandon', 'abandon']).ok, true);
+  assert.equal((check(['0', null], ['abandon', 'abandon']).wrong as unknown[]).length, 2);
+  // What the object hands out is never a text.
+  const answers = [check([0, 11], ['abandon', 'about']), check([0, 11], ['about', 'abandon']), check(['0'], ['abandon'])];
+  for (const answer of answers) {
+    for (const position of answer.wrong as unknown[]) assert.equal(typeof position, 'number');
+    assert.doesNotMatch(JSON.stringify(answer), /abandon|about/);
+  }
+  // A list that throws when it is read: an answer all the same.
+  const hostile = new Proxy([0], {
+    get(target, key, receiver) {
+      if (key === '0') throw new Error('no');
+      return Reflect.get(target, key, receiver) as unknown;
+    },
+  });
+  assert.deepEqual(check(hostile, ['abandon']), { ok: false, reason: 'reload' });
+});
+
 test('removeWallet deletes this wallet\'s record and nothing else, and only the wallet this page loaded', async () => {
   const t = lockedTab();
   t.storage.map.set('someone-elses-key', 'kept');
@@ -1469,6 +1655,7 @@ test('removeWallet deletes this wallet\'s record and nothing else, and only the 
     pendingSwitch: null,
     pendingRestore: false,
     openedEmpty: false,
+    wordsShown: 0,
   });
   assert.equal(t.session.revealWords(), null);
   assert.equal(t.session.descriptors(), null);
@@ -1719,6 +1906,7 @@ test('other tabs: a wallet removed elsewhere locks and empties this page', async
     pendingSwitch: null,
     pendingRestore: false,
     openedEmpty: false,
+    wordsShown: 0,
   });
   assert.equal(here.session.revealWords(), null);
   assert.equal(here.session.confirmSwitch(), 'nothing-pending');
@@ -1752,6 +1940,42 @@ test('other tabs: a storage that was cleared counts; another key\'s change does 
   t.storage.map.clear();
   t.session.storageChanged(null);
   assert.deepEqual([t.view().status, t.view().unlocked, t.chain.closed], ['none', false, 1]);
+});
+
+test('back in view: a page that heard no storage event reads the record again, and starts again only if it has changed', async () => {
+  // A page the browser kept in its memory while the reader was on another site gets no "storage"
+  // event. Brought back, it is told that it is in view again, and looks for itself.
+  const t = lockedTab();
+  await t.session.unlock();
+
+  // What is stored is what this page loaded: nothing happens. The keys stay loaded and nothing is read again.
+  t.session.backInView();
+  assert.deepEqual([t.view().status, t.view().unlocked, t.chain.opened.length, t.chain.closed], ['ready', true, 1, 0]);
+  assert.notEqual(t.session.revealWords(), null);
+
+  // The wallet was removed meanwhile, and no event said so: the page starts again from what is stored.
+  t.storage.map.delete(RECORD_KEY);
+  assert.equal(t.view().status, 'ready', 'until it is told, the page remembers the wallet');
+  t.session.backInView();
+  assert.deepEqual([t.view().status, t.view().record, t.view().unlocked, t.chain.closed], ['none', null, false, 1]);
+  assert.equal(t.session.revealWords(), null);
+
+  // Another wallet in its place: taken up, and said as after a "storage" event.
+  const u = lockedTab();
+  put(u.storage, makeRecord('words', A.mnemonic, START_MS));
+  u.session.backInView();
+  assert.equal(u.view().record?.xpub, A.xpub);
+  assert.deepEqual(u.chain.announced, ['replaced']);
+  // Told again with nothing changed: nothing more is said or read.
+  const opened = u.chain.opened.length;
+  u.session.backInView();
+  assert.deepEqual([u.chain.announced, u.chain.opened.length], [['replaced'], opened]);
+
+  // A wallet that arrived where this page had none.
+  const none = start();
+  put(none.storage, makeRecord('words', A.mnemonic, START_MS));
+  none.session.backInView();
+  assert.deepEqual([none.view().status, none.view().record?.xpub], ['ready', A.xpub]);
 });
 
 test('other tabs: one wallet put in another\'s place is announced as "replaced", and nothing else is', async () => {
@@ -2014,6 +2238,8 @@ async function everyAction(session: Session): Promise<void> {
   session.lock();
   const words = session.revealWords();
   assert.ok(words === null || Array.isArray(words));
+  const checked = session.checkWordsAt([0, 5, 11], ['abandon', 'abandon', 'about']);
+  assert.ok(checked.ok ? Array.isArray(checked.wrong) : ['locked', 'reload', 'gone'].includes(checked.reason));
   const descriptors = session.descriptors();
   assert.ok(descriptors === null || typeof descriptors.receive === 'string');
   const signedPayment = session.sign(request);
@@ -2178,6 +2404,9 @@ test('the 12 words are never in anything the session shows, counts or answers wi
   await say(loaded.session.sign({ to: SOMEONE, amount: 1_000n, feeRate: 2n }));
   await say(loaded.session.unlockWithWords(B.mnemonic));
   await say(loaded.session.descriptors());
+  // A check of three words, right and wrong: the answer is positions.
+  await say(loaded.session.checkWordsAt([0, 10, 11], A.mnemonic.split(' ').slice(9)));
+  await say(loaded.session.checkWordsAt([0, 1, 2], B.mnemonic.split(' ').slice(0, 3)));
 
   // A passkey wallet: created, locked, unlocked, switched, restored-and-waiting, removed.
   const t = start();
@@ -2187,6 +2416,8 @@ test('the 12 words are never in anything the session shows, counts or answers wi
   t.session.lock();
   await say(t.session.unlock());
   await say(t.session.unlockWithWords(first));
+  await say(t.session.checkWordsAt([3, 4, 5], first.split(' ').slice(3, 6)));
+  await say(t.session.checkWordsAt([3, 4, 5], first.split(' ').slice(6, 9)));
   const other = passkeyWallet(t.auth, 2);
   t.auth.pick = 1;
   await say(t.session.unlock('picker'));
@@ -2283,6 +2514,16 @@ async function wordsLeftBehind(module: SessionModule): Promise<string[]> {
   };
   /** As a reader types them: capitals and stray spaces. */
   const asTyped = (words: string): string => `  ${words.toUpperCase().replaceAll(' ', '   ')}\n`;
+  /**
+   * After a check of a few words: not one of the words typed for it stands
+   * in what regular expressions remember, and neither does anything that
+   * stood there before the call. (The check for two words side by side,
+   * above, cannot see these: they are handed over one to a field.)
+   */
+  const wordsAtLeft = (after: string, typedWords: string[]): void => {
+    const memory = regexpMemory().toLowerCase();
+    if (typedWords.some((word) => memory.includes(word.toLowerCase()))) left.push(after);
+  };
 
   // A passkey wallet, unlocked with its 12 words: then locked, then the bot check.
   let t = locked();
@@ -2302,6 +2543,21 @@ async function wordsLeftBehind(module: SessionModule): Promise<string[]> {
   look('unlockWithWords, then revealWords');
   t.session.sign({ to: SOMEONE, amount: 1_000n, feeRate: 2n });
   look('sign');
+  // Three words checked, as typed: right ones, wrong ones, and other wallets' words in their place.
+  const three = t.wallet.words.split(' ').slice(4, 7);
+  assert.deepEqual(t.session.checkWordsAt([4, 5, 6], three.map(asTyped)), { ok: true, wrong: [] });
+  look('checkWordsAt: right');
+  wordsAtLeft('checkWordsAt: right', three);
+  const others = typed.split(' ').slice(0, 3);
+  assert.equal(t.session.checkWordsAt([4, 5, 6], others.map(asTyped)).ok, true);
+  look('checkWordsAt: wrong');
+  wordsAtLeft('checkWordsAt: wrong', others);
+  t.session.lock();
+  assert.deepEqual(t.session.checkWordsAt([4, 5, 6], three.map(asTyped)), { ok: false, reason: 'locked' });
+  wordsAtLeft('checkWordsAt: locked', three);
+  t.session.beforeBotCheck();
+  assert.deepEqual(t.session.checkWordsAt([4, 5, 6], three.map(asTyped)), { ok: false, reason: 'reload' });
+  wordsAtLeft('checkWordsAt: reload', three);
   t = locked();
   assert.equal(t.session.unlockWithWords(asTyped(typed)), 'other-wallet');
   look('unlockWithWords: other-wallet');
@@ -2375,6 +2631,9 @@ async function wordsLeftBehind(module: SessionModule): Promise<string[]> {
   again.session.sign({ to: SOMEONE, amount: 1_000n, feeRate: 2n });
   again.session.unlockWithWords(A.mnemonic);
   look('revealWords, sign and unlockWithWords of that wallet');
+  assert.deepEqual(again.session.checkWordsAt([0, 11], ['abandon', 'about'].map(asTyped)), { ok: true, wrong: [] });
+  look('checkWordsAt of that wallet');
+  wordsAtLeft('checkWordsAt of that wallet', ['abandon', 'about']);
   again.session.storageChanged(RECORD_KEY);
   look('storageChanged');
   assert.equal(w.session.removeWallet(), 'removed');
@@ -2421,10 +2680,12 @@ test('the 12 words are not left where a regular expression keeps them: after no 
     eraseRestored: () => t.session.eraseRestored(),
     lock: () => t.session.lock(),
     revealWords: () => t.session.revealWords(),
+    checkWordsAt: () => t.session.checkWordsAt([0], ['zebra']),
     descriptors: () => t.session.descriptors(),
     sign: () => t.session.sign(request),
     learnPasskeys: () => t.session.learnPasskeys('localhost'),
     storageChanged: () => t.session.storageChanged(RECORD_KEY),
+    backInView: () => t.session.backInView(),
     beforeBotCheck: () => t.session.beforeBotCheck(),
     removeWallet: () => t.session.removeWallet(),
   };

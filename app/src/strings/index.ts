@@ -8,6 +8,7 @@ import * as about from './about.ts';
 import * as backup from './backup.ts';
 import * as common from './common.ts';
 import * as create from './create.ts';
+import * as doit from './doit.ts';
 import * as errors from './errors.ts';
 import * as home from './home.ts';
 import * as receive from './receive.ts';
@@ -32,6 +33,8 @@ export const strings = {
   settings: { en: settings.en, es: settings.es },
   sparrow: { en: sparrow.en, es: sparrow.es },
   about: { en: about.en, es: about.es },
+  /** The "Do it" steps: the list, a step, the strip, and "What just happened" on the transaction screen. */
+  doit: { en: doit.en, es: doit.es },
 } as const;
 
 /** The name of one table: "common", "errors" or a screen's. */

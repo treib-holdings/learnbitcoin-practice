@@ -197,8 +197,13 @@ test('About and Receive, the bot check: the lock is said to do what it does, and
   assert.equal(t.auth.calls.length, prompts, 'a prompt was opened after the bot check came');
 
   // What the check's code could read for any kind of wallet: the stored record, and in it the public key.
-  assert.match(en.botReads, /it could also read the record this browser keeps for the wallet\. The record holds the wallet's public key, and with that every address the wallet has and will have\.$/);
+  // And the note of the "Do it" steps, which is kept in the same storage.
+  assert.match(
+    en.botReads,
+    /it could also read the record this browser keeps for the wallet\. The record holds the wallet's public key, and with that every address the wallet has and will have\. It could read the note of your "Do it" progress too\.$/,
+  );
   assert.match(es.botReads, /también podría leer el registro que este navegador guarda de la billetera\. El registro contiene la clave pública de la billetera/);
+  assert.match(es.botReads, /También podría leer la nota de tu progreso de "Hazlo"\.$/);
   const record = loadRecord(t.storage as Storage);
   assert.ok(record !== null && typeof record === 'object');
   assert.equal(record.kind, 'passkey');

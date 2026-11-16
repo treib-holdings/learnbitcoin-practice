@@ -12,7 +12,9 @@ language.
 
 **Status:** the practice network runs. The wallet app in this repository is
 built and tested against a stand-in of that network, and is not released yet.
-Guided "Do it" steps come in a later phase. Nothing here holds value.
+Six guided "Do it" steps (under `/do`) take a reader through what the site's
+Journey teaches: hold some, pass it on, see that there are no balances, wait
+for a block, write down the 12 words, prove the backup. Nothing here holds value.
 
 ## Ground rules
 

@@ -141,11 +141,27 @@ export function afterChoose(result: UnlockResult): ChooseOutcome {
 /**
  * Entries of the main site's glossary, by the last part of their address in
  * each language. The Spanish glossary lives under /es/glosario and names its
- * entries itself; both of these exist in both languages.
+ * entries itself; every one of these exists in both languages (each was
+ * looked up in the site's content, English and Spanish, before it was put
+ * here). "What just happened" on the transaction screen links the five
+ * terms a newcomer meets there: a coin (utxo), change, the fee, a block and
+ * the waiting room (mempool). The first "Do it" step, which belongs to a
+ * chapter that has not taught a wallet yet, links five more: a wallet, an
+ * address, the 12 words (the seed phrase), a block explorer and a block's
+ * height.
  */
 const GLOSSARY = {
   utxo: { en: 'utxo-unspent-transaction-output', es: 'utxo' },
   rbf: { en: 'replace-fee-rbf', es: 'rbf' },
+  change: { en: 'change-output', es: 'salida-de-cambio' },
+  fee: { en: 'transaction-fee', es: 'comision-de-transaccion' },
+  block: { en: 'block', es: 'bloque' },
+  mempool: { en: 'mempool', es: 'mempool' },
+  wallet: { en: 'wallet', es: 'billetera' },
+  address: { en: 'address', es: 'direccion' },
+  seed: { en: 'seed-phrase', es: 'frase-semilla' },
+  explorer: { en: 'block-explorer', es: 'explorador-de-bloques' },
+  height: { en: 'block-height', es: 'altura-de-bloque' },
 } as const;
 
 export type GlossaryTerm = keyof typeof GLOSSARY;
@@ -154,6 +170,17 @@ export type GlossaryTerm = keyof typeof GLOSSARY;
 export function glossaryUrl(siteUrl: string, lang: Lang, term: GlossaryTerm): string {
   const folder = lang === 'es' ? '/es/glosario/' : '/glossary/';
   return `${siteUrl}${folder}${GLOSSARY[term][lang]}`;
+}
+
+/**
+ * The glossary's entry for a faucet. It exists in English only, so it is
+ * not in the map above, whose entries all have both languages. A Spanish
+ * page links the English entry and says so in the link's words, as the main
+ * site does for a page it has in English only: no address is ever made up
+ * for an entry that is not there.
+ */
+export function faucetGlossaryUrl(siteUrl: string): string {
+  return `${siteUrl}/glossary/bitcoin-faucet`;
 }
 
 /** The address of a transaction on the practice explorer. `explorerUrl` has no slash at its end. */

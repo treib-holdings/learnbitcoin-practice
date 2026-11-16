@@ -11,7 +11,14 @@
 //     chain has a new block, when an address on screen has been paid, and
 //     straight after a payment of the wallet's own;
 //   - nothing by itself while the tab is hidden or no wallet screen is open:
-//     no poll, and no second try after a read that failed.
+//     no poll, and no second try after a read that failed. A step of "Do
+//     it" counts as a wallet screen here while a wallet is in the page: it
+//     checks what the reader did against the chain. The list of steps does
+//     not, and neither does any other screen;
+//   - the address the Receive screen shows, every five seconds, on that
+//     screen, and on a step's screen for as long as the wallet has never
+//     seen a coin: the first step waits for exactly that coin, and the
+//     reader comes back to it from the faucet before any block has come.
 //
 // It sets a limit to how long an answer may take (withDeadline): a request
 // that gets none is given up, so that nothing waits behind it for ever.
@@ -51,8 +58,17 @@ import {
   type WalletState,
 } from '@learnbitcoin/practice-wallet';
 import { broadcastFailure, failureOf, type ApiFailure, type BroadcastFailure, type PracticeApi } from './api.ts';
-import { needsWallet, type Route } from './router.ts';
-import type { BroadcastResult, ChainView, Notice, PotAddressResult, ReceiveView, TxLookup } from './wallet-api.ts';
+import { readsCoins, readsTransactions, type Route } from './router.ts';
+import type {
+  BroadcastResult,
+  ChainView,
+  LastSent,
+  Notice,
+  PotAddressResult,
+  PotStatsResult,
+  ReceiveView,
+  TxLookup,
+} from './wallet-api.ts';
 
 // -- how a module shows its state ---------------------------------------------
 
@@ -175,6 +191,8 @@ export interface ChainSnapshot {
   historyError: ApiFailure | null;
   receive: ReceiveView | null;
   notice: Notice | null;
+  /** The payment this page last sent from the wallet that is here. Null again when another wallet is. */
+  lastSent: LastSent | null;
 }
 
 /** What the first scan of a wallet found. `history`: some address of the wallet has been used. */
@@ -214,6 +232,8 @@ export interface ChainSync extends Published<ChainSnapshot> {
   plan(request: PaymentRequest): PaymentPlan;
   broadcast(payment: SignedPayment): Promise<BroadcastResult>;
   potAddress(): Promise<PotAddressResult>;
+  /** The pot's three counts. One request; nothing is kept. Never throws. */
+  potStats(): Promise<PotStatsResult>;
 
   /** A transaction ID the network was just given: for two minutes, "not found" for it means "not yet". */
   rememberTx(txid: string): void;
@@ -241,9 +261,6 @@ const RECENT_MS = 120_000;
 
 type Screen = Route['name'];
 
-/** The screens that show the wallet's transactions. */
-const ACTIVITY: ReadonlySet<Screen> = new Set<Screen>(['wallet', 'activity', 'tx']);
-
 const NO_CHAIN: ChainView = Object.freeze({
   state: null,
   scanning: false,
@@ -256,10 +273,17 @@ const NO_CHAIN: ChainView = Object.freeze({
 
 // -- small helpers ------------------------------------------------------------
 
-/** Whether a screen shows a wallet. Only those screens are worth reading the network for. */
+/**
+ * Whether a screen reads the network as a wallet screen does: the screens
+ * that show a wallet, and a step of "Do it", which ticks its parts from what
+ * the chain says (a coin confirmed, a payment in a block). The list of steps
+ * shows no such thing, and reads nothing. Only these screens are worth
+ * reading the network for, and none of them reads anything while no wallet
+ * is in the page: the engine is told a screen, and asks only for a wallet
+ * it has been handed (open).
+ */
 function walletScreen(screen: Screen | null): boolean {
-  if (screen === null) return false;
-  return needsWallet(screen === 'tx' ? { name: 'tx', txid: '' } : { name: screen });
+  return screen !== null && readsCoins(screen);
 }
 
 function coinKey(coin: { txid: string; vout: number }): string {
@@ -373,6 +397,7 @@ export function makeChainSync(deps: ChainDeps): ChainSync {
     historyError: null,
     receive: null,
     notice: null,
+    lastSent: null,
   });
 
   // What is known about the wallet being watched. All of it starts again when the wallet changes.
@@ -412,6 +437,8 @@ export function makeChainSync(deps: ChainDeps): ChainSync {
   const spentHere = new Map<string, number>();
   /** A read was dropped for being behind: the next poll reads the coins whatever the height says. */
   let behind = false;
+  /** The payment this page last sent from this wallet: which, whether to the pot, and when. Kept in memory only. */
+  let lastSent: LastSent | null = null;
 
   // What outlives a wallet.
   let screen: Screen | null = null;
@@ -506,7 +533,7 @@ export function makeChainSync(deps: ChainDeps): ChainSync {
     const receive: ReceiveView | null =
       shown === null ? null : { address: shown.address, index: shown.index, arrived: shown.arrived };
     if (receive === null || receiveShown === null || !sameFields(receive, receiveShown)) receiveShown = receive;
-    board.set({ wallet, chain: chainShown, history, historyError, receive: receiveShown, notice });
+    board.set({ wallet, chain: chainShown, history, historyError, receive: receiveShown, notice, lastSent });
   }
 
   function notify(what: NewNotice): void {
@@ -544,6 +571,8 @@ export function makeChainSync(deps: ChainDeps): ChainSync {
     sentHere.clear();
     spentHere.clear();
     behind = false;
+    // Another wallet's payment is not this wallet's "last sent".
+    lastSent = null;
     recent.clear();
     stopTimers();
     const waiting = firstScan;
@@ -852,8 +881,27 @@ export function makeChainSync(deps: ChainDeps): ChainSync {
   const pollsNow = (): boolean =>
     account !== null && state !== null && failures === 0 && isVisible() && walletScreen(screen);
 
-  /** True while a screen that shows the wallet's transactions is open. */
-  const showsActivity = (): boolean => screen !== null && ACTIVITY.has(screen);
+  /** True while a screen that shows the wallet's transactions, or checks them, is open (readsTransactions in router.ts). */
+  const showsActivity = (): boolean => screen !== null && readsTransactions(screen);
+
+  /**
+   * True on a step's screen while the wallet has never seen a coin: it holds
+   * none, and none of its receive addresses was ever paid. The first step
+   * of "Do it" waits for that first coin ("Ask the faucet for coins"), and
+   * the reader comes back to the step straight from the faucet, often
+   * before the chain's index lists the payment. The 15-second poll reads
+   * the coins only when the chain has grown, so the step would go on
+   * saying "ask the faucet" until the next block, and would then tick two
+   * parts at once without ever showing the coin wait for its block. So the
+   * step's screen looks at the receive address as the Receive screen does,
+   * until the first coin is there. One small request every five seconds,
+   * and none once the wallet has seen a coin.
+   */
+  const awaitsFirstCoin = (): boolean =>
+    screen === 'step' && state !== null && state.coins.length === 0 && !state.receive.some((address) => address.used);
+
+  /** True on the screens where the address the Receive screen shows is looked at every five seconds. */
+  const watchesShown = (): boolean => screen === 'receive' || awaitsFirstCoin();
 
   /** What a poll reads besides the height: the coins if it has moved, or in any case after a read that was behind. */
   const pollReads = (): 'if-moved' | 'always' => (behind ? 'always' : 'if-moved');
@@ -885,7 +933,7 @@ export function makeChainSync(deps: ChainDeps): ChainSync {
     const polls = pollsNow();
     if (polls) tipTimer ??= later(tick, TIP_MS);
     else tipTimer = cancel(tipTimer);
-    if (polls && screen === 'receive' && shown !== null) addressTimer ??= later(addressTick, ADDRESS_MS);
+    if (polls && watchesShown() && shown !== null) addressTimer ??= later(addressTick, ADDRESS_MS);
     else addressTimer = cancel(addressTimer);
   }
 
@@ -913,11 +961,15 @@ export function makeChainSync(deps: ChainDeps): ChainSync {
     void job(lookAtShown()).then(syncTimers);
   }
 
-  /** Receive only: has the address on screen been paid since it was last looked at? One request. */
+  /**
+   * Has the address the Receive screen shows been paid since it was last
+   * looked at? One request. On Receive, and on a step's screen while the
+   * wallet waits for its first coin (awaitsFirstCoin).
+   */
   async function lookAtShown(): Promise<void> {
     const mine = wallet;
     const at = shown;
-    if (at === null || screen !== 'receive' || !pollsNow()) return;
+    if (at === null || !watchesShown() || !pollsNow()) return;
     try {
       const txCount = txCountOf(await esplora.address(at.address));
       if (mine !== wallet || shown !== at || txCount === at.txCount) return;
@@ -1180,7 +1232,14 @@ export function makeChainSync(deps: ChainDeps): ChainSync {
       // Sent from this page before, and sent again: the node takes a waiting payment a second time, and
       // says "already sent" of a confirmed one. It is one payment, already applied, announced and counted.
       if (mine === wallet && sentHere.has(txid)) return { ok: true, txid };
-      count('Payment', payment.outputs.some((output) => !output.isChange && pots.has(output.address)) ? 'sent-to-pot' : 'sent');
+      const toPot = payment.outputs.some((output) => !output.isChange && pots.has(output.address));
+      count('Payment', toPot ? 'sent-to-pot' : 'sent');
+      // Noted where it is counted, for the "Do it" steps that wait for a
+      // payment: its ID, whether it went to an address the pot handed out
+      // here, and the moment. Only for the wallet that is still in the page:
+      // a payment of a wallet that has left it is not this wallet's. It is
+      // shown with the next thing shown below (the notice, or the coins).
+      if (mine === wallet) lastSent = { txid, toPot, at: now() };
       if (mine === wallet && state !== null) {
         sentHere.add(txid);
         // For two minutes, a read that still lists a coin this payment spent is behind (see lagging).
@@ -1210,6 +1269,14 @@ export function makeChainSync(deps: ChainDeps): ChainSync {
     }
   }
 
+  async function potStats(): Promise<PotStatsResult> {
+    try {
+      return { ok: true, stats: await deps.api.potStats() };
+    } catch (cause) {
+      return { ok: false, reason: failureOf(cause) };
+    }
+  }
+
   return {
     view: board.view,
     subscribe: board.subscribe,
@@ -1226,6 +1293,7 @@ export function makeChainSync(deps: ChainDeps): ChainSync {
     plan,
     broadcast,
     potAddress,
+    potStats,
     rememberTx,
     announce: (kind) => notify({ kind }),
     async idle() {

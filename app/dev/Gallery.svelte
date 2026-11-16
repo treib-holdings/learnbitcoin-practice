@@ -18,6 +18,7 @@
   import { untrack } from 'svelte';
   import App from '../src/App.svelte';
   import Shell from '../src/components/Shell.svelte';
+  import { setDoit, type Doit } from '../src/lib/doit/doit-context.ts';
   import WalletGate from '../src/components/wallet/WalletGate.svelte';
   import { router } from '../src/lib/router.svelte.ts';
   import { needsWallet } from '../src/lib/router.ts';
@@ -32,11 +33,15 @@
   import UnlockStates from './UnlockStates.svelte';
   import WalletPieces from './WalletPieces.svelte';
 
-  let { wallet: given, preset }: { wallet: StandIn; preset: string } = $props();
+  let { wallet: given, preset, doit: steps }: { wallet: StandIn; preset: string; doit: Doit } = $props();
 
   // The gallery's own pages use pieces that ask for the wallet, as screens do.
   const wallet = untrack(() => given);
   setWallet(wallet);
+
+  // And the shell around them asks for the "Do it" steps, for its strip.
+  const doit = untrack(() => steps);
+  setDoit(doit);
 
   let page = $derived(galleryPage(router.path));
 
@@ -82,8 +87,8 @@
 {:else if onApp !== null}
   <!-- The app, with the steps the address asks for played on it once it is drawn. -->
   <div {@attach playedOnApp}>
-    <App {wallet} />
+    <App {wallet} {doit} />
   </div>
 {:else}
-  <App {wallet} />
+  <App {wallet} {doit} />
 {/if}

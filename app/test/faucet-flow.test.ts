@@ -44,6 +44,7 @@ class ChainStub {
     historyError: null,
     receive: { address: ME, index: 0, arrived: 0n },
     notice: null,
+    lastSent: null,
   };
   readonly remembered: string[] = [];
   /** Every holdReceive() call, in order. */

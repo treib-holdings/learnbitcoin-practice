@@ -46,6 +46,9 @@
 //   botcheck=none              the settings name no bot check, so the faucet is closed
 //   events=yes                 screen views are counted (into a list on the page, never the network: see main.ts)
 //   delay=<milliseconds>       how long an action takes (default 600)
+//   from=<path>                not the stand-in's: a step's screen (/do/<id>) reads it from its own
+//                              address, as the page of the main site the reader came from. It is let
+//                              through here, so that such an address can be opened in the gallery
 //
 // QUERY KEYS that say how an action ends. The first value is the default.
 // Wherever "passkey" stands in a list, any of these may be given: cancelled,
@@ -73,12 +76,15 @@
 //   sign=ok|<a plan failure>                                   sign, e.g. sign=too-much
 //   broadcast=ok|<a broadcast failure>                         broadcast, e.g. broadcast=coin_spent
 //   pot=ok|<a failure>                                         potAddress
+//   potStats=ok|none|<a failure>                               potStats ("none": the pot has seen no payment yet)
+//   wordsAt=check|right|wrong|locked|reload|gone               checkWordsAt ("check" compares with the sample
+//                                                              wallet's words; "wrong": the first position asked)
 //
 // "A failure" is one of the contract's refusal codes, or "network". A key or
 // a value that is not listed stops the page with an error that says what is
 // allowed, so a typing mistake is never taken for a default.
 
-import { BROADCAST_REFUSALS, ERROR_CODES, type AppConfig, type FaucetPayment } from '@learnbitcoin/practice-contract';
+import { BROADCAST_REFUSALS, ERROR_CODES, type AppConfig, type FaucetPayment, type PotStats } from '@learnbitcoin/practice-contract';
 import {
   accountDescriptor,
   applyPayment,
@@ -110,9 +116,11 @@ import type {
   FaucetFailure,
   FaucetView,
   KeepResult,
+  LastSent,
   Notice,
   OpenResult,
   PotAddressResult,
+  PotStatsResult,
   PublicRecord,
   ReceiveView,
   RestoreResult,
@@ -125,6 +133,7 @@ import type {
   UnlockWordsResult,
   WalletApi,
   WalletStatus,
+  WordsAtResult,
   WordsCheck,
 } from '../src/lib/wallet-api.ts';
 import { strings } from '../src/strings/index.ts';
@@ -180,7 +189,36 @@ export const ANSWERS: Record<string, readonly string[]> = {
   sign: ['ok', ...PLAN_FAILURES],
   broadcast: ['ok', ...BROADCAST_FAILURES],
   pot: ['ok', ...API_FAILURES],
+  potStats: ['ok', 'none', ...API_FAILURES],
+  wordsAt: ['check', 'right', 'wrong', 'locked', 'reload', 'gone'],
 };
+
+/** What the pot's counter says in the gallery: three numbers that all differ. */
+const POT_COUNTS: PotStats = { passedOn: 128, waiting: 3, handedOn: 125 };
+
+/**
+ * A Storage that lives in this page's memory and nowhere else. The gallery
+ * stores nothing in the browser, and the "Do it" progress wants a Storage
+ * to keep its note in: this is the one it is handed here. A preset can put
+ * a note into it before any screen is drawn.
+ */
+function memoryStorage(): Storage {
+  const kept = new Map<string, string>();
+  return {
+    get length() {
+      return kept.size;
+    },
+    clear: () => kept.clear(),
+    getItem: (key) => kept.get(key) ?? null,
+    key: (index) => [...kept.keys()][index] ?? null,
+    removeItem: (key) => {
+      kept.delete(key);
+    },
+    setItem: (key, value) => {
+      kept.set(key, String(value));
+    },
+  };
+}
 
 /** The passkey failure an answer names, or null when the answer is something else. */
 function passkeyFailure(answer: string): CeremonyFailure | null {
@@ -260,6 +298,15 @@ export class StandIn implements WalletApi {
   receive = $state.raw<ReceiveView | null>(null);
   faucet = $state.raw<FaucetView>(IDLE);
   notice = $state.raw<Notice | null>(null);
+  lastSent = $state.raw<LastSent | null>(null);
+  wordsShown = $state(0);
+
+  /**
+   * Not part of WalletApi: it stands in for the Storage the real
+   * wallet.svelte.ts exports beside `wallet`, for the "Do it" progress. In
+   * memory only, so the gallery still stores nothing.
+   */
+  readonly storage: Storage = memoryStorage();
 
   /** How each action ends, by action key. Unlisted keys take the default. */
   answers: Record<string, string> = {};
@@ -360,6 +407,8 @@ export class StandIn implements WalletApi {
     this.#historyToLoad = null;
     this.receive = null;
     this.faucet = IDLE;
+    // Another wallet's payment is not this one's "last sent".
+    this.lastSent = null;
   }
 
   /**
@@ -599,7 +648,25 @@ export class StandIn implements WalletApi {
 
   revealWords(): string[] | null {
     if (this.#answer('reveal') === 'none') return null;
-    return this.status === 'ready' && this.unlocked ? WORDS.split(' ') : null;
+    if (this.status !== 'ready' || !this.unlocked) return null;
+    // As with the real wallet: each time the words are handed out, the count goes up by one.
+    this.wordsShown += 1;
+    return WORDS.split(' ');
+  }
+
+  checkWordsAt(positions: number[], typed: string[]): WordsAtResult {
+    const answer = this.#botCheck ? 'reload' : this.#answer('wordsAt');
+    if (answer === 'locked' || answer === 'reload' || answer === 'gone') return { ok: false, reason: answer };
+    if (answer === 'right') return { ok: true, wrong: [] };
+    if (answer === 'wrong') return { ok: true, wrong: positions.slice(0, 1) };
+    // "check": against the sample wallet's own words, as the real wallet checks against its own.
+    if (this.status !== 'ready' || this.record === null) return { ok: false, reason: 'gone' };
+    if (!this.unlocked) return { ok: false, reason: 'locked' };
+    const own = WORDS.split(' ');
+    return {
+      ok: true,
+      wrong: positions.filter((position, at) => own[position] === undefined || normalizeMnemonic(typed[at] ?? '') !== own[position]),
+    };
   }
 
   removeWallet(): 'removed' | 'gone' {
@@ -637,9 +704,9 @@ export class StandIn implements WalletApi {
     });
   }
 
-  /** True while a screen that shows the wallet's transactions is open. */
+  /** True while a screen that shows the wallet's transactions is open, or a "Do it" step, which checks them. */
   #showsActivity(): boolean {
-    return this.watching === 'wallet' || this.watching === 'activity' || this.watching === 'tx';
+    return this.watching === 'wallet' || this.watching === 'activity' || this.watching === 'tx' || this.watching === 'step';
   }
 
   async refresh(): Promise<void> {
@@ -853,6 +920,12 @@ export class StandIn implements WalletApi {
       if (this.history !== null) this.history = [view, ...this.history];
       else if (this.#historyToLoad !== null) this.#historyToLoad = [view, ...this.#historyToLoad];
     }
+    // As with the real wallet: the payment is noted as the last one this page sent.
+    this.lastSent = {
+      txid: payment.txid,
+      toPot: payment.outputs.some((output) => !output.isChange && output.address === POT_ADDRESS),
+      at: Date.now(),
+    };
     this.#say({ kind: 'payment-sent' });
     return { ok: true, txid: payment.txid };
   }
@@ -862,6 +935,14 @@ export class StandIn implements WalletApi {
     await this.#wait();
     if (answer !== 'ok') return { ok: false, reason: answer as ApiFailure };
     return { ok: true, address: POT_ADDRESS };
+  }
+
+  async potStats(): Promise<PotStatsResult> {
+    const answer = this.#answer('potStats');
+    await this.#wait();
+    if (answer === 'none') return { ok: true, stats: { passedOn: 0, waiting: 0, handedOn: 0 } };
+    if (answer !== 'ok') return { ok: false, reason: answer as ApiFailure };
+    return { ok: true, stats: { ...POT_COUNTS } };
   }
 }
 
@@ -968,6 +1049,8 @@ export function fromQuery(search: string): { preset: string; overrides: Override
     else if (key === 'botcheck' && value === 'none') overrides.botCheck = false;
     else if (key === 'events' && value === 'yes') overrides.events = true;
     else if (key === 'delay' && /^[0-9]+$/.test(value)) overrides.delay = Number(value);
+    // A step's own key (/do/<id>?from=<path>): the screen reads it from its address, the stand-in does not.
+    else if (key === 'from') continue;
     else if (Object.hasOwn(ANSWERS, key)) overrides.answers = { ...overrides.answers, [key]: value };
     else fail(`the query string says ${key}=${value}, which is not a key and value the stand-in knows`);
   }

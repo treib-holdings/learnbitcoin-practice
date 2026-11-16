@@ -104,6 +104,25 @@ export const KEPT_KEYS = {
   broken: 'keepNowBroken',
 } as const satisfies Record<KeptNow, AboutKey>;
 
+/**
+ * What the line "In this browser right now" says, when the note of the
+ * "Do it" steps may be stored beside the wallet's record, or without one.
+ * Removing a wallet leaves that note in place, so "Nothing" would be false
+ * of a browser that has no wallet and still has the note.
+ *
+ *   text  the sentence about the wallet's record; for a browser with no
+ *         wallet and a note, the one sentence that says both
+ *   also  true when the sentence that the note is kept too follows it
+ *
+ * A browser that failed the self-test is said to hold "not known", and
+ * nothing is added to that.
+ */
+export function keptNowLines(kept: KeptNow, note: boolean): { text: AboutKey; also: boolean } {
+  if (!note || kept === 'broken') return { text: KEPT_KEYS[kept], also: false };
+  if (kept === 'none') return { text: 'noteOnlyNow', also: false };
+  return { text: KEPT_KEYS[kept], also: true };
+}
+
 // -- what is counted ---------------------------------------------------------------
 
 /**
@@ -121,6 +140,7 @@ export const COUNT_KEYS = {
   Payment: 'count_payment',
   'Words shown': 'count_wordsShown',
   'Wallet removed': 'count_walletRemoved',
+  'Do it': 'count_doIt',
 } as const satisfies Record<EventName, AboutKey>;
 
 /** Everything the app counts, in the contract's order: the event's name as it is sent, and what it means. */

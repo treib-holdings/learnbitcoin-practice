@@ -14,7 +14,7 @@
 //   3. The 12 words and private keys are never held in a property. They come
 //      out through revealWords() only, and only while the wallet is unlocked.
 
-import type { AppConfig, FaucetPayment } from '@learnbitcoin/practice-contract';
+import type { AppConfig, FaucetPayment, PotStats } from '@learnbitcoin/practice-contract';
 import type {
   PaymentPlan,
   PaymentRequest,
@@ -277,6 +277,34 @@ export type BroadcastResult =
 
 export type PotAddressResult = { ok: true; address: string } | { ok: false; reason: ApiFailure };
 
+/** The pot's three counts, or why they could not be had. A screen that shows a count leaves its line out on a failure. */
+export type PotStatsResult = { ok: true; stats: PotStats } | { ok: false; reason: ApiFailure };
+
+/**
+ * The payment this page last sent: its ID, whether it went to an address the
+ * pot handed out in this page ("Pass it on"), and when, in ms since 1970.
+ */
+export interface LastSent {
+  txid: string;
+  toPot: boolean;
+  at: number;
+}
+
+// -- checking a few of the 12 words -----------------------------------------------
+
+/**
+ * What checkWordsAt() answers.
+ *
+ * ok      the words were compared. `wrong` holds the positions (from 0, as
+ *         they were asked) whose typed word is not the wallet's word there:
+ *         empty when every one was right. It never holds a word.
+ * locked  a passkey wallet whose keys are not loaded: unlock it first
+ * reload  the bot check has been let into this page: nothing here takes
+ *         typed words until the page has been loaded again
+ * gone    no wallet is here (it was removed or replaced in another tab)
+ */
+export type WordsAtResult = { ok: true; wrong: number[] } | { ok: false; reason: 'locked' | 'reload' | 'gone' };
+
 // -- one transaction --------------------------------------------------------------
 
 export type TxLookup =
@@ -347,6 +375,21 @@ export interface WalletApi {
   /** The latest outcome worth announcing. A new one has a new id. */
   readonly notice: Notice | null;
 
+  /**
+   * The payment this page last sent from the wallet that is here, or null.
+   * It is set at the moment the wallet counts the payment as sent, is null
+   * again as soon as another wallet (or none) is in the page, and lives in
+   * memory only: a reload forgets it. The "Do it" steps that wait for a
+   * payment read it, to tell a payment made now from one made before.
+   */
+  readonly lastSent: LastSent | null;
+  /**
+   * How many times this page has put a wallet's 12 words on screen: it goes
+   * up by one each time revealWords() gives them. In memory only, and never
+   * a word: a reload starts it at 0 again.
+   */
+  readonly wordsShown: number;
+
   // ---- making and opening a wallet ----
 
   /** Starts the passkey prompt, so call it from a tap. */
@@ -388,6 +431,27 @@ export interface WalletApi {
   lock(): void;
   /** The 12 words, or null while locked. Keep them out of anything that outlives the screen. */
   revealWords(): string[] | null;
+  /**
+   * Checks a few of the wallet's 12 words without ever handing the words to
+   * the screen. `positions` are places in the phrase, counted from 0 (the
+   * first word is 0, the twelfth 11), and `typed` holds what the reader
+   * typed for each, in the same order. The answer names the positions that
+   * were wrong and never a word; nothing is counted and nothing is stored.
+   *
+   * What was typed is compared inside the wallet, under its rule for the 12
+   * words: no regular expression is run over it, so it does not stay where
+   * any script in the page could read it back. Hand it over as the fields
+   * hold it, and keep it nowhere else. Capitals and spaces around a word do
+   * not count against it.
+   *
+   * A position the phrase does not have, or one with nothing typed for it,
+   * is wrong. An empty list of positions has nothing wrong in it and proves
+   * nothing: the caller says which positions it asked the reader for.
+   * Call it from a tap, not while the screen is being drawn: it reads this
+   * browser's storage again first, and what it finds can change what the
+   * wallet shows.
+   */
+  checkWordsAt(positions: number[], typed: string[]): WordsAtResult;
   /**
    * Deletes this wallet's record from this browser and drops its keys. Other stored
    * data is left alone. With status "unreadable" it deletes what cannot be read.
@@ -455,4 +519,11 @@ export interface WalletApi {
   broadcast(payment: SignedPayment): Promise<BroadcastResult>;
   /** An address of the pay-it-forward pot, for "Pass it on". */
   potAddress(): Promise<PotAddressResult>;
+  /**
+   * The pot's three counts: payments passed on that a block has taken in,
+   * coins waiting for a newcomer, coins the faucet has handed on. One
+   * request each time it is called; ask once, when the line that shows a
+   * count is drawn.
+   */
+  potStats(): Promise<PotStatsResult>;
 }

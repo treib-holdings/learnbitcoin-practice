@@ -1,5 +1,5 @@
 // The app's one client for its Worker: the chain (through the Esplora API),
-// the faucet and the pay-it-forward pot.
+// the faucet and the pay-it-forward pot (its address, and its counts).
 //
 // Every way a request can fail comes out as one short word, an ApiFailure:
 // one of the contract's refusal codes, or "network" when no answer arrived
@@ -17,6 +17,7 @@ import {
   type ErrorCode,
   type FaucetPayment,
   type FaucetRequest,
+  type PotStats,
 } from '@learnbitcoin/practice-contract';
 import { Esplora, EsploraError, type FetchLike } from '@learnbitcoin/practice-wallet';
 
@@ -34,7 +35,7 @@ export type ApiFailure = ErrorCode | 'network';
  */
 export type BroadcastFailure = BroadcastRefusal | 'too_large' | 'limit' | 'unavailable' | 'network';
 
-/** What askFaucet and potAddress throw. `status` is the HTTP status, or 0 when there was no answer. */
+/** What askFaucet, potAddress and potStats throw. `status` is the HTTP status, or 0 when there was no answer. */
 export class ApiError extends Error {
   status: number;
   reason: ApiFailure;
@@ -228,22 +229,28 @@ export interface PracticeApi {
   askFaucet(address: string, token: string): Promise<FaucetPayment>;
   /** An address of the pay-it-forward pot. Throws ApiError. */
   potAddress(): Promise<string>;
+  /** The pot's three counts: payments passed on, coins waiting, coins handed on. Throws ApiError. */
+  potStats(): Promise<PotStats>;
+}
+
+/** A count as the Worker sends one: a whole number from 0. */
+function isCount(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
 }
 
 /** Builds the client around a fetch. Tests pass a fake; the app uses the browser's. */
 export function makeApi(fetchFn: FetchLike = (input, init) => fetch(input, init)): PracticeApi {
-  /** POSTs to one of the Worker's paths and gives back the parsed answer, or throws ApiError. */
-  async function post(path: string, body?: unknown): Promise<unknown> {
+  /**
+   * Asks one of the Worker's own paths (not the chain's) and gives back the
+   * parsed answer, or throws ApiError. A question with nothing to send is a
+   * plain GET; everything else is a POST.
+   */
+  async function ask(path: string, init?: RequestInit): Promise<unknown> {
     let status: number;
     let ok: boolean;
     let text: string;
     try {
-      const res = await fetchFn(
-        path,
-        body === undefined
-          ? { method: 'POST' }
-          : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) },
-      );
+      const res = await fetchFn(path, init);
       status = res.status;
       ok = res.ok;
       text = await res.text();
@@ -262,6 +269,16 @@ export function makeApi(fetchFn: FetchLike = (input, init) => fetch(input, init)
     } catch {
       throw new ApiError(status, 'unavailable');
     }
+  }
+
+  /** POSTs to one of the Worker's paths, with a JSON body or with none. */
+  function post(path: string, body?: unknown): Promise<unknown> {
+    return ask(
+      path,
+      body === undefined
+        ? { method: 'POST' }
+        : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) },
+    );
   }
 
   return {
@@ -288,6 +305,17 @@ export function makeApi(fetchFn: FetchLike = (input, init) => fetch(input, init)
       const address = answer?.address;
       if (typeof address !== 'string' || !ADDRESS_PATTERN.test(address)) throw new ApiError(200, 'unavailable');
       return address;
+    },
+
+    async potStats() {
+      // A plain GET: nothing is sent, and nothing is changed by asking.
+      const answer = (await ask(API.potStats)) as Partial<Record<keyof PotStats, unknown>> | null;
+      const passedOn = answer?.passedOn;
+      const waiting = answer?.waiting;
+      const handedOn = answer?.handedOn;
+      // Three whole numbers from 0, or it is no answer: a screen puts one of them into a sentence.
+      if (!isCount(passedOn) || !isCount(waiting) || !isCount(handedOn)) throw new ApiError(200, 'unavailable');
+      return { passedOn, waiting, handedOn };
     },
   };
 }

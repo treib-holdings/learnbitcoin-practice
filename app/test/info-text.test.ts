@@ -24,6 +24,7 @@ import { ACCOUNT_PATH, REGTEST } from '@learnbitcoin/practice-wallet';
 import { splitLead } from '../src/components/text.ts';
 import { DEFAULT_CONFIG } from '../src/lib/config.ts';
 import { slotNames } from '../src/lib/format.ts';
+import { PROGRESS_KEY } from '../src/lib/doit/progress.ts';
 import { RECORD_KEY, loadRecord, makeRecord } from '../src/lib/keystore.ts';
 import { TURNSTILE_SCRIPT, faucetWidgetOptions } from '../src/lib/turnstile.ts';
 import { ARROW, LABEL_MARK, needsSays, sentenceParts, sentenceText } from '../src/screens/info/says.ts';
@@ -503,23 +504,40 @@ test('a problem says the cause and then the way out; a caution is whole sentence
 const WORDS = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
 const MADE_AT = Date.UTC(2026, 10, 1, 12);
 
-test('About, "what this browser keeps": the app stores one record under one key, and uses no other storage', () => {
-  // The sentence: one record, in this browser's storage; no cookies set by us; no other kind of browser storage.
-  assert.match(strings.about.en.keepBody, /^One record, in this browser's storage for this site\. Nothing else is kept: no cookies set by us, and nothing in any other kind of browser storage\.$/);
+test('About, "what this browser keeps": the app stores the wallet\'s record and the note of the steps, each under its key, and uses no other storage', () => {
+  // The sentence: at most two things, in this browser's storage; no cookies set by us; no other kind of browser storage.
+  assert.match(
+    strings.about.en.keepBody,
+    /^At most two things, in this browser's storage for this site: the record of the wallet, and a note of your "Do it" progress once you have opened a step\. Nothing else is kept: no cookies set by us, and nothing in any other kind of browser storage\.$/,
+  );
+  assert.match(
+    strings.about.es.keepBody,
+    /^Como mucho dos cosas, en el almacenamiento de este navegador para este sitio: el registro de la billetera, y una nota de tu progreso de "Hazlo" una vez que abres un paso\. No se guarda nada más: /,
+  );
   assert.equal(RECORD_KEY, 'lbp_wallet_v1');
+  // The "Do it" steps keep one more value, under a key of its own (SPEC-A3 section 4).
+  assert.equal(PROGRESS_KEY, 'lbp_progress_v1');
   // The whole app, every file that is built into it.
   const root = new URL('../src/', import.meta.url);
   const files = readdirSync(root, { recursive: true, encoding: 'utf8' }).filter((name) => /\.(ts|svelte|css)$/.test(name));
   assert.ok(files.length > 80, `${files.length} files`);
+  const writers: string[] = [];
   for (const name of files) {
     const text = code(readFileSync(new URL(name, root), 'utf8'));
     for (const banned of [/sessionStorage/, /indexedDB/, /document\.cookie/, /cookieStore/, /\bcaches\.(open|match)/, /serviceWorker/, /openDatabase/]) {
       assert.doesNotMatch(text, banned, `${name}: About says nothing but the wallet's record is kept`);
     }
-    // Only the key store writes to storage, and only the glue hands it the browser's storage.
-    if (/\.setItem\(|\.removeItem\(/.test(text)) assert.equal(name, 'lib/keystore.ts', `${name} writes to storage`);
+    if (/\.setItem\(|\.removeItem\(/.test(text)) writers.push(name);
     if (/\blocalStorage\b/.test(text)) assert.equal(name, 'lib/wallet.svelte.ts', `${name} reaches for localStorage`);
   }
+  // Two places write to storage and no third: the key store (the wallet's record) and the note of the
+  // "Do it" steps. Only the glue reaches for the browser's storage, and hands it to both.
+  assert.deepEqual(writers.sort(), ['lib/doit/progress.ts', 'lib/keystore.ts'], 'where storage is written changed: read About, "What this browser keeps", again');
+  // The note's module writes under its own key and no other: every call that stores, reads or deletes names it.
+  const progress = code(readFileSync(new URL('lib/doit/progress.ts', root), 'utf8'));
+  const calls = progress.match(/\.(setItem|removeItem|getItem|key|clear)\([^)]*/g) ?? [];
+  assert.ok(calls.length >= 4, calls.join(' '));
+  for (const call of calls) assert.match(call, /^\.(setItem|removeItem|getItem)\(PROGRESS_KEY\b/, call);
 });
 
 test('About, "what this browser keeps": a record holds what the page lists, and the words only in the kind that keeps them', () => {
@@ -555,13 +573,14 @@ test('About, "what our server sees": what is written down, and what Cloudflare k
   // broken; every other request writes one line. (The last scenario of e2e/scenarios/info.test.ts reads the
   // lines a real run wrote, and holds these sentences to them.)
   assert.match(en.serverLog, /^When the page asks about an address, a transaction or the height of the chain, the server writes nothing down, unless something on our side is broken\./);
-  assert.match(en.serverLog, /\(the page's settings, the faucet, the address of the pot, a payment being sent, a count\)/);
+  // The pot's totals are on the list since the "Do it" steps ask for them (GET /api/pot/stats writes a line).
+  assert.match(en.serverLog, /\(the page's settings, the faucet, the address of the pot, the pot's totals, a payment being sent, a count\)/);
   // The pot has one name in the app, the one Send and Receive give it.
   for (const text of Object.values(strings.about.en)) assert.doesNotMatch(text, /pass-it-on|pay-it-forward/);
   assert.match(en.serverLog, /what kind of request it was, how it ended and how long it took\. The line itself holds no address, no transaction ID and no IP address\.$/);
   // "Block height" is "altura de bloque" on the Spanish site (notes/06, section 2).
   assert.match(es.serverLog, /^Cuando la página pregunta por una dirección, una transacción o la altura de bloque actual, el servidor no anota nada/);
-  assert.match(es.serverLog, /\(la configuración de la página, el faucet, la dirección del fondo común, un pago que se envía, un conteo\)/);
+  assert.match(es.serverLog, /\(la configuración de la página, el faucet, la dirección del fondo común, los totales del fondo común, un pago que se envía, un conteo\)/);
   assert.match(es.serverLog, /La línea en sí no contiene ninguna dirección, ningún txid ni ninguna dirección IP\.$/);
   // "The line itself" is the Worker's own line. What the log service stores beside it was read off a stored
   // line on the live host after the first deploy (worker/wrangler.jsonc, above "observability"): the web
