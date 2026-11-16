@@ -47,6 +47,9 @@ class Bots:
         self.lock = threading.Lock()  # one wallet-changing operation at a time
         self.last_consolidation: str | None = None
         self._pot_address: str | None = None  # handed out until it is paid
+        self._stats_lock = threading.Lock()  # one reading of the pot's counts at a time; never taken with self.lock
+        self._stats: tuple | None = None  # the last reading: ((newest block, faucet payments) it was made at, the counts)
+        self.stats_wait_seconds = 20  # how long a look waits for its turn at the node before it gives up
 
     # -- setup ----------------------------------------------------------------
 
@@ -109,7 +112,9 @@ class Bots:
                 return entry["address"]
         return self.faucet.call("getnewaddress", "pot", "bech32")
 
-    def pot_stats(self) -> dict:
+    def _pot_counts(self) -> dict:
+        """The counts the pot's counter reads from the node. One reading costs the
+        node up to four calls and one more for every locked pot coin (pot_coins)."""
         received = [
             r for r in self.faucet.call("listreceivedbyaddress", 1, False, False) if r.get("label") == "pot"
         ]
@@ -118,6 +123,49 @@ class Bots:
             "learners_passed_on": len(txids),
             "sats_received": sum(to_sats(r["amount"]) for r in received),
             "coins_waiting": len(self.pot_coins()),
+        }
+
+    def pot_stats(self) -> dict:
+        """The pay-it-forward counter.
+
+        Anybody can ask for it through the practice app's Worker, and anybody
+        can add pot coins by paying the pot, so what a reading costs the node
+        (_pot_counts) is in a stranger's hands. The counts are therefore read
+        from the node once and kept. They are read again only when the newest
+        block or the number of faucet payments has changed: payments to the
+        pot and pot coins confirm with a block, and a pot coin leaves with a
+        faucet payment. Everyone else, and everyone who asks while a reading
+        is under way, shares what is kept and costs the node one call.
+
+        The block and the number of payments are read first and the counts
+        after them, so what is kept is never older than what it is kept under
+        (Core's wallet calls wait until the wallet has caught up with the
+        newest block). A block or a payment that comes in between only makes
+        the next caller read again. A reading that fails keeps nothing: the
+        next caller tries again.
+
+        The lock is this counter's own, held while a look asks the node, so
+        all the looks together ask it one thing at a time. The faucet's lock
+        (self.lock) is never taken here: a look never waits for a payment,
+        nor a payment for a look.
+
+        A look that has waited stats_wait_seconds for its turn gives up, and
+        its caller is told "unavailable" (the Worker has stopped listening by
+        then). Without that, looks would queue without end whenever a reading
+        takes longer than the next block or payment takes to come: each one
+        that waited would have to read again.
+        """
+        if not self._stats_lock.acquire(timeout=self.stats_wait_seconds):
+            raise FaucetError(503, "unavailable", "The pot's counter is being read; try again in a moment")
+        try:
+            at = (self.node.call("getbestblockhash"), self.store.total())
+            if self._stats is None or self._stats[0] != at:
+                self._stats = (at, self._pot_counts())
+            counts = self._stats[1]
+        finally:
+            self._stats_lock.release()
+        return {
+            **counts,
             "coins_passed_to_newcomers": self.store.passed_on(),
             "faucet_payments": self.store.total(),
         }

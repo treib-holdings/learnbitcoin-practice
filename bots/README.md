@@ -24,7 +24,7 @@ checks Turnstile before calling `/faucet`.
 | Request | Auth | Answer |
 |---|---|---|
 | `GET /health` | none | height, block age, electrs height, faucet balance, disk use |
-| `GET /pot/stats` | none | learners who passed coins on, coins waiting, coins passed to newcomers |
+| `GET /pot/stats` | none | the pay-it-forward counter: learners who passed coins on, sats received, coins waiting, coins passed to newcomers, faucet payments |
 | `GET /pot/address` | bearer | a fresh pot address |
 | `POST /faucet` `{"address": "bcrt1..."}` | bearer | `{txid, amount_sats, pot_coin}` |
 
@@ -32,6 +32,23 @@ Every refusal is JSON `{"error": <sentence>, "code": <stable code>}`. The faucet
 codes: `bad_address`, `own_address` (400), `already_paid`, `busy` (429), `refilling`
 (503), `failed` (500). The app shows its own text for each code, in the reader's
 language; the sentence is for logs and for people calling the API by hand.
+
+Anybody can ask for `/pot/stats` through the Worker. Reading the counter from
+the node takes up to four calls and one more for every locked pot coin, and
+anybody can add pot coins by paying the pot, so the bots do not read it for
+every request. They read it once and keep it, and read it again only when the
+newest block or the number of faucet payments has changed: payments to the pot
+and pot coins confirm with a block, and a pot coin leaves with a faucet
+payment. Every other request costs the node one call (`getbestblockhash`).
+
+Requests that arrive while the counter is being read wait for that one reading
+and share it. One that has waited 20 seconds for its turn gives up with
+`unavailable` (503): the Worker has stopped listening by then, and requests
+must not queue without end when a reading takes longer than the next block
+takes to come. A reading that fails is not kept: the next request reads again.
+The counter has a lock of its own, never the faucet's: a look at the counter
+does not wait for a faucet payment to finish, and a payment does not wait for a
+look.
 
 ## Tests
 
