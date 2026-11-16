@@ -624,8 +624,11 @@ scenario('on a phone 320 px wide, in both languages: no screen is wider than the
     await page.page.locator(`a[href="${prefix}/wallet/tx/${waiting.txid}"]`).click();
     await page.waitFor('tx-replace-glossary');
     assert.equal(await page.sidewaysScroll(), 0, `${lang}: one transaction`);
-    // Two links leave the app from here: the glossary and the explorer.
-    assert.equal(await page.page.$$eval('main a[target="_blank"]', (links) => links.length), 2);
+    // Six links leave the app from here. Under "What just happened", the glossary's entries for what the
+    // sentences name: the coin, the change, the fee, and the waiting room of a payment that is not in a
+    // block yet. Then the glossary's entry on replacing a payment, and the explorer.
+    assert.equal(await page.page.$$eval('[data-testid="tx-explained-glossary"] a[target="_blank"]', (links) => links.length), 4);
+    assert.equal(await page.page.$$eval('main a[target="_blank"]', (links) => links.length), 6);
     assert.deepEqual(await loneArrows(page), [], `${lang}: one transaction`);
 
     await page.goto(`${prefix}/wallet/tx/${'ef'.repeat(32)}`);

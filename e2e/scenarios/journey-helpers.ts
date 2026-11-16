@@ -542,7 +542,7 @@ export async function sentBy(page: OpenedPage, requests: () => EventRequest[], a
 }
 
 /** The names a line of the Worker's log can carry for its route and its fault (worker/src/deps.ts). */
-const LOG_ROUTES = ['config', 'esplora_read', 'esplora_broadcast', 'faucet', 'pot_address', 'event', 'unknown'];
+const LOG_ROUTES = ['config', 'esplora_read', 'esplora_broadcast', 'faucet', 'pot_address', 'pot_stats', 'event', 'unknown'];
 const LOG_FAULTS = ['origin_auth', 'origin_down', 'origin_timeout', 'origin_shape', 'bot_check_config', 'bot_check_down', 'events_down', 'handler'];
 
 /** Everything a journey knows about its wallets that must never be counted, logged or sent with a count. */
