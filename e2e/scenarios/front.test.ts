@@ -422,6 +422,36 @@ scenario('Home with no wallet: what this is, Create first, then the two ways bac
   ]);
 });
 
+scenario('the practice explorer is one click away: in the header on a wide screen, in the footer on every screen, in a tab of its own', async (s) => {
+  // The explorer is another site. Its address comes from the settings; a click opens a tab of its own, so
+  // the wallet's tab stays as it is and the explorer is not told where the reader came from.
+  const link = (page: OpenedPage, hook: string) =>
+    page.page.$eval(`[data-testid="${hook}"]`, (node) => {
+      const a = node as HTMLAnchorElement;
+      return { href: a.getAttribute('href'), target: a.target, rel: a.rel, text: (a.textContent ?? '').replace(/\s+/g, ' ').trim(), shown: a.getClientRects().length > 0 };
+    });
+  const wide = await s.open('/', { width: 1280, height: 800 });
+  await wide.waitFor('home-create');
+  const inHeader = await link(wide, 'header-explorer');
+  assert.equal(inHeader.href, s.stack.config.explorerUrl);
+  assert.equal(inHeader.target, '_blank');
+  assert.equal(inHeader.rel, 'noopener noreferrer');
+  assert.ok(inHeader.text.startsWith(en.common.linkExplorer), inHeader.text);
+  assert.ok(inHeader.text.endsWith(en.common.opensNewTab), inHeader.text);
+  assert.equal(inHeader.shown, true);
+  assert.equal((await link(wide, 'footer-explorer')).href, s.stack.config.explorerUrl);
+
+  // On a phone the header keeps the language switch alone, and the footer has the link, in Spanish too.
+  const phone = await s.open('/es', { width: 375, height: 667, lang: 'es' });
+  await phone.waitFor('home-create');
+  assert.equal((await link(phone, 'header-explorer')).shown, false);
+  const inFooter = await link(phone, 'footer-explorer');
+  assert.equal(inFooter.shown, true);
+  assert.equal(inFooter.href, s.stack.config.explorerUrl);
+  assert.ok(inFooter.text.startsWith(strings.common.es.linkExplorer), inFooter.text);
+  assert.equal(await phone.page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), true, 'no sideways scroll at 375 px');
+});
+
 scenario('what is stored decides: a wallet that is here, a record that cannot be read, one from a newer version', async (s) => {
   // A wallet made without a passkey: Home leads with the way in and says which wallet it is.
   const home = await s.open('/', { record: testRecord() });

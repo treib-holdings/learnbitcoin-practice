@@ -60,6 +60,8 @@ export const en = {
   // -- links in the header and the footer --
   linkAbout: 'About',
   linkSparrow: 'Practice network in Sparrow',
+  /** The practice network's own block explorer: another site, opened in a tab of its own. */
+  linkExplorer: 'Block explorer',
   linkSite: 'Back to LearnBitcoin.com',
   /**
    * The source is in English only. The Spanish text says so, as the main
@@ -176,6 +178,7 @@ export const es: Record<keyof typeof en, string> = {
 
   linkAbout: 'Acerca de',
   linkSparrow: 'La red de práctica en Sparrow',
+  linkExplorer: 'Explorador de bloques',
   linkSite: 'Volver a LearnBitcoin.com',
   linkSource: 'Código fuente (en inglés)',
   navMain: 'Principal',

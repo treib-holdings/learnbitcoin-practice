@@ -16,7 +16,9 @@
   // address that has to break anywhere.
   //
   // `quiet` is for a line of small print, where the link keeps the colour
-  // of the text around it. Other attributes pass through. On a Spanish page
+  // of the text around it. `plain` is for a row of navigation links, which
+  // all look alike: no underline and no colour of its own, so the row's own
+  // classes (handed in as `class`) decide. Other attributes pass through. On a Spanish page
   // a link to a page that exists in English only says so at the end of its
   // text (as linkSource does in the Spanish table of strings/common.ts) and
   // carries hreflang="en".
@@ -25,19 +27,21 @@
   import type { HTMLAnchorAttributes } from 'svelte/elements';
   import { router } from '../lib/router.svelte.ts';
   import { strings } from '../strings/index.ts';
-  import { LINK, OUTSIDE, QUIET_LINK } from './styles.ts';
+  import { FOCUS, LINK, OUTSIDE, QUIET_LINK } from './styles.ts';
 
   interface Props extends Omit<HTMLAnchorAttributes, 'class' | 'children' | 'href' | 'target' | 'rel'> {
     href: string;
     /** The link's words. With them, the last word and the arrow stay on one line. */
     text?: string;
     quiet?: boolean;
+    /** For a row of navigation links: no underline and no colour of its own. */
+    plain?: boolean;
     class?: string;
     /** The link's words, for what `text` cannot carry. */
     children?: Snippet;
   }
 
-  let { href, text, quiet = false, class: extra = '', children, ...rest }: Props = $props();
+  let { href, text, quiet = false, plain = false, class: extra = '', children, ...rest }: Props = $props();
 
   let t = $derived(strings.common[router.lang]);
 
@@ -64,7 +68,7 @@
      arrow are one piece that does not break, so a line ends before that
      word or after the arrow. The hidden words start with a space of their
      own: a screen reader must not run them into the link's last word. -->
-<a {...rest} {href} {...OUTSIDE} class={[quiet ? QUIET_LINK : LINK, extra]}
+<a {...rest} {href} {...OUTSIDE} class={[plain ? `rounded-sm ${FOCUS}` : quiet ? QUIET_LINK : LINK, extra]}
   >{#if text !== undefined}{text.slice(0, cut)}<span class="whitespace-nowrap">{text.slice(cut)}{@render arrow()}</span
     >{:else}{@render children?.()}{@render arrow()}{/if}<span class="sr-only">{' '}{t.opensNewTab}</span></a
 >

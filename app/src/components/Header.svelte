@@ -1,17 +1,23 @@
 <script lang="ts">
   // The header: the logo with the PRACTICE badge (a link to Home), the links
-  // to About and to the Sparrow page, and the language switch.
+  // to About, to the Sparrow page and to the practice network's block
+  // explorer, and the language switch.
   //
-  // On a phone only the language switch stays here; About and the Sparrow
-  // page are in the footer on every screen. The header does not stay on
+  // On a phone only the language switch stays here; About, the Sparrow page
+  // and the explorer are in the footer on every screen. The header does not stay on
   // screen while the page scrolls: only the banner above it does.
 
   import { pathInLang } from '../lib/navigation.ts';
   import { router } from '../lib/router.svelte.ts';
   import type { Lang, Route } from '../lib/router.ts';
+  import { useWallet } from '../lib/wallet-context.ts';
   import { strings } from '../strings/index.ts';
   import Badge from './Badge.svelte';
+  import OutLink from './OutLink.svelte';
   import { FOCUS, TAP } from './styles.ts';
+
+  // The explorer's address comes from the wallet's settings, so a local run can point somewhere else.
+  const wallet = useWallet();
 
   let t = $derived(strings.common[router.lang]);
 
@@ -75,6 +81,16 @@
             >
           </li>
         {/each}
+        <!-- The explorer is another site. It opens in a tab of its own, and the small arrow says so. -->
+        <li class="hidden md:block">
+          <OutLink
+            plain
+            href={wallet.config.explorerUrl}
+            text={t.linkExplorer}
+            data-testid="header-explorer"
+            class={`transition-colors motion-reduce:transition-none ${ELSEWHERE}`}
+          />
+        </li>
         <li>
           <!-- TAP: on a phone this is the header's one link, and 20 px of text is a small thing to hit. -->
           <a href={switchHref} lang={other} hreflang={other} data-testid="lang-switch" class={[TAP, LINK, ELSEWHERE]}

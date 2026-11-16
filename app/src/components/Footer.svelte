@@ -1,6 +1,7 @@
 <script lang="ts">
   // The footer: what this place is, the ways out (the main site, About, the
-  // Sparrow page, the source code) and one line of small print. On Spanish
+  // Sparrow page, the practice network's block explorer, the source code)
+  // and one line of small print. On Spanish
   // pages the small print says, as on the main site, that the translation
   // was made with AI help and has not been reviewed by a person yet.
   //
@@ -44,6 +45,7 @@
           <li><OutLink quiet href={siteHome(wallet.config.siteUrl, router.lang)} text={t.linkSite} /></li>
           <li><a href={router.link({ name: 'about' })} class={QUIET_LINK}>{t.linkAbout}</a></li>
           <li><a href={router.link({ name: 'sparrow' })} class={QUIET_LINK}>{t.linkSparrow}</a></li>
+          <li><OutLink quiet href={wallet.config.explorerUrl} text={t.linkExplorer} data-testid="footer-explorer" /></li>
           <li>
             <OutLink quiet href={wallet.config.sourceUrl} hreflang={router.lang === 'en' ? undefined : 'en'} text={t.linkSource} />
           </li>
