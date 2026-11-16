@@ -39,8 +39,8 @@
   //
   // Before any of that the screen looks at what this browser holds, as
   // Create does: a wallet that is here already, something stored that
-  // cannot be read, and a browser that refuses to store anything each stand
-  // in the screen's place.
+  // cannot be read, a storage the page was not let look into and a browser
+  // that refuses to store anything each stand in the screen's place.
 
   import { onDestroy, tick } from 'svelte';
   import Actions from '../components/Actions.svelte';

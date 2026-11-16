@@ -20,7 +20,10 @@ export const API = {
   faucet: '/api/faucet',
   /** POST (empty body): PotAddress. */
   potAddress: '/api/pot/address',
-  /** GET: PotStats. */
+  /**
+   * GET: PotStats, while AppConfig.potCounts is true. While it is false the
+   * Worker does not know this path: it answers the JSON 404 of any other.
+   */
   potStats: '/api/pot/stats',
   /** POST EventBody: 202, no body worth reading. */
   event: '/p/event',
@@ -55,6 +58,11 @@ export interface AppConfig {
   blockSeconds: number;
   /** False: the app sends no events at all. */
   events: boolean;
+  /**
+   * Whether the pot's counts can be had (GET /api/pot/stats). False: the
+   * Worker does not answer that path, and the app does not ask for it.
+   */
+  potCounts: boolean;
 }
 
 /** POST /api/faucet. */
@@ -83,6 +91,7 @@ export interface PotAddress {
 /**
  * GET /api/pot/stats: the pay-it-forward pot in three counts. Each is a whole
  * number from 0. They say how many, never who: no address, no transaction ID.
+ * The path is answered only while AppConfig.potCounts is true.
  */
 export interface PotStats {
   /** Payments that readers have passed on to the pot and that a block has taken in. */

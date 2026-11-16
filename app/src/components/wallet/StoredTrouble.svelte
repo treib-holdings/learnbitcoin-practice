@@ -9,6 +9,10 @@
   //               page is out of date." Reload only; nothing is removed.
   //   broken      the self-test failed: nothing can be made or opened in
   //               this browser, and the way out is another browser.
+  //   blocked     the browser did not let this page read its storage, so
+  //               nobody knows whether a wallet is here: one made before
+  //               may still be stored. It never says "no wallet". The way
+  //               out is to allow site data for the page, and Reload.
   //
   // For "none" and "ready" it shows nothing. On a wallet screen it is the
   // body of the gate, under the gate's heading. Home passes `titled`, and
@@ -51,7 +55,15 @@
 
   let status = $derived(wallet.status);
   let title = $derived(
-    status === 'unreadable' ? t.unreadableTitle : status === 'newer' ? t.newerTitle : status === 'broken' ? t.brokenTitle : '',
+    status === 'unreadable'
+      ? t.unreadableTitle
+      : status === 'newer'
+        ? t.newerTitle
+        : status === 'broken'
+          ? t.brokenTitle
+          : status === 'blocked'
+            ? t.blockedTitle
+            : '',
   );
 
   /** The reader has asked to remove what is stored, and is being asked whether they mean it. */
@@ -155,11 +167,18 @@
       <div><ReloadButton variant="primary" /></div>
     {:else if status === 'broken'}
       <Notice kind="problem" silent text={errors.passkey_broken} />
+    {:else if status === 'blocked'}
+      <!-- Not known, and said so: what the browser did, that a wallet made before may still be stored, and the way out. -->
+      <div class="space-y-4 text-pretty leading-relaxed text-ink-700" data-testid="storage-blocked">
+        <p>{t.blockedBody}</p>
+        <p>{t.blockedWay}</p>
+      </div>
+      <div><ReloadButton variant="primary" /></div>
     {/if}
   </div>
 {/snippet}
 
-{#if status === 'unreadable' || status === 'newer' || status === 'broken'}
+{#if status === 'unreadable' || status === 'newer' || status === 'broken' || status === 'blocked'}
   {#if titled}
     <Card {title} class={extra}>
       {@render body()}

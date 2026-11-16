@@ -36,6 +36,7 @@ import {
   MemoryStorage,
   SOMEONE,
   START_MS,
+  SwitchedStorage,
   VirtualAuthenticator,
   coinsState,
   flush,
@@ -343,8 +344,9 @@ test('canStore, persisted and passkeyOffered are shown as they are found out', a
   // A browser that refuses to store anything: said from the start.
   const full = start({ storage: new FullStorage() });
   assert.deepEqual([full.view().status, full.view().canStore], ['none', false]);
+  // A browser that will not let the page look at all: it stores nothing either, and that is not "no wallet".
   const blocked = start({ storage: new BlockedStorage() });
-  assert.deepEqual([blocked.view().status, blocked.view().canStore], ['none', false]);
+  assert.deepEqual([blocked.view().status, blocked.view().canStore], ['blocked', false]);
   assert.equal(start().view().canStore, true);
 
   // Whether passkeys are offered is unknown until the settings name the host.
@@ -2255,7 +2257,7 @@ async function everyAction(session: Session): Promise<void> {
 
 test('a storage that throws on every call: every action answers, and none throws', async () => {
   const t = start({ storage: new BlockedStorage() });
-  assert.deepEqual([t.view().status, t.view().canStore], ['none', false]);
+  assert.deepEqual([t.view().status, t.view().canStore], ['blocked', false]);
   assert.deepEqual(await t.session.createWithPasskey(), { kind: 'no-storage' });
   assert.deepEqual(await t.session.createWithWords(), { kind: 'no-storage' });
   assert.deepEqual(await t.session.openWithPasskey(), { kind: 'no-storage' });
@@ -2283,6 +2285,145 @@ test('a storage that throws on every call: every action answers, and none throws
   assert.deepEqual(await u.session.createWithWords(), { kind: 'created' });
   turning.full = true;
   await everyAction(u.session);
+});
+
+test('a browser that will not let the page read its storage: the status is "blocked", never "none", and what was stored stays', async () => {
+  // The state a reader gets to with one browser setting: a wallet is made, and then the browser is told to
+  // block this site's data. It then refuses the page every look at its storage, and deletes nothing.
+  const kinds: [string, (storage: SwitchedStorage, auth: VirtualAuthenticator) => WalletRecord][] = [
+    ['kept with its 12 words', () => makeRecord('words', A.mnemonic, START_MS)],
+    ['opened with a passkey', (_storage, auth) => passkeyWallet(auth).record],
+  ];
+  for (const [name, make] of kinds) {
+    const storage = new SwitchedStorage();
+    const auth = new VirtualAuthenticator();
+    const record = make(storage, auth);
+    put(storage, record);
+    storage.map.set('lbp_progress_v1', '{"v":1,"following":null,"steps":{}}');
+    const before = [...storage.map.entries()];
+    storage.blocked = true;
+
+    // A page loaded in that browser: it has seen nothing, and says so. Not "none": a wallet is on the disk.
+    const t = start({ storage, auth });
+    assert.deepEqual(
+      [t.view().status, t.view().record, t.view().unlocked, t.view().canStore, t.view().pendingRestore],
+      ['blocked', null, false, false, false],
+      name,
+    );
+    assert.deepEqual(t.chain.opened, [], 'no wallet is watched');
+    // Nothing can be made, opened, restored or removed here, and no passkey prompt is opened to find that out.
+    assert.deepEqual(await t.session.createWithPasskey(), { kind: 'no-storage' }, name);
+    assert.deepEqual(await t.session.createWithWords(), { kind: 'no-storage' }, name);
+    assert.deepEqual(await t.session.finishSetup(), { kind: 'no-storage' }, name);
+    assert.deepEqual(await t.session.openWithPasskey(), { kind: 'no-storage' }, name);
+    assert.deepEqual(await t.session.restore(B.mnemonic), { kind: 'no-storage' }, name);
+    assert.deepEqual(t.chain.probed, [], 'refused before the practice network is asked about the words');
+    assert.deepEqual(await t.session.unlock(), { kind: 'gone' }, name);
+    assert.equal(t.session.unlockWithWords(A.mnemonic), 'gone', name);
+    assert.equal(t.session.removeWallet(), 'gone', name);
+    assert.equal(t.session.revealWords(), null, name);
+    assert.equal(t.session.descriptors(), null, name);
+    assert.deepEqual(t.session.checkWordsAt([0, 1, 2], ['abandon', 'abandon', 'abandon']), { ok: false, reason: 'gone' }, name);
+    assert.deepEqual(t.auth.calls, [], name);
+    assert.deepEqual(t.auth.forgotten, [], name);
+    assert.deepEqual(t.events, [], 'nothing is counted: no wallet was made, opened or removed');
+    assert.equal(t.view().status, 'blocked', name);
+    // "storage" events, the tab coming back into view, and the bot check change nothing while it stays so.
+    t.session.storageChanged(RECORD_KEY);
+    t.session.storageChanged(null);
+    t.session.backInView();
+    assert.deepEqual([t.view().status, t.view().record], ['blocked', null], name);
+    // What the browser holds is exactly what it held: nothing was written, nothing removed.
+    assert.deepEqual([...storage.map.entries()], before, name);
+    assert.equal(storage.writes, 0, name);
+
+    // The block is lifted, and the page is told it is in view again: the wallet is there, as it was.
+    storage.blocked = false;
+    t.session.backInView();
+    assert.deepEqual([t.view().status, t.view().record?.fingerprint, t.view().record?.kind], ['ready', record.fingerprint, record.kind], name);
+    // Whether the browser stores anything was asked again as well: "it stores nothing" is not left standing.
+    assert.equal(t.view().canStore, true, name);
+    assert.equal(storage.map.size, before.length, 'the test write left nothing behind');
+    assert.equal(t.view().unlocked, record.kind === 'words', name);
+    assert.equal(t.chain.opened.length, 1, name);
+    assert.deepEqual(t.chain.announced, [], 'the same wallet as before the block: nothing was replaced');
+    assert.deepEqual([...storage.map.entries()], before, name);
+    // And the wallet can be removed again, as any wallet that is here.
+    assert.equal(t.session.removeWallet(), 'removed', name);
+    assert.deepEqual([t.view().status, stored(storage)], ['none', null], name);
+  }
+
+  // The other way round: the page holds a wallet, with its keys loaded, and the browser then stops letting it
+  // look. Until the page is told, it remembers the wallet. Told, it drops what it knows, keys included, and
+  // says "blocked": it has not seen the wallet removed, and "none" would say that it had.
+  const u = lockedTab({ storage: new SwitchedStorage() });
+  const storage = u.storage as SwitchedStorage;
+  assert.deepEqual(await u.session.unlock(), { kind: 'unlocked' });
+  storage.blocked = true;
+  assert.deepEqual([u.view().status, u.view().unlocked], ['ready', true]);
+  u.session.backInView();
+  assert.deepEqual([u.view().status, u.view().record, u.view().unlocked, u.chain.closed], ['blocked', null, false, 1]);
+  assert.equal(u.session.revealWords(), null);
+  assert.equal(u.session.sign({ to: SOMEONE, amount: 1_000n, feeRate: 2n }).ok, false);
+  assert.equal(stored(storage), JSON.stringify(u.wallet.record), 'the wallet is still stored');
+  assert.deepEqual(u.events, ['Unlock: same'], 'and "Wallet removed" is never counted for it');
+  storage.blocked = false;
+  u.session.backInView();
+  assert.deepEqual([u.view().status, u.view().record?.fingerprint, u.view().unlocked], ['ready', u.wallet.record.fingerprint, false]);
+  assert.deepEqual(u.chain.announced, ['unlocked'], 'back as it was: no wallet took another\'s place');
+
+  // The same found out by an action, with no word from the browser first: Remove removes nothing and the
+  // page says "blocked"; an unlock opens no prompt.
+  const v = lockedTab({ storage: new SwitchedStorage() });
+  (v.storage as SwitchedStorage).blocked = true;
+  assert.equal(v.session.removeWallet(), 'gone');
+  assert.deepEqual([v.view().status, stored(v.storage)], ['blocked', JSON.stringify(v.wallet.record)]);
+  assert.deepEqual(v.events, []);
+  const w = lockedTab({ storage: new SwitchedStorage() });
+  (w.storage as SwitchedStorage).blocked = true;
+  assert.deepEqual(await w.session.unlock(), { kind: 'gone' });
+  assert.deepEqual([w.view().status, w.auth.calls], ['blocked', []]);
+
+  // A passkey that waits to be finished, and a browser that stops letting the page look meanwhile. Nobody can
+  // tell whether a wallet is stored, or whose: nothing is hinted to the password manager, no prompt is
+  // opened, and the setup goes on waiting for a storage that can be read.
+  const x = start({ storage: new SwitchedStorage() });
+  x.auth.secretAtCreate = false;
+  x.auth.refuseGet.push('NotAllowedError');
+  assert.deepEqual(await x.session.createWithPasskey(), { kind: 'unfinished' });
+  const waiting = x.view().setup;
+  const prompts = x.auth.calls.length;
+  (x.storage as SwitchedStorage).blocked = true;
+  assert.deepEqual(await x.session.finishSetup(), { kind: 'no-storage' });
+  assert.deepEqual([x.view().status, x.view().setup, x.auth.forgotten, x.auth.calls.length], ['blocked', waiting, [], prompts]);
+  (x.storage as SwitchedStorage).blocked = false;
+  assert.deepEqual(await x.session.finishSetup(), { kind: 'created' });
+  assert.deepEqual([x.view().status, x.view().setup, x.auth.forgotten], ['ready', null, []]);
+
+  // The browser stops letting the page look while a prompt is open. What the prompt gives is not stored into
+  // a storage nobody can look into: "no-storage", whichever way the prompt ended, and no hint.
+  for (const secretAtCreate of [true, false]) {
+    const y = start({ storage: new SwitchedStorage() });
+    y.auth.secretAtCreate = secretAtCreate;
+    if (!secretAtCreate) y.auth.refuseGet.push('NotAllowedError');
+    const release = y.auth.hold();
+    const creating = y.session.createWithPasskey();
+    await flush();
+    (y.storage as SwitchedStorage).blocked = true;
+    release();
+    assert.deepEqual(await creating, { kind: 'no-storage' }, `secret at create: ${secretAtCreate}`);
+    assert.deepEqual([y.view().status, y.view().setup, y.view().unlocked, y.auth.forgotten, stored(y.storage)], ['blocked', null, false, [], null]);
+  }
+  // And while the practice network is asked about restored words: they are neither stored nor left waiting.
+  const z = start({ storage: new SwitchedStorage() });
+  const open = z.chain.holdProbe();
+  const restoring = z.session.restore(A.mnemonic);
+  await flush();
+  (z.storage as SwitchedStorage).blocked = true;
+  open();
+  assert.deepEqual(await restoring, { kind: 'no-storage' });
+  assert.deepEqual([z.view().status, z.view().pendingRestore, stored(z.storage)], ['blocked', false, null]);
+  assert.equal(z.session.keepRestored(), 'nothing-pending');
 });
 
 test('passkey calls that throw, reject or answer nonsense: an "error" answer, and nothing is stored or loaded', async () => {

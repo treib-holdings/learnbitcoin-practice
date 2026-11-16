@@ -25,6 +25,14 @@
 //   - Reading takes the six steps and the listed fields and nothing else,
 //     each under its own check. A field that fails its check is dropped by
 //     itself; the rest of the note stands.
+//   - Reading never writes. So what a read dropped (a way back that is not
+//     the step's own chapter, a field this page does not know) is still in
+//     the stored text after it, though no screen is ever shown it. It
+//     leaves the storage at the next write, whatever that write is for:
+//     the one write function stores the note as it was read whenever it is
+//     handed a change, also a change that changes nothing else. "No free
+//     text" is true of every note this page has written, and of every
+//     other note from its first write on.
 //   - A note written by a newer version of this page is left exactly as it
 //     is: nothing is written and nothing is deleted.
 //   - Removing the wallet does not touch the note. The last step depends on
@@ -153,7 +161,8 @@ function soundNote(id: StepId, value: unknown): StepNote | null {
   const note: StepNote = {};
   if (has('started') && fields.started === true) note.started = true;
   if (has('doneAt') && isTime(fields.doneAt)) note.doneAt = fields.doneAt;
-  // A way back that is not one of this step's two chapter pages is dropped here: no write puts it back.
+  // A way back that is not one of this step's two chapter pages is dropped here: no write puts it back,
+  // and the next write of any kind takes it out of the stored text (writeProgress).
   const from = has('from') ? validFrom(id, fields.from) : null;
   if (from !== null) note.from = from;
   if (has('wallet') && typeof fields.wallet === 'string' && FINGERPRINT.test(fields.wallet)) note.wallet = fields.wallet;
@@ -434,8 +443,10 @@ export function applyChange(progress: Progress, change: Change): Progress {
  *
  * ok       the change was applied to what is stored. `read` is the note as
  *          it stood in the storage for this write, `progress` the note
- *          after it, and `changed` says whether anything was written: a
- *          change that does not apply writes nothing.
+ *          after it, and `changed` says whether anything was written. A
+ *          change that does not apply writes nothing, with one exception:
+ *          a stored note that held more than this page read of it is
+ *          written again as it was read (writeProgress says why).
  * newer    a newer version's note is stored: nothing was written
  * storage  the browser refused: the note could not be read or could not be
  *          written. Progress cannot be kept here
@@ -453,6 +464,16 @@ export type WriteResult =
  * slip between them. The browser's storage offers nothing closer to one
  * step. What can be lost that way is one tick, which the same world brings
  * back at the next change.)
+ *
+ * A change that changes nothing writes nothing: the stored text stays as
+ * it is, also when it is something unreadable. With one exception. A note
+ * of this version whose stored text is not the text this page writes holds
+ * something a read dropped: a way back that is not the step's own chapter,
+ * a field this page does not know, text of somebody's choosing. No screen
+ * is ever shown it, and it is still in the browser. Reading must not write
+ * (a look is no change), so it goes here, at the first change anyone hands
+ * in, whether that change applies or not: the note is stored again as it
+ * was read. From then on the stored text is exactly what this page writes.
  */
 export function writeProgress(local: Storage, change: Change): WriteResult {
   const text = storedText(local);
@@ -461,8 +482,10 @@ export function writeProgress(local: Storage, change: Change): WriteResult {
   if (stored.state === 'newer') return { ok: false, why: 'newer' };
   const next = applyChange(stored.progress, change);
   const written = JSON.stringify(next);
-  // Nothing to change: nothing is written. (Something unreadable stays until there is.)
-  if (written === JSON.stringify(stored.progress)) return { ok: true, read: stored.progress, progress: next, changed: false };
+  // Nothing to change, and nothing in the stored text that a read dropped: nothing is written.
+  // (Something unreadable stays until there is a change to write.)
+  const tidy = stored.state === 'kept' && text !== written;
+  if (written === JSON.stringify(stored.progress) && !tidy) return { ok: true, read: stored.progress, progress: next, changed: false };
   try {
     local.setItem(PROGRESS_KEY, written);
     // Read back: a browser that takes a write and keeps nothing has not kept it.

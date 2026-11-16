@@ -29,6 +29,15 @@
   // A restore ends here. For that one visit the screen says that the wallet
   // was restored and that its 12 words are now kept in this browser
   // (components/outcome.ts): the Overview would otherwise simply appear.
+  //
+  // That line is about what this browser keeps, in the present tense, so
+  // it is drawn only while it is true: while the wallet in this browser is
+  // still the one that was restored, kept with its words. A visit can
+  // outlive that. The browser keeps a page it has left in its memory and
+  // brings it back as it was (Back from another site, a background tab
+  // that wakes up), and the wallet then shows whatever is in the browser by
+  // now: that wallet behind its passkey again, or another wallet. The line
+  // must not stand over those.
 
   import { onMount, tick } from 'svelte';
   import Button from '../components/Button.svelte';
@@ -72,10 +81,17 @@
   /** What "Choose another passkey" came to after the list of causes had left the screen. */
   let late = $state.raw<ChooseLate | null>(null);
 
-  /** The reader restored this wallet on the screen before this one: said here, for this visit. */
-  const restored = takeOutcome('restored');
+  /** The reader restored a wallet on the screen before this one: said here, for this visit. */
+  const restoredNow = takeOutcome('restored');
+  /** The wallet that was here when this screen opened, by its public key: the one that was restored. */
+  const restoredXpub = wallet.record?.xpub ?? null;
+  /**
+   * The line is drawn while it is true: this visit follows a restore, and the wallet in this browser is still
+   * that wallet, kept with its 12 words. It follows the wallet, so it goes the moment either stops being so.
+   */
+  let restored = $derived(restoredNow && wallet.record?.kind === 'words' && wallet.record.xpub === restoredXpub);
   onMount(() => {
-    // Read out as well, once the status region has been emptied for the new screen.
+    // Read out as well, once the status region has been emptied for the new screen: by the same rule as the line.
     if (restored) void tick().then(() => announce(t.restoredHere));
   });
 </script>

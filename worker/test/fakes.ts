@@ -28,13 +28,23 @@ export const ADDRESS = 'bcrt1qdpwsxpwkt6dc0c0l9vq3xgaz6s0jsjjnnk6ppw';
 export const TXID = '2bfbd6c40dbd2ed74b3b180fb96a83a0c0c97cfc4b5d4fe788b99347127a2287';
 export const POT_ADDRESS = 'bcrt1qxagpc0v6mxg2dq230xmphn8nuzaasw8uk6v5l9';
 
-/** The pot's counts, as the contract carries them: three numbers that all differ, so that none can stand in for another. */
+/**
+ * The pot's counts, as the contract carries them: three numbers that all differ, so that none can stand in for another.
+ * (These are the numbers. The setting of the same name in wrangler.jsonc, which switches the counts on or off, is
+ * `potCounts` in CONFIG below, and "POT_COUNTS" in the bindings of index.test.ts.)
+ */
 export const POT_COUNTS: PotStats = { passedOn: 12, waiting: 3, handedOn: 9 };
 
 // Reader addresses from the ranges set aside for documentation: nobody's.
 export const READER_IP = '203.0.113.7';
 export const READER_IP6 = '2001:db8:aa:bb:1:2:3:4';
 
+/**
+ * The settings a harness runs on, with everything switched on, so that every route can be run: a site key for the
+ * faucet, events counted, and the pot's counts to be had. That is not how the Worker ships: there the pot's
+ * counts are off. A test of that state says so by name (`config: { potCounts: false }`), as a test of events
+ * switched off does, and index.test.ts runs the deployed entry on the settings of wrangler.jsonc themselves.
+ */
 export const CONFIG: AppConfig = {
   turnstileSiteKey: 'site-key',
   explorerUrl: 'https://practice-explorer.learnbitcoin.com',
@@ -46,6 +56,7 @@ export const CONFIG: AppConfig = {
   faucetSats: 100000,
   blockSeconds: 30,
   events: true,
+  potCounts: true,
 };
 
 /** Reads a JSON file that sits beside the tests, or anywhere else in the repository. */
@@ -381,6 +392,23 @@ export function post(path: string, body: string | object | null, headers: Record
     headers: without({ Origin: APP, 'CF-Connecting-IP': READER_IP, ...headers }),
     body: body === null || typeof body === 'string' ? body : JSON.stringify(body),
   });
+}
+
+/** Everything of an answer, for holding one answer against another. */
+export interface WholeAnswer {
+  status: number;
+  statusText: string;
+  /** Every header, name and value, in the order the answer gives them. */
+  headers: Array<[string, string]>;
+  /** The body, byte for byte, written as hex. */
+  body: string;
+}
+
+/** Everything of an answer: its status, every header and its body, byte for byte. Reads the body, so once per answer. */
+export async function whole(response: Response): Promise<WholeAnswer> {
+  const headers: Array<[string, string]> = [];
+  response.headers.forEach((value, name) => headers.push([name, value]));
+  return { status: response.status, statusText: response.statusText, headers, body: Buffer.from(await response.arrayBuffer()).toString('hex') };
 }
 
 /** The body of a refusal, checked to be exactly the contract's shape. */

@@ -105,7 +105,7 @@ test('five rate limiters with the per-minute limits of the spec and namespaces o
   for (const limiter of limiters) assert.deepEqual(Object.keys(limiter).sort(), ['name', 'namespace_id', 'simple']);
 });
 
-test("the settings carry their production values: the faucet's bot check is named, and events are counted under the main site", () => {
+test("the settings carry their production values: the faucet's bot check is named, events are counted under the main site, and the pot counts are off", () => {
   // The site key is the public half of the bot check: every reader's browser is sent it.
   // The secret half is a secret of the deployed Worker, and appears nowhere in this repository.
   const siteKey = '0x4AAAAAAGB-u7njXBvccBZE';
@@ -123,6 +123,7 @@ test("the settings carry their production values: the faucet's bot check is name
     PASSKEY_HOST: 'practice.learnbitcoin.com',
     FAUCET_SATS: '100000',
     BLOCK_SECONDS: '30',
+    POT_COUNTS: 'off',
   });
   // And they make a config the app can use.
   assert.deepEqual(configFromEnv(config.vars as ConfigVars), {
@@ -136,7 +137,35 @@ test("the settings carry their production values: the faucet's bot check is name
     faucetSats: 100000,
     blockSeconds: 30,
     events: true,
+    potCounts: false,
   });
+});
+
+test('the pot counts ship switched off, and the note at the setting says what off means and when it may be switched on', () => {
+  const vars = config.vars as Record<string, unknown>;
+  assert.equal(vars.POT_COUNTS, 'off');
+  assert.equal(configFromEnv(vars as unknown as ConfigVars).potCounts, false);
+  // The note is the comment that stands right above the setting: from the last setting before it to its own line.
+  const from = source.indexOf('"BLOCK_SECONDS": "30",');
+  const to = source.indexOf('"POT_COUNTS": "off"');
+  assert.ok(from > 0 && to > from, 'POT_COUNTS is the last setting, after BLOCK_SECONDS');
+  const note = source
+    .slice(from, to)
+    .split('\n')
+    .map((line) => line.trim().replace(/^\/\/ ?/, ''))
+    .join(' ')
+    .replace(/\s+/g, ' ');
+  // What it is, and that only one word switches it on.
+  assert.match(note, /GET \/api\/pot\/stats/);
+  assert.match(note, /"off", as it ships, or "on"\. Only the exact word "on" switches them on\./);
+  // What off means: an unknown path, nothing counted, nobody asked, and the app does not ask.
+  assert.match(note, /It answers a request for it as it answers any path it does not know/);
+  assert.match(note, /It counts nothing at the limiter and asks the practice network nothing\./);
+  assert.match(note, /the app does not ask for them/);
+  assert.match(note, /No request can switch it on\./);
+  // When it may be switched on.
+  assert.match(note, /It may be switched on once the bots that run on the practice network's server keep their own reading of the counts/);
+  assert.match(note, /Until it is live there, leave this off\./);
 });
 
 test('the four secrets are named, and none has a value here', () => {

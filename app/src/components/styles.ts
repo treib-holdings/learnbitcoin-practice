@@ -25,11 +25,16 @@ export const LINK = `rounded-sm text-orange-600 underline hover:text-orange-700 
 export const QUIET_LINK = `rounded-sm underline hover:text-orange-600 ${FOCUS}`;
 
 /**
- * What a link that leaves this site carries. It opens in a new tab, and the
- * other site is told nothing about this one: not where the reader came from
- * (noreferrer), and no handle on this tab (noopener). Each click opens a tab
- * of its own. A named tab that every such link shared would not be shared
- * after all: with noopener a browser never reuses a named tab.
+ * What a link that leaves this site carries. It opens in a new tab, with
+ * no referrer (noreferrer: the request has no Referer header, and the page
+ * it opens finds document.referrer empty) and no handle on this tab
+ * (noopener). That is not the same as telling the other site nothing: a
+ * browser marks the request with a header of its own, Sec-Fetch-Site,
+ * which says whether it comes from the same site, and the main site and
+ * the practice explorer are hosts of this page's own site. That header
+ * names no host and no page. Each click opens a tab of its own. A named
+ * tab that every such link shared would not be shared after all: with
+ * noopener a browser never reuses a named tab.
  */
 export const OUTSIDE = { target: '_blank', rel: 'noopener noreferrer' } as const;
 

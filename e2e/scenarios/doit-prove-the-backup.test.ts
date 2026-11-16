@@ -27,8 +27,10 @@
 //   6. the done drill of a wallet that was opened with a passkey, read again
 //      in each state a reader can then bring this browser to: that wallet
 //      kept with its words, that wallet behind its passkey again, no wallet,
-//      another wallet. The card says what the restore changed, and what it
-//      says is true in each of them
+//      another wallet, and that wallet with its passkey deleted. The card
+//      says what the restore changed, and what it says is true in each of
+//      them: of the passkey it says what holds if the reader still has it,
+//      and that the 12 words bring the wallet back if it fails
 //
 // All six are local only: they pay the wallet from the stand-in, or ask
 // the faucet.
@@ -677,7 +679,7 @@ scenario(
 );
 
 scenario(
-  'A done drill for a wallet that was opened with a passkey says what the restore changed, and goes on saying it word for word whatever this browser keeps by then: that wallet with its words, that wallet behind its passkey again, no wallet, and another wallet; each time the stored record and About say what is kept right now, the passkey opens the same wallet, and the way back to the passkey that the card names works',
+  'A done drill for a wallet that was opened with a passkey says what the restore changed, and goes on saying it word for word whatever this browser keeps by then: that wallet with its words, that wallet behind its passkey again, no wallet, and another wallet; each time the stored record and About say what is kept right now, the passkey opens the same wallet, and the way back to the passkey that the card names works; and once the passkey has been deleted the card is still true, for it says "if you still have it", and the 12 words bring the wallet back',
   { localOnly: true, timeout: 300_000 },
   async (s) => {
     const reader = await begin(s, '/new', { passkey: 'prf' });
@@ -721,6 +723,11 @@ scenario(
     // card speaks of the restore, and says nowhere what this browser keeps or asks for now.
     assert.match(CARD, /^What the restore changed When you restored the wallet from its 12 words, this browser began to keep it with those words, not encrypted, and stopped asking for the passkey\. /);
     assert.doesNotMatch(CARD, /\bnow keeps\b|\bkeeps (this|the) wallet\b|\bno longer asks\b|\bis kept\b/);
+    // Nor does it say that the passkey opens the wallet today. The passkey lives in the reader's password
+    // manager, where it may have been deleted since, and this page cannot know (state 5 below). The card says
+    // what the restore did not do, what holds if the reader still has the passkey, and what helps if it fails.
+    assert.ok(CARD.includes(' The restore did not change the passkey: if you still have it, it opens the same wallet, and if it ever fails, the 12 words bring the wallet back. '), CARD);
+    assert.doesNotMatch(CARD, /passkey still opens|still opens the same wallet/);
     const drill = (await noteOf(page))?.steps[STEP];
     assert.ok(drill?.doneAt !== undefined);
     assert.deepEqual(drill, { started: true, doneAt: drill.doneAt, was: 'passkey', parts: { 1: true, 2: true, 3: true, 4: true } });
@@ -754,7 +761,7 @@ scenario(
       await page.click('open-passkey');
       await arrivesAt(page, '/wallet');
       await page.waitFor('coin');
-      // "The passkey still opens the same wallet": the wallet the drill was done for, and this browser keeps none of its words.
+      // "If you still have it, it opens the same wallet": the wallet the drill was done for, and this browser keeps none of its words.
       const opened = await storedRecord(page);
       assert.deepEqual([opened?.kind, opened?.fingerprint, opened?.xpub, opened?.mnemonic], ['passkey', record.fingerprint, record.xpub, undefined]);
       assert.equal(await page.text('total'), '100,000 practice sats');
@@ -814,6 +821,38 @@ scenario(
     await backToThePasskey('a wallet');
     assert.deepEqual(await prompts.asked(), { create: 1, get: 3 });
 
+    // -- 5. The passkey is deleted, as when the reader removes it in their password manager. This page is not
+    //       told, and the card is drawn from the note as before: the same words. They are still true. Of the
+    //       passkey the card says what holds "if you still have it", and that the 12 words bring the wallet
+    //       back if it fails. --
+    await page.passkey!.clear();
+    assert.deepEqual(await page.passkey!.credentials(), []);
+    const deleted = await look();
+    assert.equal(deleted.card, CARD);
+    assert.deepEqual([deleted.stored?.kind, deleted.stored?.fingerprint, deleted.stored?.mnemonic], ['passkey', record.fingerprint, undefined]);
+    // The same card in Spanish says the same of the passkey, and no more.
+    await page.goto(`/es/do/${STEP}`);
+    await page.waitFor('step-done');
+    const tarjeta = await page.text('step-changed');
+    assert.equal(tarjeta, `${strings.doit.es.changedTitle} ${strings.doit.es.changed}`);
+    assert.ok(
+      tarjeta.includes(' La restauración no cambió la llave de acceso: si todavía la tienes, abre la misma billetera, y si alguna vez falla, las 12 palabras recuperan la billetera. '),
+      tarjeta,
+    );
+    assert.doesNotMatch(tarjeta, /sigue abriendo/);
+    // And the 12 words do bring the wallet back, with no passkey anywhere: the wallet behind the deleted
+    // passkey is removed from this browser, and restored from the paper. The same wallet, with its coins.
+    await page.goto('/wallet/settings');
+    await removeHere(page);
+    await page.click('home-restore');
+    await arrivesAt(page, '/restore');
+    await restoreHere(page, words);
+    await page.waitFor('coin');
+    assert.equal(await page.text('total'), '100,000 practice sats');
+    const back = await storedRecord(page);
+    assert.deepEqual([back?.kind, back?.fingerprint, back?.xpub, back?.mnemonic], ['words', record.fingerprint, record.xpub, words.join(' ')]);
+    assert.deepEqual(await prompts.asked(), { create: 1, get: 3 }, 'no prompt: there is no passkey to ask');
+
     // The drill was counted once, when it was done, and nothing since has counted it again.
     assert.deepEqual(stepsCounted(s), { 'the-seed': 1, 'prove-the-backup': 1 });
 
@@ -863,6 +902,13 @@ scenario(
         ...looked,
         ...removed('words'),
         ...opened,
+        // 5. the passkey deleted, the card in both languages, and the wallet back from its 12 words
+        ...looked,
+        view('/es/do/prove-the-backup'),
+        ...removed('passkey'),
+        view('/restore'),
+        { name: 'Restore', path: '/restore', value: 'found' },
+        view('/wallet'),
       ],
       { records: [record, second], words: [words, others], addresses: [record.firstAddress, second.firstAddress], txids: fundings },
     );

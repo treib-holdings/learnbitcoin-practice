@@ -63,13 +63,21 @@ function log(line: LogLine): void {
  * itself. Each isolate has its own, and a new isolate starts with an empty
  * one.
  *
- * It holds plain data: three counts that are the same for every reader,
- * when they came, and a note of the question that is out for them. Nothing
- * of a request is ever put in it.
+ * It holds plain data: three counts that are the same for every reader
+ * and when they came, or a note of the question that is out for them, or
+ * a note of the last question that failed. Nothing of a request is ever
+ * put in it.
+ *
+ * While the pot's counts are switched off (the setting POT_COUNTS, which
+ * is how this repository ships), nothing reads it or writes to it: it
+ * stays as empty as it is made here.
  */
 const potStatsHolder = makePotStatsHolder();
 
 function depsFor(request: Request, env: Env, context: Context): Deps {
+  // The settings, read from the bindings for this request. What they switch
+  // on or off (the faucet, counting, the pot's counts) is decided there, in
+  // config.ts, from `env` alone: `request` is not handed to it.
   const config = configFromEnv(env);
   return {
     config,
@@ -118,7 +126,11 @@ function depsFor(request: Request, env: Env, context: Context): Deps {
   };
 }
 
-/** "on" switches a setting on. Anything else is off, the default, and so is a setting that is missing. */
+/**
+ * "on" switches a setting on. Anything else is off, the default, and so is a setting that is missing.
+ * (For EVENT_PROPS, which only changes the shape of a counted event. POT_COUNTS is read in config.ts, by a
+ * stricter rule: the exact word.)
+ */
 function isOn(setting: unknown): boolean {
   return typeof setting === 'string' && setting.trim().toLowerCase() === 'on';
 }

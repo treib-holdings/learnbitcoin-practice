@@ -423,8 +423,8 @@ scenario('Home with no wallet: what this is, Create first, then the two ways bac
 });
 
 scenario('the practice explorer is one click away: in the header on a wide screen, in the footer on every screen, in a tab of its own', async (s) => {
-  // The explorer is another site. Its address comes from the settings; a click opens a tab of its own, so
-  // the wallet's tab stays as it is and the explorer is not told where the reader came from.
+  // The explorer is another host. Its address comes from the settings; a click opens a tab of its own, so
+  // the wallet's tab stays as it is, and it sends no referrer (rel "noopener noreferrer").
   const link = (page: OpenedPage, hook: string) =>
     page.page.$eval(`[data-testid="${hook}"]`, (node) => {
       const a = node as HTMLAnchorElement;

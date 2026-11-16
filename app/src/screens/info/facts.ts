@@ -63,7 +63,7 @@ export function faucetClosed(config: AppConfig): boolean {
 // -- what this browser holds right now ----------------------------------------------
 
 /**
- * none        nothing is stored: this browser has no practice wallet
+ * none        the storage was read, and nothing is stored: this browser has no practice wallet
  * passkey     the record of a wallet this browser opens with a passkey: no words
  * words       the record of a wallet kept with its 12 words, in plain text: one made
  *             without a passkey, or any wallet restored here from its words
@@ -72,8 +72,10 @@ export function faucetClosed(config: AppConfig): boolean {
  * broken      the self-test failed, so the page has read no wallet and stores none.
  *             (The note of the "Do it" steps is another matter: it is read and
  *             kept in this state as in every other.)
+ * blocked     the browser did not let the page read its storage: what is kept is
+ *             not known. Never "none": a wallet made before may still be stored
  */
-export type KeptNow = 'none' | 'passkey' | 'words' | 'unreadable' | 'newer' | 'broken';
+export type KeptNow = 'none' | 'passkey' | 'words' | 'unreadable' | 'newer' | 'broken' | 'blocked';
 
 /**
  * What this browser holds for the page at this moment, from the wallet's
@@ -94,6 +96,8 @@ export function keptNow(status: WalletStatus, record: PublicRecord | null): Kept
       return 'newer';
     case 'broken':
       return 'broken';
+    case 'blocked':
+      return 'blocked';
   }
 }
 
@@ -105,24 +109,46 @@ export const KEPT_KEYS = {
   unreadable: 'keepNowUnreadable',
   newer: 'keepNowNewer',
   broken: 'keepNowBroken',
+  blocked: 'keepNowBlocked',
 } as const satisfies Record<KeptNow, AboutKey>;
 
 /**
  * What is stored where the note of the "Do it" steps goes, as About's line
  * tells it:
  *
- *   none        nothing (or the browser will not let this page look)
+ *   none        the storage was read, and nothing is there
  *   kept        a note: this version's, or one a newer version wrote
  *   unreadable  something that is no note this version can read. This page
  *               never writes such a value: it was damaged, or changed by
  *               hand. The list of steps shows no progress for it, and offers
  *               "Forget my progress"
+ *   blocked     the browser did not let this page read its storage: whether
+ *               a note is there is not known. It is never told as "none"
  */
-export type NoteNow = 'none' | 'kept' | 'unreadable';
+export type NoteNow = 'none' | 'kept' | 'unreadable' | 'blocked';
 
 export function noteNow(read: Read['state']): NoteNow {
-  if (read === 'kept' || read === 'newer') return 'kept';
-  return read === 'unreadable' ? 'unreadable' : 'none';
+  switch (read) {
+    case 'kept':
+    case 'newer':
+      return 'kept';
+    case 'unreadable':
+      return 'unreadable';
+    case 'blocked':
+      return 'blocked';
+    case 'none':
+      return 'none';
+  }
+}
+
+/**
+ * True when the page was not let read this browser's storage at its last
+ * look: by the wallet's own reader, by the reader of the note, or by both
+ * (they read one and the same storage, each at its own moments). What is
+ * kept is then not known, whatever the other of the two last saw.
+ */
+export function notKnown(kept: KeptNow, note: NoteNow): boolean {
+  return kept === 'blocked' || note === 'blocked';
 }
 
 /**
@@ -147,8 +173,15 @@ export function noteNow(read: Read['state']): NoteNow {
  * "not known" of the wallet only, and the sentence about the note follows
  * it like any other: said without it, the page would promise that nothing
  * is stored in a browser where the note is.
+ *
+ * One state stands in front of all the others: the page was not let read
+ * the storage (notKnown). The line then says exactly that, for the wallet
+ * and the note together, and names nothing as kept or as missing. A
+ * browser that blocks a site's data keeps it all, so "Nothing" there would
+ * be said of a browser that may hold a wallet with its 12 words.
  */
 export function keptNowLines(kept: KeptNow, note: NoteNow): { text: AboutKey; also: AboutKey | null } {
+  if (notKnown(kept, note)) return { text: 'keepNowBlocked', also: null };
   if (note === 'none') return { text: KEPT_KEYS[kept], also: null };
   if (note === 'unreadable') return { text: kept === 'none' ? 'noWalletNow' : KEPT_KEYS[kept], also: 'noteUnreadableNow' };
   if (kept === 'none') return { text: 'noteOnlyNow', also: null };

@@ -40,6 +40,7 @@ const OTHER: AppConfig = {
   faucetSats: 50000,
   blockSeconds: 10,
   events: true,
+  potCounts: true,
 };
 
 test('the built-in values are production', () => {
@@ -54,10 +55,12 @@ test('the built-in values are production', () => {
     faucetSats: 100000,
     blockSeconds: 30,
     events: false,
+    potCounts: false,
   });
-  // Until the Worker says otherwise: no bot check (so no faucet) and nothing counted.
+  // Until the Worker says otherwise: no bot check (so no faucet), nothing counted, and the pot's counts not asked for.
   assert.equal(DEFAULT_CONFIG.turnstileSiteKey, '');
   assert.equal(DEFAULT_CONFIG.events, false);
+  assert.equal(DEFAULT_CONFIG.potCounts, false);
   // No URL ends in a slash: the app adds its own paths.
   for (const url of [DEFAULT_CONFIG.explorerUrl, DEFAULT_CONFIG.siteUrl, DEFAULT_CONFIG.sourceUrl]) {
     assert.match(url, /^https:\/\/[^/]+(\/[^/]+)*$/);
@@ -170,6 +173,8 @@ test('a wrongly typed value keeps the built-in one', async () => {
     faucetSats: ['100000', null, 0, -5, 0.5, 2 ** 60, {}],
     blockSeconds: ['30', null, 0, -30, 2.5, false],
     events: ['true', 1, 0, null, 'yes', []],
+    // A word is not a yes: not the word the Worker's own setting is written with, and no other.
+    potCounts: ['on', 'true', 'yes', 1, 0, null, [], [true], { on: true }],
   };
   for (const key of Object.keys(DEFAULT_CONFIG) as (keyof AppConfig)[]) {
     assert.ok(wrong[key].length > 0);
@@ -184,6 +189,25 @@ test('a wrongly typed value keeps the built-in one', async () => {
       // The good value beside the bad one is still taken.
       if (key !== 'events') assert.equal(config.events, true, `${key}: ${JSON.stringify(value)}`);
     }
+  }
+});
+
+test('the pot counts can be had only on the Worker\'s own word: a plain true in an answer that was read', async () => {
+  // The Worker says yes: taken. It says no: taken too (the built-in value is the same no).
+  assert.equal((await settingsFrom(answering({ potCounts: true }).fetchFn)).potCounts, true);
+  assert.deepEqual(await loadConfig(answering({ ...OTHER, potCounts: false }).fetchFn, noPause), { config: { ...OTHER, potCounts: false }, loaded: true });
+  // A Worker that does not know the field (one deployed before it), and an answer with nothing in it: no.
+  const { potCounts: _field, ...older } = OTHER;
+  assert.deepEqual(await settingsFrom(answering(older).fetchFn), { ...OTHER, potCounts: false });
+  assert.equal((await settingsFrom(answering({}).fetchFn)).potCounts, false);
+  // No answer, a refusal that carries a yes, a page from in between: no, and marked as not loaded.
+  for (const fetchFn of [() => Promise.reject(new TypeError('fetch failed')), answering({ potCounts: true }, 403).fetchFn, answering('<!doctype html>').fetchFn]) {
+    const none = await loadConfig(fetchFn, noPause);
+    assert.deepEqual([none.loaded, none.config.potCounts], [false, false]);
+  }
+  // A yes under another spelling of the key, or beside it, is not the field.
+  for (const body of [{ POT_COUNTS: 'on' }, { pot_counts: true }, { potcounts: true }, { potStats: true }, { config: { potCounts: true } }]) {
+    assert.equal((await settingsFrom(answering(body).fetchFn)).potCounts, false, JSON.stringify(body));
   }
 });
 

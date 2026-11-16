@@ -253,6 +253,61 @@ test('under a newer version\'s note nothing is written, ticked or counted', () =
   assert.deepEqual(p.states('hold-some'), ['ticked', 'ticked', 'ticked', 'blocked: storage']);
 });
 
+test('every started step is done and none is followed: no look writes, and the first visit to a step\'s screen takes out of the storage what a read dropped', () => {
+  // Left by a hand, another program or a build that was never deployed: ways back that are not the steps' own
+  // chapters. A read drops them, and no screen is ever shown them.
+  const planted = {
+    v: 1,
+    following: null,
+    steps: {
+      'hold-some': { started: true, doneAt: NOW - 9, from: '/u/reader-4f1c9a7e/campaign-77', parts: { 1: true, 2: true, 3: true, 4: true } },
+      'pass-it-on': { started: true, doneAt: NOW - 9, from: '/newsletter', parts: { 1: true, 2: true, 3: true } },
+    },
+  };
+  const text = JSON.stringify(planted);
+  const hostile = /reader-4f1c9a7e|campaign|newsletter/;
+  const storage = new MemoryStorage();
+  storage.map.set(PROGRESS_KEY, text);
+  const p = page({ storage, wallet: funded() });
+  p.runner.release();
+
+  // The page loads, and the reader looks around: Home, the list, About, the wallet's own screens, the tab
+  // hidden and shown again, the wallet publishing. Reading never writes: the stored text is as it was planted.
+  for (const route of [HOME, LIST, { name: 'about' } as Route, COINS, SEND, { name: 'settings' } as Route]) {
+    p.runner.watch(route, '');
+    p.runner.visible();
+    p.publish({ wordsShown: p.wallet.wordsShown + 1 });
+  }
+  assert.deepEqual([storage.writes, storage.map.get(PROGRESS_KEY)], [0, text]);
+  // What the screens were shown all along is the note without those fields.
+  assert.deepEqual(p.runner.shown().progress.steps['hold-some'], { started: true, doneAt: NOW - 9, parts: { 1: true, 2: true, 3: true, 4: true } });
+  assert.equal(p.runner.shown().progress.steps['pass-it-on']?.from, undefined);
+
+  // The reader opens a done step's screen. Opening a step's screen has always been what writes; for a done
+  // step nothing of the note changes. It is a write all the same, and the dropped text leaves with it.
+  p.runner.watch(step('hold-some'), '');
+  const after = storage.map.get(PROGRESS_KEY) ?? '';
+  assert.equal(storage.writes, 1);
+  assert.doesNotMatch(after, hostile);
+  assert.deepEqual(JSON.parse(after), {
+    v: 1,
+    following: null,
+    steps: {
+      'hold-some': { started: true, doneAt: NOW - 9, parts: { 1: true, 2: true, 3: true, 4: true } },
+      'pass-it-on': { started: true, doneAt: NOW - 9, parts: { 1: true, 2: true, 3: true } },
+    },
+  });
+  // Nothing was done again by that write: no step is counted a second time, and none is followed.
+  assert.deepEqual(p.counted, []);
+  assert.equal(p.note().following, null);
+  // And it happens once: the same visit again, and the other done step's screen, write nothing more.
+  p.runner.watch(HOME, '');
+  p.runner.watch(step('hold-some'), '');
+  p.runner.watch(step('pass-it-on'), '');
+  p.runner.visible();
+  assert.deepEqual([storage.writes, storage.map.get(PROGRESS_KEY)], [1, after]);
+});
+
 // -- a done step is let go once it was seen on its own screen ------------------------------------------
 
 test('done on its own screen: the step is let go at once', () => {

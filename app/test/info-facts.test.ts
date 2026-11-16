@@ -34,7 +34,7 @@ type Table = Readonly<Record<string, string>>;
 
 // Written as an object so that the compiler refuses a status that is missing
 // here: a status added to the wallet must be given a place in both screens.
-const STATUSES: Record<WalletStatus, true> = { none: true, ready: true, unreadable: true, newer: true, broken: true };
+const STATUSES: Record<WalletStatus, true> = { none: true, ready: true, unreadable: true, newer: true, broken: true, blocked: true };
 const statuses = Object.keys(STATUSES) as WalletStatus[];
 
 const WORDS = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
@@ -104,15 +104,29 @@ test('sparrow: step 5 links into the wallet only when a wallet is here, and name
   assert.equal(walletNote('unreadable'), 'unreadable');
   assert.equal(walletNote('newer'), 'newer');
   assert.equal(walletNote('broken'), 'broken');
+  // A storage the page was not let read is not "no wallet yet": the page cannot tell, and says so.
+  assert.equal(walletNote('blocked'), 'blocked');
   // Every status has an answer: none falls through to "undefined".
   for (const status of statuses) assert.notEqual(walletNote(status), undefined, status);
   // Each state without a wallet has its own sentence, in both languages: the cause, then the way out.
   for (const lang of LANGS) {
     const t = strings.sparrow[lang];
-    const texts = [t.needNone, t.needUnreadable, t.needNewer, strings.errors[lang].passkey_broken];
-    assert.equal(new Set(texts).size, 4, lang);
+    const texts = [t.needNone, t.needUnreadable, t.needNewer, strings.errors[lang].passkey_broken, t.needBlocked];
+    assert.equal(new Set(texts).size, 5, lang);
     for (const text of texts) assert.ok(text.split(/\. (?=[A-ZÁÉÍÓÚÑ])/).length >= 2, `${lang}: ${text}`);
   }
+  // The sentence for a storage that could not be read says that the page cannot tell. It does not say that
+  // no wallet is here, and it does not send the reader off to make one.
+  assert.match(strings.sparrow.en.needBlocked, /^This browser did not let this page read what it may have stored here, so the page cannot tell whether a practice wallet is here/);
+  assert.match(strings.sparrow.es.needBlocked, /^Este navegador no dejó que esta página leyera lo que pueda tener guardado aquí, así que la página no puede saber si aquí hay una billetera de práctica/);
+  assert.doesNotMatch(strings.sparrow.en.needBlocked, /has no practice wallet|Create one/);
+  assert.doesNotMatch(strings.sparrow.es.needBlocked, /no tiene billetera|Crea una/);
+  // The page draws it with Reload, and with no link to the start page.
+  const page = readFileSync(new URL('../src/screens/Sparrow.svelte', import.meta.url), 'utf8');
+  assert.match(
+    page,
+    /\{:else if note === 'blocked'\}\s*<Notice kind="info" text=\{t\.needBlocked\} data-testid="sparrow-need-wallet" data-state=\{note\}>\s*<ReloadButton data-testid="sparrow-need-reload" \/>\s*<\/Notice>/,
+  );
 });
 
 // -- About: the network's facts ---------------------------------------------------------
@@ -175,6 +189,9 @@ test('about: what this browser holds, from the status and the kind of wallet', (
   assert.equal(keptNow('unreadable', null), 'unreadable');
   assert.equal(keptNow('newer', null), 'newer');
   assert.equal(keptNow('broken', null), 'broken');
+  // A storage the page was not let read: "blocked", never "none". Nothing was seen, so nothing is said to be missing.
+  assert.equal(keptNow('blocked', null), 'blocked');
+  assert.notEqual(keptNow('blocked', null), keptNow('none', null));
   // "ready" with no record is a promise broken by the wallet: nothing is said, and no kind is guessed.
   assert.equal(keptNow('ready', null), null);
   for (const status of statuses) assert.notEqual(keptNow(status, null), undefined, status);
@@ -197,7 +214,7 @@ test('about: the record a screen is handed never holds the 12 words, and the lin
 
 test('about: each thing this browser can hold has its own sentence, in both languages', () => {
   const kinds = Object.keys(KEPT_KEYS) as KeptNow[];
-  assert.deepEqual([...kinds].sort(), ['broken', 'newer', 'none', 'passkey', 'unreadable', 'words']);
+  assert.deepEqual([...kinds].sort(), ['blocked', 'broken', 'newer', 'none', 'passkey', 'unreadable', 'words']);
   for (const lang of LANGS) {
     const t: Table = strings.about[lang];
     const texts = kinds.map((kind) => t[KEPT_KEYS[kind]] ?? '');

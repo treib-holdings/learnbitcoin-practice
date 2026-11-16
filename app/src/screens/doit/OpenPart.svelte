@@ -8,8 +8,10 @@
   //            reader ticks. A part that waits for a block has no action:
   //            it shows the waiting display, and ticks by itself.
   //   blocked  what is missing, and the step or the screen that meets it.
-  //            For a stored wallet that cannot be used, the wallet's own
-  //            piece (StoredTrouble), as on Home.
+  //            For the wallet's own trouble (a stored wallet that cannot be
+  //            used, a wallet that cannot run in this browser, a storage
+  //            this page was not let read), the wallet's own piece
+  //            (StoredTrouble), as on Home.
   //   unknown  the part's facts are not known yet: the lines about the
   //            practice network, and no action. It never says "no coins"
   //            while nobody knows.
@@ -26,7 +28,7 @@
   import { faucetLink } from '../../components/wallet/frame.ts';
   import StoredTrouble from '../../components/wallet/StoredTrouble.svelte';
   import { useDoit } from '../../lib/doit/doit-context.ts';
-  import { SIX_BLOCKS, type PartView } from '../../lib/doit/judge.ts';
+  import { SIX_BLOCKS, isWalletTrouble, type PartView } from '../../lib/doit/judge.ts';
   import { partDef, stepDef, type StepId } from '../../lib/doit/steps.ts';
   import { fill, formatSats } from '../../lib/format.ts';
   import { router } from '../../lib/router.svelte.ts';
@@ -82,7 +84,7 @@
   let terms = $derived(termsOf(id, part));
   let ask = $derived(askOf(id, part));
   let action = $derived(view.state === 'now' ? actionOf(id, part, view) : null);
-  let need = $derived(view.state === 'blocked' && view.reason !== 'trouble' ? needOf(id, part, view.reason, doit.progress, doit.kept) : null);
+  let need = $derived(view.state === 'blocked' && !isWalletTrouble(view.reason) ? needOf(id, part, view.reason, doit.progress, doit.kept) : null);
   /** The drill's paper check: where a reader with no paper copy makes one. Null for every other part. */
   let paper = $derived(paperHelp(id, part, doit.progress));
 
@@ -133,8 +135,9 @@
 {#if view.state === 'unknown'}
   <ChainLines unknown={view.reason} {now} />
 {:else if view.state === 'blocked'}
-  {#if view.reason === 'trouble'}
-    <!-- What is stored for the wallet cannot be used: the wallet's own piece says which way out there is. -->
+  {#if isWalletTrouble(view.reason)}
+    <!-- The wallet's own trouble: what is stored cannot be used, the wallet cannot run in this browser, or the
+         page was not let read its storage. The wallet's own piece says which, and which way out there is. -->
     <StoredTrouble titled />
   {:else if need !== null}
     <div class="space-y-4" data-testid="step-need" data-reason={view.reason}>

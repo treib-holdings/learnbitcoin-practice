@@ -16,6 +16,7 @@ import {
   isErrorCode,
   isEventBody,
   isStepId,
+  type AppConfig,
   type PotStats,
   type StepId,
   type ValueOf,
@@ -119,6 +120,33 @@ test('the pot count has a path of its own, and three whole numbers for a body', 
   assert.equal(new Set(Object.values(API)).size, Object.values(API).length);
   const stats: PotStats = { passedOn: 3, waiting: 1, handedOn: 2 };
   assert.deepEqual(Object.keys(stats), ['passedOn', 'waiting', 'handedOn']);
+});
+
+test('the settings say whether the pot count can be had: a yes or a no of its own', () => {
+  // Every field of the settings, typed out. The compiler holds this object to AppConfig: with a
+  // field left out, misspelled or of another kind, "pnpm check" fails.
+  const settings: AppConfig = {
+    turnstileSiteKey: '',
+    explorerUrl: 'https://explorer.test',
+    electrumHost: 'electrum.test',
+    electrumPort: 50002,
+    siteUrl: 'https://site.test',
+    sourceUrl: 'https://source.test',
+    passkeyHost: 'localhost',
+    faucetSats: 100000,
+    blockSeconds: 30,
+    events: false,
+    potCounts: false,
+  };
+  assert.deepEqual(Object.keys(settings).slice(-2), ['events', 'potCounts']);
+  assert.equal(Object.keys(settings).length, 11);
+  // A yes or a no, like the one for events: no word that could be read two ways.
+  assert.equal(typeof settings.potCounts, 'boolean');
+  // @ts-expect-error the settings take true or false here, and no text
+  const word: AppConfig['potCounts'] = 'on';
+  assert.equal(typeof word, 'string');
+  // The path it speaks of is the one the counts are read from.
+  assert.equal(API.potStats, '/api/pot/stats');
 });
 
 test('a screen view carries no value', () => {

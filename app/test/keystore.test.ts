@@ -380,12 +380,27 @@ test('a passkey wallet stores nothing secret; a words wallet stores its words', 
 
 // -- loadRecord -----------------------------------------------------------------
 
-test('loadRecord: null when nothing is stored, and when the storage cannot be read', () => {
+test('loadRecord: null when nothing is stored; "blocked", and never null, when the storage cannot be read', () => {
   const empty = new MemoryStorage();
   empty.map.set('another_key', 'not ours');
   assert.equal(loadRecord(empty), null);
   assert.equal(empty.writes, 0);
-  assert.equal(loadRecord(new LockedStorage()), null);
+  // A storage that refuses to be read is not an empty one: "null" would be taken as "no wallet here".
+  assert.equal(loadRecord(new LockedStorage()), 'blocked');
+  // The state a reader gets to: a wallet was made, and then the browser was told to block this site's data.
+  // The browser refuses every look and deletes nothing: the record, with its 12 words, is still on the disk.
+  for (const record of [wordsRecord(A), passkeyRecord(A)]) {
+    const blind = holding(new BlindStorage(), record);
+    assert.equal(loadRecord(blind), 'blocked', record.kind);
+    assert.equal(stored(blind), JSON.stringify(record), 'what was stored is still stored');
+    assert.equal(blind.writes, 0);
+    const locked = holding(new LockedStorage(), record);
+    assert.equal(loadRecord(locked), 'blocked', record.kind);
+    assert.equal(stored(locked), JSON.stringify(record));
+  }
+  // And it is "blocked" whatever is stored: damaged text and a newer version's record cannot be told apart from
+  // a sound wallet, or from nothing, by a page that cannot look.
+  for (const text of ['not json', JSON.stringify({ v: 2 }), '']) assert.equal(loadRecord(holding(new BlindStorage(), text)), 'blocked', text);
 });
 
 test('loadRecord: unreadable for anything that is not a sound version-1 record', () => {
@@ -779,7 +794,7 @@ test('a storage that throws on write makes every change answer false, not throw'
 
   // Storage switched off altogether.
   const locked = new LockedStorage();
-  assert.equal(loadRecord(locked), null);
+  assert.equal(loadRecord(locked), 'blocked');
   assert.equal(saveRecordIfNone(locked, record), false);
   assert.equal(replaceRecord(locked, A.masterFingerprint, next), false);
   assert.equal(removeWallet(locked, A.masterFingerprint), false);
@@ -788,7 +803,8 @@ test('a storage that throws on write makes every change answer false, not throw'
 
   // A storage that cannot be read is not written blind: a wallet may be in it.
   const blind = holding(new BlindStorage(), next);
-  assert.equal(loadRecord(blind), null);
+  assert.equal(loadRecord(blind), 'blocked');
+  assert.equal(removeUnreadable(blind), false, 'nothing is removed unseen either');
   assert.equal(saveRecordIfNone(blind, record), false);
   assert.equal(replaceRecord(blind, B.masterFingerprint, record), false);
   assert.equal(removeWallet(blind, B.masterFingerprint), false);
@@ -797,7 +813,7 @@ test('a storage that throws on write makes every change answer false, not throw'
 
   // No storage object at all (some browsers throw on reaching for localStorage).
   const absent = undefined as unknown as Storage;
-  assert.equal(loadRecord(absent), null);
+  assert.equal(loadRecord(absent), 'blocked');
   assert.equal(saveRecordIfNone(absent, record), false);
   assert.equal(canStore(absent), false);
 });

@@ -21,6 +21,11 @@
   //   unreadable, newer, broken
   //                 the shared StoredTrouble piece, as the gate of a wallet
   //                 screen shows it
+  //   blocked       the browser did not let this page read its storage: the
+  //                 same piece, which says that the page cannot tell whether
+  //                 a wallet is here. Never the ways in for "no wallet":
+  //                 "This browser has none right now" would be a guess, and
+  //                 a wallet made before may still be stored
   //
   // Under that, on every visit: what can be done here, and the two facts of
   // the practice network a newcomer wants first (how often a block comes,
@@ -149,7 +154,7 @@
         </div>
       </div>
     </Card>
-  {:else if status === 'unreadable' || status === 'newer' || status === 'broken'}
+  {:else if status === 'unreadable' || status === 'newer' || status === 'broken' || status === 'blocked'}
     <StoredTrouble titled />
   {/if}
 

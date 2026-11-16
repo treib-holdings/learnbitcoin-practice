@@ -21,6 +21,11 @@
 // the way, BLOCK_SECONDS=30 pnpm dev runs at the real network's pace, with
 // block times that are true.
 //
+// The pot's counts are switched off here, as they are in the Worker that is
+// deployed (POT_COUNTS in worker/wrangler.jsonc): a done "Pass it on" shows
+// no count line, and its page asks for none. POT_COUNTS=on pnpm dev switches
+// them on for this run, against the stand-in's own pot.
+//
 // The one thing here that uses the network: the page is given Cloudflare's
 // published always-pass test site key, so the real bot-check script loads in
 // your browser and hands the page the dummy token, which the local bot check
@@ -50,11 +55,17 @@ if (!Number.isInteger(BLOCK_SECONDS) || BLOCK_SECONDS < 1 || BLOCK_SECONDS > 360
   console.error('BLOCK_SECONDS must be a whole number of seconds from 1 to 3600.');
   process.exit(1);
 }
+/** Whether the pot's counts are switched on for this run. Left unset they are off, as shipped. */
+const POT_COUNTS = process.env.POT_COUNTS ?? 'off';
+if (POT_COUNTS !== 'on' && POT_COUNTS !== 'off') {
+  console.error('POT_COUNTS must be "on" or "off".');
+  process.exit(1);
+}
 const DIST = fileURLToPath(new URL('../../app/dist', import.meta.url));
 
 const stack = await startStack({
   // The app is told the truth about how often a block comes here.
-  vars: { BLOCK_SECONDS: String(BLOCK_SECONDS) },
+  vars: { BLOCK_SECONDS: String(BLOCK_SECONDS), POT_COUNTS },
   // One line per API request, as the deployed Worker writes them.
   log: (line) => console.log(JSON.stringify(line)),
   keep: 1000,
@@ -81,6 +92,7 @@ console.log(`  /api/ and /p/   the Worker's handler over a stand-in practice net
 console.log(`  other paths     the built app in app/dist, when there is one ("pnpm build")`);
 console.log('  from source     pnpm --filter @learnbitcoin/practice-app dev, then http://localhost:5173');
 if (BLOCK_SECONDS < 30) console.log(`  note            blocks are dated 30 s apart, so their times run ahead of your clock (BLOCK_SECONDS=30 keeps them true)`);
+console.log(`  the pot's counts ${stack.config.potCounts ? 'switched on for this run (POT_COUNTS=on)' : 'switched off, as shipped (POT_COUNTS=on pnpm dev switches them on here)'}`);
 console.log('Ctrl-C stops it.');
 
 let stopping = false;

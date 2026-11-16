@@ -1,6 +1,13 @@
 <script lang="ts">
   // A step that is done: the day it was done, two or three sentences on
-  // what the reader has now seen for themselves, and the ways on.
+  // what the reader did and saw, and the ways on.
+  //
+  // The card is drawn from the step's note alone, on every later visit, for
+  // as long as the note lives: with the wallet removed, the practice chain
+  // started again, the pot's coins handed on to somebody else. So its
+  // sentences are in the past tense, about what the reader did and saw, or
+  // say what is true of Bitcoin whatever happens here. None says what the
+  // wallet, the chain, the pot or this browser holds now (strings/doit.ts).
   //
   // The main way on is back to the chapter the step belongs to. The link
   // carries the mark the chapter stamps its card on ("#done=<step>"), which
@@ -18,9 +25,11 @@
   //                     Worker may give one a few seconds old), while a
   //                     done step's note names no payment, so this piece
   //                     cannot know that the reader's payment is one of
-  //                     them. The count is asked for once, when this piece
-  //                     is drawn, and the line is left out when it cannot
-  //                     be had or is 0.
+  //                     them. The count is asked for once, and only where
+  //                     the Worker's settings say that the pot's counts
+  //                     can be had. Where they say no, nothing is asked
+  //                     and the line is left out. It is also left out
+  //                     when the count cannot be had or is 0.
   //   The seed          the wallet fingerprint the three words were checked
   //                     for. When another wallet is in this browser now,
   //                     the piece says so, and offers the check again for
@@ -34,11 +43,13 @@
   //                     wallet behind its passkey again, no wallet, or
   //                     another one. So it says what the restore did, in
   //                     the past tense, and never what this browser keeps
-  //                     now: for that it names About. Then the Sparrow
-  //                     page, as one more proof that the words are the
-  //                     wallet.
+  //                     now: for that it names About. Of the passkey it
+  //                     promises nothing: the passkey may have been
+  //                     deleted since, and the page cannot know. Then the
+  //                     Sparrow page, as one more proof that the words are
+  //                     the wallet.
 
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import ChapterLink from '../../components/doit/ChapterLink.svelte';
   import Button from '../../components/Button.svelte';
   import Card from '../../components/Card.svelte';
@@ -55,7 +66,7 @@
   import { strings } from '../../strings/index.ts';
   import AskWords from './AskWords.svelte';
   import Sentence from './Sentence.svelte';
-  import { doneKey } from './view.ts';
+  import { asksPotCount, doneKey } from './view.ts';
 
   interface Props {
     id: StepId;
@@ -80,19 +91,31 @@
 
   /** How many payments have been passed on to the pot. Null until the count is here, and when it could not be had. */
   let passedOn = $state<number | null>(null);
+  /** True once the count has been asked for: it is asked for once while this piece stays on screen. */
+  let asked = false;
   /** True once this piece has left the screen: an answer that comes after that is for nobody. */
   let gone = false;
 
-  // Asked once, when a done "Pass it on" is shown, and not again while it stays on screen.
-  onMount(() => {
-    if (id === 'pass-it-on') {
+  // Whether the count is asked for at all: under a done "Pass it on", and only when the Worker's settings say
+  // that the pot's counts can be had (asksPotCount in view.ts). A value of its own, so that what follows is
+  // told only when the answer changes, and not each time the wallet swaps in a settings object that says the same.
+  let countsWanted = $derived(asksPotCount(id, wallet.config));
+
+  // Asked once: when a done "Pass it on" is shown, or, on a page that was loaded on this screen, when the
+  // Worker's settings arrive and say yes. Not again while it stays on screen. While the settings say no,
+  // which is how the Worker ships, nothing is asked: no request for the counts leaves the page.
+  $effect(() => {
+    if (!countsWanted || asked) return;
+    asked = true;
+    untrack(() => {
       void busyWhile(wallet.potStats()).then((answer) => {
         if (!gone && answer.ok) passedOn = answer.stats.passedOn;
       });
-    }
-    return () => {
-      gone = true;
-    };
+    });
+  });
+
+  onMount(() => () => {
+    gone = true;
   });
 
   let potLine = $derived.by(() => {

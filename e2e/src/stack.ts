@@ -5,7 +5,12 @@
 // parts and hands it to the same makeHandler:
 //
 //   config        configFromEnv over the "vars" of worker/wrangler.jsonc, with
-//                 three local values laid over them (LOCAL_VARS below)
+//                 three local values laid over them (LOCAL_VARS below). The
+//                 pot's counts are not one of the three: a local run has
+//                 them as a deploy has them, switched off, so the handler
+//                 does not know their path and the app does not ask for
+//                 them. A scenario that reads them says so in its own
+//                 settings: `vars: { POT_COUNTS: 'on' }`.
 //   origin        makeOrigin, as deployed, with the real fetch, pointed at the
 //                 stand-in practice network listening on a free local port
 //                 (or at a real origin, for the live run)
@@ -19,16 +24,19 @@
 //   limits        limiters that never refuse, until a scenario tells one to
 //   potStatsHolder
 //                 one holder for the life of the stack, as the deployed
-//                 Worker has one for the life of its isolate. So the pot's
-//                 counts are kept here as they are when deployed: the
+//                 Worker has one for the life of each isolate: a stack is
+//                 one isolate. So where the pot's counts are switched on,
+//                 they are kept here as they are when deployed: the
 //                 network is asked for them once, and every request of the
-//                 next 15 seconds is given that answer
-//                 (worker/src/pot-stats.ts).
+//                 next 15 seconds is given that answer. After a question
+//                 that failed, the network is not asked again for 5
+//                 seconds (worker/src/pot-stats.ts).
 //   log           a recorder for the one line the handler writes per request
 //   now           the real clock, plus what a scenario has moved it on by
 //                 (advanceClock below). Nothing switches the keeping of the
-//                 counts off: a scenario that needs the Worker to ask the
-//                 network again says that the 15 seconds have passed.
+//                 counts off, or the pause after a failure: a scenario that
+//                 needs the Worker to ask the network again says that the
+//                 15 or the 5 seconds have passed.
 //
 // That is the whole difference from production. The Worker has no test mode:
 // everything local is in what it is given here.
@@ -65,6 +73,9 @@ export const TEST_SITE_KEY = '1x00000000000000000000AA';
  *                       load Cloudflare's script (browser.ts answers its URL);
  *                       "pnpm dev" loads the real one, which takes this key.
  *   PLAUSIBLE_DOMAIN    any name turns events on. They go to the recorder.
+ *
+ * POT_COUNTS is left as wrangler.jsonc has it, on purpose: off. What a
+ * local run shows of the pot's counts is then what a deploy shows.
  */
 export const LOCAL_VARS: Readonly<Partial<ConfigVars>> = Object.freeze({
   PASSKEY_HOST: 'localhost',
@@ -87,7 +98,10 @@ export interface StackOptions {
   network?: FakeOriginOptions;
   /** A real origin: the live run. No stand-in is started, and `network` in the result is null. */
   origin?: RealOrigin;
-  /** Settings laid over wrangler.jsonc's and LOCAL_VARS: { TURNSTILE_SITE_KEY: '' } closes the faucet. */
+  /**
+   * Settings laid over wrangler.jsonc's and LOCAL_VARS: { TURNSTILE_SITE_KEY: '' } closes the faucet,
+   * { POT_COUNTS: 'on' } switches the pot's counts on.
+   */
   vars?: Partial<ConfigVars>;
   /** How long the Worker waits for the origin, in ms. Default: as deployed (8 s, and 25 s for the faucet). */
   timeoutMs?: number;
@@ -123,12 +137,15 @@ export interface Stack {
    * lines and the pot's kept counts, and nothing else reads it: not the
    * stand-in network, not the pages.
    *
-   * What it is for: the Worker asks the network for the pot's counts once
-   * and gives everyone that answer for 15 seconds (POT_STATS_KEEP_MS of
-   * the Worker's package). A scenario that has looked at the counts and
-   * needs the Worker to ask again (after a payment, or to see what happens
-   * when the network cannot answer) moves the clock on by that much first.
-   * The clock only goes forward.
+   * What it is for: where the pot's counts are switched on, the Worker
+   * asks the network for them once and gives every page that answer for 15
+   * seconds (POT_STATS_KEEP_MS of the Worker's package). A scenario that
+   * has looked at the counts and needs the Worker to ask again (after a
+   * payment, or to see what happens when the network cannot answer) moves
+   * the clock on by that much first. And after a question that failed, the
+   * Worker asks nobody for 5 seconds (POT_STATS_PAUSE_MS): a scenario that
+   * brings the network back and needs the next page to be given the counts
+   * moves the clock on by that much. The clock only goes forward.
    */
   advanceClock(ms: number): void;
   /** Waits for the work the handler left to finish after its answers (an event on its way to the recorder). */

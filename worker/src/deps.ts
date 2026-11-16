@@ -66,8 +66,10 @@ export interface LogLine {
   status: number;
   /**
    * The origin's (or verify service's) status, when one was asked. For the
-   * pot's counts that is the question this request asked or waited for: a
-   * request that was given the kept counts asked nobody, and says null.
+   * pot's counts that is the question this request asked or waited for. A
+   * request for which nobody was asked says null: one that was given the
+   * kept counts, and one that was told "unavailable" in the pause after a
+   * question that failed (its line still names that question's fault).
    */
   upstream: number | null;
   ms: number;
@@ -131,7 +133,9 @@ export interface Origin {
    * 0, is `unavailable` with a fault.
    *
    * Every call is a question to the origin. The handler does not call this
-   * once for each request: pot-stats.ts asks once for everyone.
+   * once for each request: pot-stats.ts asks once for all the requests that
+   * one isolate of the Worker answers meanwhile. And it is not called at all
+   * while the pot's counts are switched off (config.potCounts).
    */
   potStats(): Promise<OriginAnswer<PotStats>>;
 }
@@ -139,15 +143,23 @@ export interface Origin {
 // -- what is kept between requests ------------------------------------------------
 
 /**
- * The pot's counts as the origin last gave them, and a note of the question
- * that is out for them right now: the one thing the Worker keeps from one
- * request to the next (pot-stats.ts says why, and reads and writes it).
+ * What the Worker knows of the pot's counts from one request to the next:
+ * the counts as the origin last gave them, or a note of the question that
+ * is out for them right now, or a note of the last question that failed.
+ * It is the one thing the Worker keeps between requests (pot-stats.ts says
+ * why, and reads and writes it).
  *
  * It must outlive a request, or every request would ask the origin for
  * itself. So whoever builds a Deps makes one of these where it lives longer
  * than a request (makePotStatsHolder), and hands the same one to every
  * request. The deployed Worker keeps it at the top of index.ts, where it
- * lives as long as the isolate the Worker runs in.
+ * lives as long as the isolate the Worker runs in: each isolate has its
+ * own.
+ *
+ * At most one of its three fields holds something at a time. Counts are
+ * kept when a question ends well, and a failure is noted when it does not;
+ * either way the question is out no longer. And a new question is asked
+ * only once there are no counts to give and no failure to wait out.
  *
  * It is plain data: counts, times, and how a question ended (a status and
  * a code). Nothing of a request or of a reader is in it, and nothing that
@@ -158,6 +170,14 @@ export interface PotStatsHolder {
   kept: { readonly stats: Readonly<PotStats>; readonly at: number } | null;
   /** The question that is out to the origin. Null: none is out. */
   asking: PotStatsQuestion | null;
+  /**
+   * The last question that brought no counts: when it ended (ms since 1970),
+   * and the fault it ended with ("handler" when the question itself threw).
+   * For a short time after it the origin is not asked again. Null: no
+   * question has failed, or that time is over. Never counts: a failure is
+   * not given out as an answer.
+   */
+  failed: { readonly at: number; readonly fault: Fault | null } | null;
 }
 
 /**
@@ -252,7 +272,10 @@ export interface Deps {
   botCheck: BotCheck;
   forwardEvent: ForwardEvent;
   limits: Limits;
-  /** The pot's counts, kept between requests. The same holder for every request: never one made for this request. */
+  /**
+   * The pot's counts, kept between requests. The same holder for every request: never one made for this request.
+   * It is neither read nor written while the counts are switched off (config.potCounts).
+   */
   potStatsHolder: PotStatsHolder;
   /** Writes one line. The deployed Worker prints JSON to the console; tests collect the lines. */
   log(line: LogLine): void;

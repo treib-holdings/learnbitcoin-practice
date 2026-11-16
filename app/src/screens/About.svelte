@@ -15,7 +15,9 @@
   //   - "In this browser right now" says what is stored here at this moment:
   //     the wallet's record, and the note of the "Do it" steps where there
   //     is one (or that something is stored in the note's place that this
-  //     page cannot read);
+  //     page cannot read). Where the browser did not let the page read its
+  //     storage, the line says that it cannot tell, and nothing else: never
+  //     "Nothing", which would be said of a browser that may hold a wallet;
   //   - the list of what is counted is the contract's list of events, and
   //     the line above it says whether counting is switched on.
   //
@@ -52,6 +54,7 @@
     keptNow,
     keptNowLines,
     linkText,
+    notKnown,
     noteNow,
   } from './info/facts.ts';
 
@@ -69,6 +72,8 @@
   let keptLines = $derived(kept === null ? null : keptNowLines(kept, note));
   /** The sentence that follows the one about the wallet's record, where one does. */
   let also = $derived(keptLines?.also ?? null);
+  /** The page was not let read this browser's storage: what is kept is not known, and the line says only that. */
+  let unread = $derived(kept !== null && notKnown(kept, note));
 
   /** Whether the settings say that events are wanted. While they do not, the app sends none. */
   let counting = $derived(wallet.config.events);
@@ -164,8 +169,8 @@
         label={t.keepNowLabel}
         text={t[keptLines.text]}
         data-testid="about-kept-now"
-        data-kept={kept}
-        data-note={note === 'kept' ? 'yes' : note === 'unreadable' ? 'unreadable' : 'no'}
+        data-kept={unread ? 'blocked' : kept}
+        data-note={unread ? 'blocked' : note === 'kept' ? 'yes' : note === 'unreadable' ? 'unreadable' : 'no'}
         children={also !== null ? alsoNote : undefined}
       />
     {/if}

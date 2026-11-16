@@ -1,13 +1,22 @@
-// The pot's counts: one answer of the origin's for everyone (src/pot-stats.ts).
+// The pot's counts: one answer of the origin's for all the readers that one
+// isolate of the Worker serves (src/pot-stats.ts).
 //
-// GET /api/pot/stats is open to anybody, and what an answer costs the
-// practice network can grow with something a stranger controls. So the
-// Worker must not ask the origin once per request. Every test here goes
-// through the real handler, by the route's own door, with an origin that
-// counts how often it is asked and a clock the test moves by hand. All but
-// one of them fail against a handler that asks for every request. The one
-// that does not (a clock that is set back) holds the keeping to its limits:
-// it fails when counts are kept longer, or kept when they should not be.
+// While it is switched on, GET /api/pot/stats is open to anybody, and what
+// an answer costs the practice network can grow with something a stranger
+// controls. So the Worker must not ask the origin once per request. Every
+// test here goes through the real handler, by the route's own door, with
+// the counts switched on, an origin that counts how often it is asked and
+// a clock the test moves by hand. One handler over one holder is one
+// isolate: "every reader" in a test's name is every reader of that isolate.
+//
+// Most of them fail against a handler that asks for every request. The
+// tests of the clock hold the rule to its limits: they fail when counts
+// are kept longer than they should be, when a failure or a question that
+// is dated later than now is waited out, and when the origin is asked
+// again before the pause after a failure is over.
+//
+// (What the route does while it is switched off is in handler.test.ts and
+// index.test.ts: it is not there.)
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
@@ -17,7 +26,14 @@ import type { Fault, Handler, Limiter, OriginAnswer, PotStatsHolder } from '../s
 import { makeHandler } from '../src/handler.ts';
 import { FIXED_HEADERS } from '../src/headers.ts';
 import { ORIGIN_TIMEOUT_MS } from '../src/origin.ts';
-import { POT_STATS_KEEP_MS, POT_STATS_LOOK_FIRST_MS, POT_STATS_LOOK_MAX_MS, POT_STATS_WAIT_MS, makePotStatsHolder } from '../src/pot-stats.ts';
+import {
+  POT_STATS_KEEP_MS,
+  POT_STATS_LOOK_FIRST_MS,
+  POT_STATS_LOOK_MAX_MS,
+  POT_STATS_PAUSE_MS,
+  POT_STATS_WAIT_MS,
+  makePotStatsHolder,
+} from '../src/pot-stats.ts';
 import { readerKey } from '../src/reader-key.ts';
 import { ADDRESS, APP, POT_COUNTS, TXID, errorOf, get, harness, noNetwork, post } from './fakes.ts';
 import type { Harness } from './fakes.ts';
@@ -115,6 +131,21 @@ async function read(response: Response): Promise<[status: number, body: unknown]
 /** How often the origin was asked, by the handler's own record of what it asked the outside. */
 const originAsked = (h: Harness): number => h.trace.filter((step) => step === 'origin:potStats').length;
 
+/** A holder with nothing in it: no counts, no question, no failure. */
+const EMPTY: PotStatsHolder = { kept: null, asking: null, failed: null };
+
+/** What a holder holds, by name. It holds one thing at a time, or nothing (deps.ts). */
+function holds(holder: PotStatsHolder): 'counts' | 'question' | 'failure' | 'nothing' {
+  const there = [holder.kept !== null ? 'counts' : null, holder.asking !== null ? 'question' : null, holder.failed !== null ? 'failure' : null].filter(
+    (name) => name !== null,
+  );
+  assert.ok(there.length <= 1, `the holder holds more than one thing: ${JSON.stringify(holder)}`);
+  return (there[0] ?? 'nothing') as 'counts' | 'question' | 'failure' | 'nothing';
+}
+
+/** The line a request writes when it was told "unavailable" in the pause after a failure: nobody was asked for it. */
+const pausedLine = (fault: Fault, ms = 0) => ({ route: 'pot_stats', status: 502, upstream: null, ms, fault });
+
 // -- many callers, one question ------------------------------------------------------------------
 
 test('many readers, one question to the origin: each is counted first, and each is given the same three counts', async () => {
@@ -159,7 +190,7 @@ test('a second question only when the kept counts are 15 seconds old, counted fr
   w.questions[0]!.answer(good(counts(1)));
   assert.deepEqual(await read(await first), [200, counts(1)]);
   const came = T0 + 3_000;
-  assert.deepEqual(w.h.deps.potStatsHolder, { kept: { stats: counts(1), at: came }, asking: null });
+  assert.deepEqual(w.h.deps.potStatsHolder, { ...EMPTY, kept: { stats: counts(1), at: came } });
 
   // Until 15 seconds after it came, everyone is given that answer and the origin is left alone.
   w.answerAtOnce(() => good(counts(2)));
@@ -263,7 +294,7 @@ test('when the kept counts run out, the many requests of that moment still share
 
 // -- an answer that failed -----------------------------------------------------------------------------
 
-test('an answer that failed is not kept: everyone who waited for it is told, and the next request asks again', async () => {
+test('an answer that failed is not kept: everyone who waited for it is told, the origin is left alone for 5 seconds, and then the next request asks again', async () => {
   const failures: Array<[what: string, upstream: number | null, fault: Fault]> = [
     ['the origin is down', 502, 'origin_down'],
     ['the origin did not answer in time', null, 'origin_timeout'],
@@ -286,17 +317,30 @@ test('an answer that failed is not kept: everyone who waited for it is told, and
     // Every "unavailable" is in the log with its fault, for the one that asked and for those that waited.
     assert.equal(w.h.lines.length, 10, what);
     for (const line of w.h.lines) assert.deepEqual(line, { route: 'pot_stats', status: 502, upstream, ms: 0, fault }, what);
-    assert.deepEqual(w.h.deps.potStatsHolder, { kept: null, asking: null }, `${what}: nothing was kept`);
+    // No counts are kept. What is noted is that a question failed, when, and with which fault.
+    assert.deepEqual(w.h.deps.potStatsHolder, { ...EMPTY, failed: { at: T0, fault } }, `${what}: no counts were kept`);
 
-    // The next request asks again, at once: there is nothing to wait out.
-    w.answerAtOnce(() => failed(upstream, fault));
-    assert.equal((await w.handler(look(10))).status, 502, what);
-    assert.equal(w.questions.length, 2, what);
-    // And when the origin answers well, that answer is kept like any other.
+    // For 5 seconds from that moment a request is told the same, and the origin is not asked: it could answer well by now.
     w.answerAtOnce(() => good());
-    assert.deepEqual(await read(await w.handler(look(11))), [200, POT_COUNTS], what);
+    w.clock.ms = T0 + POT_STATS_PAUSE_MS - 1;
+    const paused = await w.handler(look(10));
+    assert.equal(paused.status, 502, what);
+    assert.deepEqual(await errorOf(paused), { error: 'unavailable' }, what);
+    assert.equal(w.questions.length, 1, what);
+    assert.deepEqual(w.h.lines.at(-1), pausedLine(fault), what);
+    // Then the next request asks again. The origin still fails: that is a new failure, with a pause of its own.
+    w.answerAtOnce(() => failed(upstream, fault));
+    w.clock.ms = T0 + POT_STATS_PAUSE_MS;
+    assert.equal((await w.handler(look(11))).status, 502, what);
+    assert.equal(w.questions.length, 2, what);
+    assert.deepEqual(w.h.deps.potStatsHolder, { ...EMPTY, failed: { at: T0 + POT_STATS_PAUSE_MS, fault } }, what);
+    // And when the origin answers well after that pause, the answer is kept like any other, and the failure is forgotten.
+    w.answerAtOnce(() => good());
+    w.clock.ms += POT_STATS_PAUSE_MS;
     assert.deepEqual(await read(await w.handler(look(12))), [200, POT_COUNTS], what);
+    assert.deepEqual(await read(await w.handler(look(13))), [200, POT_COUNTS], what);
     assert.equal(w.questions.length, 3, what);
+    assert.equal(holds(w.h.deps.potStatsHolder), 'counts', what);
   }
 });
 
@@ -309,18 +353,24 @@ test('counts that have run out are not given again when the origin then fails', 
   w.clock.ms = T0 + POT_STATS_KEEP_MS - 1;
   assert.deepEqual(await read(await w.handler(look())), [200, POT_COUNTS]);
   assert.equal(w.questions.length, 1);
-  // Once they are too old, a reader is told "unavailable", not given the old counts.
+  // Once they are too old, a reader is told "unavailable", not given the old counts. The first of
+  // three asks, and the question fails. The other two are told so without the origin being asked.
   w.clock.ms = T0 + POT_STATS_KEEP_MS;
   for (let n = 0; n < 3; n += 1) {
     const response = await w.handler(look(n));
     assert.equal(response.status, 502);
     assert.deepEqual(await errorOf(response), { error: 'unavailable' });
   }
-  assert.equal(w.questions.length, 4, 'each of the three asked: a failure is not kept either');
-  assert.deepEqual(w.h.lines.slice(-3), [0, 1, 2].map(() => ({ route: 'pot_stats', status: 502, upstream: 502, ms: 0, fault: 'origin_down' })));
+  assert.equal(w.questions.length, 2, 'one of the three asked');
+  assert.deepEqual(w.h.lines.slice(-3), [{ route: 'pot_stats', status: 502, upstream: 502, ms: 0, fault: 'origin_down' }, pausedLine('origin_down'), pausedLine('origin_down')]);
+  // The old counts are gone for good: not after the pause either, with the origin still down.
+  w.clock.ms += POT_STATS_PAUSE_MS;
+  assert.equal((await w.handler(look(3))).status, 502);
+  assert.equal(w.questions.length, 3);
+  assert.equal(w.h.deps.potStatsHolder.kept, null);
 });
 
-test('a question that breaks is our own mistake: everyone who waited is told "unavailable", the log says "handler", and nothing is left behind', async () => {
+test('a question that breaks is our own mistake: everyone who waited is told "unavailable", the log says "handler", no counts and no question are left behind, and the origin is left alone for 5 seconds', async () => {
   const w = world();
   const answers = Array.from({ length: 5 }, (_, n) => w.handler(look(n)));
   await arrived(w.h, 5);
@@ -334,12 +384,23 @@ test('a question that breaks is our own mistake: everyone who waited is told "un
   }
   for (const line of w.h.lines) assert.deepEqual(line, { route: 'pot_stats', status: 502, upstream: null, ms: 0, fault: 'handler' });
   assert.equal(w.h.lines.length, 5);
-  assert.deepEqual(w.h.deps.potStatsHolder, { kept: null, asking: null });
+  // Nothing of the question is left, and nothing of the error: only that a question failed, and when.
+  assert.deepEqual(w.h.deps.potStatsHolder, { ...EMPTY, failed: { at: T0, fault: 'handler' } });
+  assert.ok(!JSON.stringify(w.h.deps.potStatsHolder).includes(ADDRESS));
   // What was handed to waitUntil does not reject, so the runtime has no stray failure to report.
   await Promise.all(w.h.pending);
-  // The next request is not held up by the broken question: it asks.
+  // A question that breaks may have reached the origin all the same. So the pause follows it as it follows an
+  // answer that failed: for 5 seconds a request is told what those who waited were told, and nobody is asked.
   w.answerAtOnce(() => good());
-  assert.deepEqual(await read(await w.handler(look(5))), [200, POT_COUNTS]);
+  w.clock.ms = T0 + POT_STATS_PAUSE_MS - 1;
+  const paused = await w.handler(look(5));
+  assert.equal(paused.status, 502);
+  assert.deepEqual(await errorOf(paused), { error: 'unavailable' });
+  assert.deepEqual(w.h.lines.at(-1), pausedLine('handler'));
+  assert.equal(w.questions.length, 1);
+  // Then the next request is not held up by the broken question: it asks.
+  w.clock.ms = T0 + POT_STATS_PAUSE_MS;
+  assert.deepEqual(await read(await w.handler(look(6))), [200, POT_COUNTS]);
   assert.equal(w.questions.length, 2);
 });
 
@@ -396,13 +457,13 @@ test('nobody waits without end for a question that is not their own: 10 seconds 
   assert.equal(w.questions.length, 2);
   w.questions[1]!.answer(good(counts(7)));
   assert.deepEqual(await read(await next), [200, counts(7)]);
-  assert.deepEqual(w.h.deps.potStatsHolder, { kept: { stats: counts(7), at: T0 + POT_STATS_WAIT_MS }, asking: null });
+  assert.deepEqual(w.h.deps.potStatsHolder, { ...EMPTY, kept: { stats: counts(7), at: T0 + POT_STATS_WAIT_MS } });
 
   // Should the old question come back after all, its answer goes to the request that asked it and is not kept:
   // a newer answer is.
   w.questions[0]!.answer(good(counts(99)));
   assert.deepEqual(await read(await asker), [200, counts(99)]);
-  assert.deepEqual(w.h.deps.potStatsHolder, { kept: { stats: counts(7), at: T0 + POT_STATS_WAIT_MS }, asking: null });
+  assert.deepEqual(w.h.deps.potStatsHolder, { ...EMPTY, kept: { stats: counts(7), at: T0 + POT_STATS_WAIT_MS } });
   assert.deepEqual(await read(await w.handler(look(4))), [200, counts(7)]);
   assert.equal(w.questions.length, 2);
 });
@@ -416,15 +477,64 @@ test('a question that was given up on does not take the place of the one that is
   const second = w.handler(look(1));
   await arrived(w.h, 2);
   assert.equal(w.questions.length, 2);
-  // The old question fails late. The one that is out stays out, and a third request waits for it.
+  const out = { since: T0 + POT_STATS_WAIT_MS, ended: null };
+  assert.deepEqual(w.h.deps.potStatsHolder, { ...EMPTY, asking: out });
+  // The old question fails late. The one that is out stays out, and no failure is noted: the question
+  // that failed is not the one anybody waits for. So no pause begins, and a third request waits.
   w.questions[0]!.answer(failed(null, 'origin_timeout'));
   assert.equal((await asker).status, 502);
+  assert.deepEqual(w.h.deps.potStatsHolder, { ...EMPTY, asking: out });
   const third = w.handler(look(2));
   await arrived(w.h, 3);
   assert.equal(w.questions.length, 2, 'the third request waits for the second question');
   w.questions[1]!.answer(good(counts(4)));
   assert.deepEqual(await read(await second), [200, counts(4)]);
   assert.deepEqual(await read(await third), [200, counts(4)]);
+  assert.deepEqual(w.h.deps.potStatsHolder, { ...EMPTY, kept: { stats: counts(4), at: T0 + POT_STATS_WAIT_MS } });
+});
+
+test('a question that was given up on and then breaks does not take the newer question off, and starts no pause: when a question breaks, it is cleared only if it is still the one that is out', async () => {
+  const w = world();
+  const asker = w.handler(look(0));
+  await arrived(w.h, 1);
+  // Given up on: the next request asks anew, and its question is the one that is out.
+  w.clock.ms = T0 + POT_STATS_WAIT_MS;
+  const second = w.handler(look(1));
+  await arrived(w.h, 2);
+  assert.equal(w.questions.length, 2);
+  const out = { since: T0 + POT_STATS_WAIT_MS, ended: null };
+  assert.deepEqual(w.h.deps.potStatsHolder, { ...EMPTY, asking: out });
+
+  // The old question breaks late: a mistake of ours, in work nobody waits for any more.
+  w.questions[0]!.break(new Error(`broke late, on the way to ${ADDRESS}`));
+  assert.equal((await asker).status, 502);
+  // The newer question is still the one that is out, and no failure is noted: it is not the one that broke.
+  assert.deepEqual(w.h.deps.potStatsHolder, { ...EMPTY, asking: out });
+
+  // So a third request waits for the second question. It is not told "unavailable", and it does not ask.
+  const third = w.handler(look(2));
+  await arrived(w.h, 3);
+  let told = false;
+  void third.then(() => {
+    told = true;
+  });
+  await turn();
+  await turn();
+  assert.equal(told, false, 'the third request waits');
+  assert.equal(w.questions.length, 2, 'the origin has been asked twice, not three times');
+  w.questions[1]!.answer(good(counts(4)));
+  assert.deepEqual(await read(await second), [200, counts(4)]);
+  assert.deepEqual(await read(await third), [200, counts(4)]);
+  assert.deepEqual(
+    w.h.lines.map((line) => [line.status, line.upstream, line.fault]),
+    [
+      [502, null, 'handler'],
+      [200, 200, null],
+      [200, 200, null],
+    ],
+  );
+  assert.deepEqual(w.h.deps.potStatsHolder, { ...EMPTY, kept: { stats: counts(4), at: T0 + POT_STATS_WAIT_MS } });
+  await Promise.all(w.h.pending);
 });
 
 test('the request that asks hands its question to waitUntil, so that a reader who leaves does not take the answer away from the rest', async () => {
@@ -448,7 +558,7 @@ test('the request that asks hands its question to waitUntil, so that a reader wh
 
 // -- the reader's own budget ---------------------------------------------------------------------------------
 
-test("the reader's own budget is counted first, and a reader over it is refused: with counts kept, with a question out, and with neither", async () => {
+test("the reader's own budget is counted first, and a reader over it is refused: with counts kept, with a question out, with a failure noted, and with none of these", async () => {
   const over = `${await readerKey('pot', reader(9))}:stats`;
   /** A limiter that refuses reader 9's looks at the counts and nobody else's, and records every call. */
   const limiter = (h: Harness): Limiter => ({
@@ -490,6 +600,25 @@ test("the reader's own budget is counted first, and a reader over it is refused:
   assert.equal((await empty.handler(look(3))).status, 200);
   assert.deepEqual(empty.h.trace, ['limit:passed', 'limit:refused', 'limit:passed'], 'the limiter is asked for every request, and nothing else is');
   assert.equal(empty.questions.length, 1);
+
+  // A failure is noted: in the pause after it, the refused reader is refused all the same, and is not
+  // told "unavailable". Everyone else is, and the limiter is asked for each of them.
+  const down = world();
+  down.h.deps.limits = { ...down.h.deps.limits, pot: limiter(down.h) };
+  down.answerAtOnce(() => failed(502, 'origin_down'));
+  assert.equal((await down.handler(look(1))).status, 502);
+  assert.equal(holds(down.h.deps.potStatsHolder), 'failure');
+  down.h.trace.length = 0;
+  await refused(await down.handler(look(9)));
+  assert.equal((await down.handler(look(2))).status, 502);
+  await refused(await down.handler(look(9)));
+  assert.deepEqual(down.h.trace, ['limit:refused', 'limit:passed', 'limit:refused']);
+  assert.equal(down.questions.length, 1);
+  assert.deepEqual(down.h.lines.slice(-3).map((line) => [line.status, line.fault]), [
+    [429, null],
+    [502, 'origin_down'],
+    [429, null],
+  ]);
 });
 
 // -- what the browser is told -----------------------------------------------------------------------------------
@@ -607,7 +736,7 @@ test('nothing a request says can get round the kept counts or make the Worker as
   for (const path of paths) assert.equal((await fresh.handler(get(path))).status, 404, path);
   assert.equal((await fresh.handler(post(API.potStats, null))).status, 405);
   assert.equal(fresh.questions.length, 0);
-  assert.deepEqual(fresh.h.deps.potStatsHolder, { kept: null, asking: null });
+  assert.deepEqual(fresh.h.deps.potStatsHolder, EMPTY);
 });
 
 // -- what is kept, and where ----------------------------------------------------------------------------------------------
@@ -622,12 +751,12 @@ test('what is kept is three counts and the time they came: nothing of the reques
   // While the question is out: when it was asked and that it has not ended, and nothing else. Plain
   // data, with no promise in it: the question itself stays with the request that asked.
   const holder: PotStatsHolder = w.h.deps.potStatsHolder;
-  assert.equal(JSON.stringify(holder), `{"kept":null,"asking":{"since":${T0},"ended":null}}`);
+  assert.equal(JSON.stringify(holder), `{"kept":null,"asking":{"since":${T0},"ended":null},"failed":null}`);
 
   w.clock.ms = T0 + 250;
   w.questions[0]!.answer(good(padded));
   assert.equal((await asker).status, 200);
-  assert.equal(JSON.stringify(holder), `{"kept":{"stats":{"passedOn":12,"waiting":3,"handedOn":9},"at":${T0 + 250}},"asking":null}`);
+  assert.equal(JSON.stringify(holder), `{"kept":{"stats":{"passedOn":12,"waiting":3,"handedOn":9},"at":${T0 + 250}},"asking":null,"failed":null}`);
   assert.deepEqual(Object.keys(holder.kept!.stats), ['passedOn', 'waiting', 'handedOn']);
   assert.ok(Object.isFrozen(holder.kept!.stats), 'the kept counts cannot be changed by whoever is given them');
   const written = JSON.stringify(holder);
@@ -641,7 +770,7 @@ test('what is kept is three counts and the time they came: nothing of the reques
 test('the counts are kept by the holder, not by the handler: a handler made anew for each request finds what the last one left, and another holder knows nothing of it', async () => {
   // As the deployed Worker has it (index.ts): a new Deps, a new origin and a new handler for every
   // request, and one holder that outlives them.
-  assert.deepEqual(makePotStatsHolder(), { kept: null, asking: null });
+  assert.deepEqual(makePotStatsHolder(), { kept: null, asking: null, failed: null });
   assert.notEqual(makePotStatsHolder(), makePotStatsHolder(), 'each call makes a holder of its own');
   const holder = makePotStatsHolder();
   const requestWith = async (shared: typeof holder | null): Promise<[status: number, body: unknown, asked: number]> => {
@@ -727,3 +856,478 @@ test('a request that waits looks for the answer with timers of its own: first af
   assert.deepEqual(await read(await waitsLong), [200, counts(2)]);
   assert.equal(w.questions.length, 2);
 });
+
+// -- the pause after a question that failed --------------------------------------------------------------------------------
+
+test('after a question that failed the origin is left alone for 5 seconds from the moment it failed: every request in that time is told "unavailable" and none of them asks, however many they are; then one asks', async () => {
+  assert.equal(POT_STATS_PAUSE_MS, 5_000);
+  assert.ok(POT_STATS_PAUSE_MS < POT_STATS_WAIT_MS && POT_STATS_WAIT_MS < POT_STATS_KEEP_MS, 'a failure is waited out sooner than a question is given up on, and that sooner than counts run out');
+  const w = world();
+  // The origin takes 3 seconds to fail.
+  const first = w.handler(look(0));
+  await arrived(w.h, 1);
+  w.clock.ms = T0 + 3_000;
+  w.questions[0]!.answer(failed(502, 'origin_down'));
+  assert.equal((await first).status, 502);
+  const failedAt = T0 + 3_000;
+  assert.deepEqual(w.h.deps.potStatsHolder, { ...EMPTY, failed: { at: failedAt, fault: 'origin_down' } });
+
+  // The origin is well again at once. For 5 seconds nobody finds out: it is not asked.
+  w.answerAtOnce(() => good(counts(2)));
+  w.h.trace.length = 0;
+  w.h.lines.length = 0;
+  let looks = 0;
+  for (const later of [0, 1, 1_000, 2_500, 4_998, 4_999]) {
+    w.clock.ms = failedAt + later;
+    // A crowd each time: 40 readers at the same moment.
+    const answers = await Promise.all(Array.from({ length: 40 }, (_, n) => w.handler(look(100 + n))));
+    looks += answers.length;
+    for (const response of answers) {
+      assert.equal(response.status, ERROR_STATUS.unavailable, `${later} ms after the failure`);
+      // "Unavailable" and nothing else: a failure is never given out as counts.
+      assert.equal(await response.text(), '{"error":"unavailable"}', `${later} ms after the failure`);
+      assert.equal(response.headers.get('Cache-Control'), 'no-store');
+    }
+    assert.equal(w.questions.length, 1, `${later} ms after the failure`);
+  }
+  assert.equal(looks, 240);
+  // Each of them was counted at the limiter first, and nothing else was asked for any of them.
+  assert.deepEqual(w.h.trace, Array.from({ length: looks }, () => 'limit:pot'));
+  // Each wrote its line: the fault of the question that failed, and no status of the origin's, which was not asked.
+  assert.deepEqual(w.h.lines, Array.from({ length: looks }, () => pausedLine('origin_down')));
+  assert.equal(w.h.pending.length, 1, 'nothing was handed to waitUntil in the pause');
+  // The note is as it was: the pause does not begin again with each request that is turned away.
+  assert.deepEqual(w.h.deps.potStatsHolder, { ...EMPTY, failed: { at: failedAt, fault: 'origin_down' } });
+
+  // At 5 seconds the pause is over. Of the 40 readers of that moment one asks, and all are given its answer.
+  w.holdAnswers();
+  w.clock.ms = failedAt + POT_STATS_PAUSE_MS;
+  const after = Array.from({ length: 40 }, (_, n) => w.handler(look(200 + n)));
+  await arrived(w.h, 1 + looks + 40);
+  assert.equal(w.questions.length, 2, 'one question, not forty');
+  assert.deepEqual(w.h.deps.potStatsHolder, { ...EMPTY, asking: { since: failedAt + POT_STATS_PAUSE_MS, ended: null } });
+  w.questions[1]!.answer(good(counts(2)));
+  for (const answer of after) assert.deepEqual(await read(await answer), [200, counts(2)]);
+  assert.deepEqual(w.h.deps.potStatsHolder, { ...EMPTY, kept: { stats: counts(2), at: failedAt + POT_STATS_PAUSE_MS } });
+});
+
+test('while the origin fails, an isolate asks once for each pause and no more often, whoever looks and however often: 12 questions for 600 looks in a minute', async () => {
+  const w = world();
+  w.answerAtOnce(() => failed(502, 'origin_down'));
+  // A minute of looks, ten a second, each by another reader. The origin fails each question at once.
+  const asked: number[] = [];
+  for (let ms = 0; ms < 60_000; ms += 100) {
+    w.clock.ms = T0 + ms;
+    const before = w.questions.length;
+    assert.equal((await w.handler(look(ms / 100))).status, 502, `${ms} ms`);
+    if (w.questions.length > before) asked.push(ms);
+  }
+  assert.deepEqual(asked, [0, 5_000, 10_000, 15_000, 20_000, 25_000, 30_000, 35_000, 40_000, 45_000, 50_000, 55_000]);
+  assert.equal(w.h.lines.length, 600);
+  // Every one of the 600 was told "unavailable", with the fault in its line: 12 of them had asked.
+  assert.equal(w.h.lines.filter((line) => line.upstream === 502).length, 12);
+  assert.equal(w.h.lines.filter((line) => line.upstream === null && line.fault === 'origin_down').length, 588);
+  // The moment the origin is well, the next question says so, and the counts are kept from then on.
+  w.answerAtOnce(() => good(counts(7)));
+  w.clock.ms = T0 + 60_000;
+  assert.deepEqual(await read(await w.handler(look(600))), [200, counts(7)]);
+  assert.equal(w.questions.length, 13);
+});
+
+test('the pause begins when the question ends, not when it was asked: an origin that takes its 8 seconds to fail is asked once in 13', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const pass = (ms: number): void => {
+    for (let passed = 0; passed < ms; passed += 1) t.mock.timers.tick(1);
+  };
+  const w = world();
+  // The origin does not answer. The Worker's own time limit ends the question after 8 seconds (origin.ts).
+  const asker = w.handler(look(0));
+  await arrived(w.h, 1);
+  // A reader who arrives meanwhile waits for that question.
+  w.clock.ms = T0 + 6_000;
+  const waiter = w.handler(look(1));
+  await arrived(w.h, 2);
+  w.clock.ms = T0 + ORIGIN_TIMEOUT_MS;
+  w.questions[0]!.answer(failed(null, 'origin_timeout'));
+  assert.equal((await asker).status, 502);
+  pass(POT_STATS_LOOK_MAX_MS);
+  assert.equal((await waiter).status, 502);
+  assert.deepEqual(w.h.deps.potStatsHolder, { ...EMPTY, failed: { at: T0 + ORIGIN_TIMEOUT_MS, fault: 'origin_timeout' } });
+
+  // From then on, for 5 seconds, nobody waits and nobody asks: a request is told at once.
+  w.answerAtOnce(() => good(counts(2)));
+  for (const at of [ORIGIN_TIMEOUT_MS, 10_000, ORIGIN_TIMEOUT_MS + POT_STATS_PAUSE_MS - 1]) {
+    w.clock.ms = T0 + at;
+    assert.equal((await w.handler(look(2))).status, 502, `${at} ms`);
+    assert.equal(w.questions.length, 1, `${at} ms`);
+  }
+  assert.deepEqual(w.h.lines.slice(-3), [pausedLine('origin_timeout'), pausedLine('origin_timeout'), pausedLine('origin_timeout')]);
+  // 13 seconds after the first question, the second.
+  w.clock.ms = T0 + ORIGIN_TIMEOUT_MS + POT_STATS_PAUSE_MS;
+  assert.deepEqual(await read(await w.handler(look(3))), [200, counts(2)]);
+  assert.equal(w.questions.length, 2);
+});
+
+test('a failure does not bring counts back, and counts that are kept are not touched by a pause that is over', async () => {
+  const w = world();
+  w.answerAtOnce(() => good(counts(1)));
+  assert.deepEqual(await read(await w.handler(look())), [200, counts(1)]);
+  // The counts run out, and the question that follows fails.
+  w.answerAtOnce(() => failed(502, 'origin_down'));
+  w.clock.ms = T0 + POT_STATS_KEEP_MS;
+  assert.equal((await w.handler(look())).status, 502);
+  // In the pause: "unavailable". Not the counts from before, although the holder had them a moment ago.
+  for (const later of [0, 2_000, POT_STATS_PAUSE_MS - 1]) {
+    w.clock.ms = T0 + POT_STATS_KEEP_MS + later;
+    const response = await w.handler(look());
+    assert.deepEqual(await read(response), [502, { error: 'unavailable' }], `${later} ms`);
+  }
+  assert.equal(w.questions.length, 2);
+  // After the pause the origin answers: those are the counts given, and the note of the failure is gone.
+  w.answerAtOnce(() => good(counts(3)));
+  w.clock.ms = T0 + POT_STATS_KEEP_MS + POT_STATS_PAUSE_MS;
+  assert.deepEqual(await read(await w.handler(look())), [200, counts(3)]);
+  assert.deepEqual(w.h.deps.potStatsHolder, { ...EMPTY, kept: { stats: counts(3), at: T0 + POT_STATS_KEEP_MS + POT_STATS_PAUSE_MS } });
+  // They are kept for their 15 seconds like any others: the failure before them shortens nothing.
+  w.answerAtOnce(() => failed(502, 'origin_down'));
+  w.clock.ms += POT_STATS_KEEP_MS - 1;
+  assert.deepEqual(await read(await w.handler(look())), [200, counts(3)]);
+  assert.equal(w.questions.length, 3);
+});
+
+// -- a clock that was set back ---------------------------------------------------------------------------------------------
+
+test('a question that is dated later than now counts as lost: the next request does not wait for it, it asks anew', async (t) => {
+  // The timers are the test's, and it lets no time pass: a request that waited would never be answered here.
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  for (const back of [1, 1_000, POT_STATS_WAIT_MS, 3_600_000]) {
+    const w = world();
+    // A request asks. Its question never ends: the runtime stopped the request, and nothing wrote down how it ended.
+    void w.handler(look(0));
+    await arrived(w.h, 1);
+    assert.deepEqual(w.h.deps.potStatsHolder, { ...EMPTY, asking: { since: T0, ended: null } });
+
+    // The clock is set back. The question is now dated later than now, which says nothing about how long it
+    // has been out. Taken for a question just asked, it would be waited for until the clock had caught up.
+    w.clock.ms = T0 - back;
+    const next = w.handler(look(1));
+    await arrived(w.h, 2);
+    assert.equal(w.questions.length, 2, `set back by ${back} ms: the request asked, and did not wait`);
+    assert.deepEqual(w.h.deps.potStatsHolder, { ...EMPTY, asking: { since: T0 - back, ended: null } });
+    w.questions[1]!.answer(good(counts(2)));
+    assert.deepEqual(await read(await next), [200, counts(2)], `set back by ${back} ms`);
+    // From then on the counts are kept by the clock as it now runs.
+    assert.deepEqual(w.h.deps.potStatsHolder, { ...EMPTY, kept: { stats: counts(2), at: T0 - back } });
+    assert.deepEqual(await read(await w.handler(look(2))), [200, counts(2)]);
+    assert.equal(w.questions.length, 2);
+    assert.deepEqual(
+      w.h.lines.map((line) => [line.status, line.upstream, line.fault]),
+      [
+        [200, 200, null],
+        [200, null, null],
+      ],
+      'nobody was told "unavailable"',
+    );
+  }
+});
+
+test('a question that is alive when the clock is set back costs the origin one more question and no more: its answer goes to those who asked and waited for it, and the newer answer is the one that is kept', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const pass = (ms: number): void => {
+    for (let passed = 0; passed < ms; passed += 1) t.mock.timers.tick(1);
+  };
+  const w = world();
+  const asker = w.handler(look(0));
+  await arrived(w.h, 1);
+  const waiter = w.handler(look(1));
+  await arrived(w.h, 2);
+  assert.equal(w.questions.length, 1);
+
+  // The clock is set back by a minute. The first request after that asks anew. Those that follow wait for its question.
+  w.clock.ms = T0 - 60_000;
+  const second = w.handler(look(2));
+  await arrived(w.h, 3);
+  const others = Array.from({ length: 30 }, (_, n) => w.handler(look(3 + n)));
+  await arrived(w.h, 33);
+  assert.equal(w.questions.length, 2, 'one more question for the jump, and none for the thirty that came after it');
+  const newer = { since: T0 - 60_000, ended: null };
+  assert.deepEqual(w.h.deps.potStatsHolder, { ...EMPTY, asking: newer });
+
+  // The older question comes back. Its answer goes to the request that asked it and to the one that had
+  // waited for it. It is not kept, and the newer question stays out.
+  w.questions[0]!.answer(good(counts(1)));
+  assert.deepEqual(await read(await asker), [200, counts(1)]);
+  pass(POT_STATS_LOOK_FIRST_MS);
+  assert.deepEqual(await read(await waiter), [200, counts(1)]);
+  assert.deepEqual(w.h.deps.potStatsHolder, { ...EMPTY, asking: newer });
+
+  // The newer one comes back: its answer is kept, dated by the clock as it now runs.
+  w.questions[1]!.answer(good(counts(2)));
+  assert.deepEqual(await read(await second), [200, counts(2)]);
+  pass(POT_STATS_LOOK_MAX_MS);
+  for (const each of others) assert.deepEqual(await read(await each), [200, counts(2)]);
+  assert.deepEqual(w.h.deps.potStatsHolder, { ...EMPTY, kept: { stats: counts(2), at: T0 - 60_000 } });
+  assert.equal(w.questions.length, 2);
+});
+
+test('a failure that is dated later than now is forgotten: the next request asks, and does not wait the pause out', async () => {
+  for (const back of [1, POT_STATS_PAUSE_MS - 1, POT_STATS_PAUSE_MS, 3_600_000]) {
+    const w = world();
+    w.answerAtOnce(() => failed(502, 'origin_down'));
+    assert.equal((await w.handler(look(0))).status, 502);
+    assert.deepEqual(w.h.deps.potStatsHolder, { ...EMPTY, failed: { at: T0, fault: 'origin_down' } });
+    // The clock is set back. Waited out, a failure dated an hour ahead would keep readers from the counts for an hour.
+    w.clock.ms = T0 - back;
+    w.answerAtOnce(() => good(counts(2)));
+    assert.deepEqual(await read(await w.handler(look(1))), [200, counts(2)], `set back by ${back} ms`);
+    assert.equal(w.questions.length, 2, `set back by ${back} ms`);
+    assert.deepEqual(w.h.deps.potStatsHolder, { ...EMPTY, kept: { stats: counts(2), at: T0 - back } });
+  }
+});
+
+test('a failure whose pause is over is forgotten then and there: a clock that jumps back into its 5 seconds finds no failure to wait out', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const w = world();
+  w.answerAtOnce(() => failed(502, 'origin_down'));
+  assert.equal((await w.handler(look(0))).status, 502);
+  // The pause is over. A request asks, and its question stays out.
+  w.holdAnswers();
+  w.clock.ms = T0 + POT_STATS_PAUSE_MS;
+  void w.handler(look(1));
+  await arrived(w.h, 2);
+  assert.equal(w.questions.length, 2);
+  assert.deepEqual(w.h.deps.potStatsHolder, { ...EMPTY, asking: { since: T0 + POT_STATS_PAUSE_MS, ended: null } });
+  // The clock jumps back to a second after the old failure. The question is dated later than now and counts as
+  // lost. Were the old failure still noted, it would look one second old, and the request would be turned away.
+  w.clock.ms = T0 + 1_000;
+  const next = w.handler(look(2));
+  await arrived(w.h, 3);
+  assert.equal(w.questions.length, 3, 'the request asked');
+  w.questions[2]!.answer(good(counts(3)));
+  assert.deepEqual(await read(await next), [200, counts(3)]);
+});
+
+// -- the four states, and a clock that jumps in each ------------------------------------------------------------------------
+
+test('in each of the four states, with the clock as it was, set forward and set back: the first look is answered as the state says, at most one question follows a jump, and the looks after it cost the origin nothing', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const pass = (ms: number): void => {
+    for (let passed = 0; passed < ms; passed += 1) t.mock.timers.tick(1);
+  };
+  const HOUR = 3_600_000;
+  const states = ['counts', 'question', 'failure', 'nothing'] as const;
+  const jumps = [
+    ['as it was', 1],
+    ['set forward', HOUR],
+    ['set back', -HOUR],
+  ] as const;
+  type State = (typeof states)[number];
+  type Jump = (typeof jumps)[number][0];
+  const unavailable = { error: 'unavailable' };
+  /**
+   * What the first look after the jump is told, and how many questions it costs the origin. The counts of
+   * the state are counts(1). A question asked after the jump is answered with counts(2).
+   */
+  const expected: Record<State, Record<Jump, [status: number, body: unknown, questions: number]>> = {
+    // Kept counts are given while they are young. Too old, or dated later than now, they are thrown away.
+    counts: { 'as it was': [200, counts(1), 0], 'set forward': [200, counts(2), 1], 'set back': [200, counts(2), 1] },
+    // A question is waited for while it is young. Out too long, or dated later than now, it is given up on.
+    question: { 'as it was': [200, counts(1), 0], 'set forward': [200, counts(2), 1], 'set back': [200, counts(2), 1] },
+    // After a failure the origin is left alone for 5 seconds. A failure dated later than now is forgotten.
+    failure: { 'as it was': [502, unavailable, 0], 'set forward': [200, counts(2), 1], 'set back': [200, counts(2), 1] },
+    // With nothing in the holder a request asks, whatever the clock says.
+    nothing: { 'as it was': [200, counts(2), 1], 'set forward': [200, counts(2), 1], 'set back': [200, counts(2), 1] },
+  };
+
+  let cases = 0;
+  for (const state of states) {
+    for (const [jump, by] of jumps) {
+      const what = `${state}, the clock ${jump}`;
+      const w = world();
+      // -- the state, at T0 --
+      let first: Promise<Response> | null = null;
+      if (state === 'counts') {
+        w.answerAtOnce(() => good(counts(1)));
+        assert.equal((await w.handler(look(0))).status, 200);
+      } else if (state === 'failure') {
+        w.answerAtOnce(() => failed(502, 'origin_down'));
+        assert.equal((await w.handler(look(0))).status, 502);
+      } else if (state === 'question') {
+        first = w.handler(look(0));
+        await arrived(w.h, 1);
+      }
+      w.holdAnswers();
+      assert.equal(holds(w.h.deps.potStatsHolder), state, what);
+      const before = w.questions.length;
+      const arrivals = state === 'nothing' ? 0 : 1;
+
+      // -- the jump, and one look --
+      w.clock.ms = T0 + by;
+      const answer = w.handler(look(1));
+      await arrived(w.h, arrivals + 1);
+      const [status, body, cost] = expected[state][jump];
+      assert.equal(w.questions.length - before, cost, `${what}: questions`);
+      // Whatever is out comes back now: the state's own question with counts(1), a newer one with counts(2).
+      if (state === 'question') w.questions[0]!.answer(good(counts(1)));
+      if (cost === 1) w.questions[before]!.answer(good(counts(2)));
+      // First the end of each question is written down, then a request that waits takes its next look.
+      await turn();
+      pass(POT_STATS_LOOK_MAX_MS);
+      assert.deepEqual(await read(await answer), [status, body], what);
+      if (first !== null) assert.deepEqual(await read(await first), [200, counts(1)], `${what}: the request that had asked`);
+      holds(w.h.deps.potStatsHolder);
+
+      // -- twenty more looks at that moment: the same answer, and no question --
+      const asked = w.questions.length;
+      for (let n = 0; n < 20; n += 1) assert.deepEqual(await read(await w.handler(look(2 + n))), [status, body], `${what}: look ${n} after it`);
+      assert.equal(w.questions.length, asked, `${what}: the looks that follow cost the origin nothing`);
+      if (status === 200) {
+        // What is kept is what the look was given, dated by the clock as it runs after the jump.
+        assert.deepEqual(w.h.deps.potStatsHolder, { ...EMPTY, kept: { stats: body, at: state === 'counts' && cost === 0 ? T0 : T0 + by } }, what);
+      } else {
+        // The one state that keeps a reader from the counts. It does so until 5 seconds after the failure, and no longer.
+        w.answerAtOnce(() => good(counts(3)));
+        w.clock.ms = T0 + POT_STATS_PAUSE_MS - 1;
+        assert.equal((await w.handler(look(30))).status, 502, what);
+        w.clock.ms = T0 + POT_STATS_PAUSE_MS;
+        assert.deepEqual(await read(await w.handler(look(31))), [200, counts(3)], what);
+      }
+      cases += 1;
+    }
+  }
+  assert.equal(cases, 12);
+});
+
+// -- many made-up histories ------------------------------------------------------------------------------------------------
+
+/** Numbers that look random and are the same in every run of the tests ("mulberry32"). Each is from 0 up to, not including, 1. */
+function seeded(seed: number): () => number {
+  let state = seed >>> 0;
+  return () => {
+    state = (state + 0x6d2b79f5) >>> 0;
+    let mixed = state;
+    mixed = Math.imul(mixed ^ (mixed >>> 15), mixed | 1);
+    mixed ^= mixed + Math.imul(mixed ^ (mixed >>> 7), mixed | 61);
+    return ((mixed ^ (mixed >>> 14)) >>> 0) / 4_294_967_296;
+  };
+}
+
+test('in 250 made-up histories of looks, answers, failures and jumps of the clock: the holder never holds two things, nothing is given or waited out past its time, the origin is asked no more often than the pause and the jumps allow, and the counts are back within 10 seconds of the origin being well', async (t) => {
+  // A request that waits does so with timers. They are the test's, and no time passes on them: such a
+  // request stays open, as one does whose reader waits. Everything else is answered at once.
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const random = seeded(7);
+  const seen = { given: 0, paused: 0, waited: 0, asked: 0, lost: 0, givenUp: 0, back: 0, broke: 0, failed: 0 };
+
+  for (let run = 0; run < 250; run += 1) {
+    const w = world();
+    const holder = w.h.deps.potStatsHolder;
+    /** When each good answer came, by the Worker's clock: answer number n carries passedOn n. */
+    const cameAt = new Map<number, number>();
+    /** How many of the questions the origin has been asked have come to an end, one way or another. */
+    let ended = 0;
+    let looked = 0;
+    let questions = 0;
+    let backSteps = 0;
+    let forward = 0;
+
+    for (let step = 0; step < 40; step += 1) {
+      const roll = random();
+      const now = w.clock.ms;
+      if (roll < 0.55) {
+        // -- a look, by a reader of its own --
+        const before = w.questions.length;
+        const out = holder.asking;
+        const answer = w.handler(look(looked));
+        looked += 1;
+        await arrived(w.h, looked);
+        if (w.questions.length > before) {
+          // It asked. Then there was nothing to give and nothing to wait for: a question that was out was too old, or dated later than now.
+          questions += 1;
+          seen.asked += 1;
+          if (out !== null) {
+            const age = now - out.since;
+            assert.ok(age < 0 || age >= POT_STATS_WAIT_MS, `run ${run}: a question ${age} ms old was given up on`);
+            if (age < 0) seen.lost += 1;
+            else seen.givenUp += 1;
+          }
+        } else if (out !== null) {
+          // It waits for the question that is out, which is under 10 seconds old and not dated later than now.
+          const age = now - out.since;
+          assert.ok(age >= 0 && age < POT_STATS_WAIT_MS, `run ${run}: a request waits for a question ${age} ms old`);
+          seen.waited += 1;
+        } else {
+          // It was answered from what the holder had: counts that are kept, or the note of a failure.
+          const [status, body] = await read(await answer);
+          if (status === 200) {
+            const age = now - (cameAt.get((body as PotStats).passedOn) ?? Number.NaN);
+            assert.ok(age >= 0 && age < POT_STATS_KEEP_MS, `run ${run}: counts ${age} ms old were given`);
+            seen.given += 1;
+          } else {
+            assert.deepEqual([status, body], [502, { error: 'unavailable' }], `run ${run}`);
+            const age = now - (holder.failed?.at ?? Number.NaN);
+            assert.ok(age >= 0 && age < POT_STATS_PAUSE_MS, `run ${run}: a request was turned away for a failure ${age} ms old`);
+            seen.paused += 1;
+          }
+        }
+      } else if (roll < 0.8) {
+        // -- the oldest question that is still open comes to an end: well, badly, by breaking, or never --
+        const question = w.questions[ended];
+        if (question !== undefined) {
+          ended += 1;
+          const how = random();
+          if (how < 0.45) {
+            cameAt.set(ended, now);
+            question.answer(good(counts(ended)));
+          } else if (how < 0.75) {
+            question.answer(failed(502, 'origin_down'));
+            seen.failed += 1;
+          } else if (how < 0.9) {
+            question.break(new Error('a question that broke'));
+            seen.broke += 1;
+          }
+          await turn();
+        }
+      } else if (roll < 0.95) {
+        // -- time passes: up to 20 seconds --
+        const by = Math.floor(random() * 20_000);
+        w.clock.ms += by;
+        forward += by;
+      } else {
+        // -- the clock is set back: by up to a minute, or by up to an hour --
+        w.clock.ms -= 1 + Math.floor(random() * (random() < 0.5 ? 60_000 : 3_600_000));
+        backSteps += 1;
+        seen.back += 1;
+      }
+      // One thing at a time, or nothing.
+      holds(holder);
+    }
+
+    // The origin was asked no more often than this: once at first, and then once for every 5 seconds the
+    // clock moved forward or for every time it was set back. (A question can follow an earlier one only
+    // when counts, a failure or the question itself has run out, which takes 5 seconds at the least, or
+    // when it is dated later than now, which takes a clock that was set back.)
+    const allowed = 1 + backSteps + Math.floor(forward / POT_STATS_PAUSE_MS);
+    assert.equal(w.questions.length, questions, `run ${run}`);
+    assert.ok(questions <= allowed, `run ${run}: ${questions} questions, and ${allowed} allowed`);
+
+    // From here on the origin is well. What can still keep a reader from the counts is a failure or a
+    // question that is not dated later than now and has time left: 10 seconds at the most. Once that
+    // time is up, the next look is given counts.
+    w.answerAtOnce(() => good(counts(9_000)));
+    const now = w.clock.ms;
+    let until = now;
+    if (holder.failed !== null && holder.failed.at <= now) until = Math.max(until, holder.failed.at + POT_STATS_PAUSE_MS);
+    if (holder.asking !== null && holder.asking.since <= now) until = Math.max(until, holder.asking.since + POT_STATS_WAIT_MS);
+    assert.ok(until - now <= POT_STATS_WAIT_MS, `run ${run}: ${until - now} ms`);
+    w.clock.ms = until;
+    const last = await w.handler(look(looked));
+    assert.equal(last.status, 200, `run ${run}: the counts are back`);
+    holds(holder);
+  }
+
+  // The histories went through every state and every way out of one, many times over.
+  t.diagnostic(`what the 250 histories held: ${JSON.stringify(seen)}`);
+  for (const [what, times] of Object.entries(seen)) assert.ok(times >= 25, `${what}: ${times}`);
+});
+

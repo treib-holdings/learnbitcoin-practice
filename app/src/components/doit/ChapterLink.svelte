@@ -8,12 +8,25 @@
   //
   // It sends no referrer, like every other request this page makes: the
   // page's own policy is "no-referrer" (public/_headers), and this link is
-  // no exception to it. So the main site is not told by the browser where
-  // the reader comes from. What the link carries is its address and
-  // nothing else: a chapter's page and, on "Back to the chapter", the mark
-  // that names the step and says whether it is done (chapterLink in
-  // lib/doit/progress.ts). About says so to the reader, and
-  // test/info-text.test.ts holds that sentence to this file.
+  // no exception to it. So the request for the chapter's page carries no
+  // Referer header, and the page it leads to finds document.referrer
+  // empty. That is all "no referrer" means, and all that is said of it.
+  //
+  // It does not mean that the main site learns nothing of where the reader
+  // was. A browser adds a header of its own to the request, which no page
+  // can switch off: "Sec-Fetch-Site: same-site" (and "Sec-Fetch-User: ?1"
+  // for a link the reader pressed), because the wallet's host and the main
+  // site's are two hosts of one site. It tells the main site's server that
+  // the reader followed a link on some host of that site. It names no
+  // host and no page. (And the mark in the address says as much anyway.)
+  // e2e/scenarios/doit-chapter.test.ts follows the link to a stand-in on
+  // the same site, and reads that header there.
+  //
+  // What the link itself carries is its address and nothing else: a
+  // chapter's page and, on "Back to the chapter", the mark that names the
+  // step and says whether it is done (chapterLink in lib/doit/progress.ts).
+  // About says so to the reader, and test/info-text.test.ts holds that
+  // sentence to this file.
   //
   //   link     a link in a line of text
   //   heading  a chapter's name as a heading of the list of steps: the

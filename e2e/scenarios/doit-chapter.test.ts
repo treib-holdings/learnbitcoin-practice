@@ -9,6 +9,14 @@
 // leads there, and the scenario can see both ends: the request as the main
 // site's server got it, and what a script on the main site's page can read.
 //
+// The stand-in answers under the app's own name, on another port. To a
+// browser that makes it another host of the app's own site, which is what
+// the main site is to the practice wallet (two hosts under one name). So
+// the stand-in is sent what the main site is sent, the browser's own mark
+// of the request included: "Sec-Fetch-Site: same-site". A stand-in under
+// another name, over plain http, would be sent no such header at all, and
+// the scenario would show less than a reader's browser sends.
+//
 // About says of these links: they lead to LearnBitcoin in this tab, the
 // address of "Back to the chapter" names the step and whether it is done,
 // and nothing about the wallet travels with either. And the page's own
@@ -18,10 +26,14 @@
 //      in the strip, and a chapter's name on the list of steps: each brings
 //      the main site one request for the chapter's page, with no Referer,
 //      no cookie and nothing that names the practice site or the wallet;
-//      the page the reader arrives at is told nothing of where they came
-//      from, and its address ends in the step's mark, or in nothing for a
-//      chapter's name. A link that did ask for a referrer to be sent would
-//      be seen: the last part of the scenario makes one by hand, and sees it.
+//      the page the reader arrives at finds no referrer and no cookie, and
+//      its address ends in the step's mark, or in nothing for a chapter's
+//      name. What the request does say of where the reader was is the
+//      browser's own mark, which no page can switch off: that the reader
+//      pressed a link on some host of the same site. It names no host and
+//      no page, and it is pinned here as seen. A link that did ask for a
+//      referrer to be sent would be seen: the last part of the scenario
+//      makes one by hand, and sees it.
 //
 // It touches nothing of the stand-in practice network, and could run
 // against a real one as it is.
@@ -50,7 +62,8 @@ interface Asked {
 /**
  * A stand-in for the main site: every path answers one small page, and each
  * request is written down with its headers. The page names an empty icon, so
- * that the browser asks for the page and nothing else.
+ * that the browser asks for the page and nothing else. Its address is the
+ * app's own name with another port: another host of the same site.
  */
 async function startMainSite(): Promise<{ url: string; asked: Asked[]; close(): Promise<void> }> {
   const asked: Asked[] = [];
@@ -64,8 +77,9 @@ async function startMainSite(): Promise<{ url: string; asked: Asked[]; close(): 
   server.unref();
   const { port } = server.address() as AddressInfo;
   return {
-    // Chrome is started so that every name under .test is this machine (e2e/src/browser.ts).
-    url: `http://main.test:${port}`,
+    // The app is at http://localhost:<its port> (e2e/src/serve.ts). A port is no part of what a browser calls
+    // a site, so this is the app's site, and another origin with storage of its own.
+    url: `http://localhost:${port}`,
     asked,
     close: () =>
       new Promise<void>((closed) => {
@@ -88,7 +102,7 @@ interface Arrival {
 }
 
 scenario(
-  'A link back to the chapter, followed to the main site: "Back to the chapter" on a step under way, on a done step and in the strip, and a chapter\'s name on the list of steps each bring the main site one request for the chapter\'s page, with no Referer, no cookie and nothing that names the practice site or the wallet; the address the reader arrives at ends in the step\'s mark, or in nothing for a chapter\'s name',
+  'A link back to the chapter, followed to the main site: "Back to the chapter" on a step under way, on a done step and in the strip, and a chapter\'s name on the list of steps each bring the main site one request for the chapter\'s page, with no Referer, no cookie and nothing that names the practice site or the wallet, and with the browser\'s own mark that it comes from the same site; the address the reader arrives at ends in the step\'s mark, or in nothing for a chapter\'s name',
   { stack: { vars: { SITE_URL: main.url } }, timeout: 150_000 },
   async (s) => {
     const STEP = 'pass-it-on';
@@ -96,6 +110,8 @@ scenario(
     const OWN_ES = '/es/recorrido/como-funciona-bitcoin';
     assert.equal(s.stack.config.siteUrl, main.url, 'the app is told that the stand-in is the main site');
     const practice = new URL(s.url);
+    const mainSite = new URL(main.url);
+    assert.deepEqual([mainSite.hostname, mainSite.port === practice.port], [practice.hostname, false], 'the stand-in is another host of the app\'s own site');
     main.asked.length = 0;
 
     // A wallet is in this browser all the while: what must not travel is known by value. A wallet nobody has
@@ -130,9 +146,12 @@ scenario(
 
     /**
      * What the main site may have been sent for one link followed: one
-     * request, for the chapter's page and nothing after it, in which no
-     * header says where the reader came from, and nothing names the
-     * practice site or the wallet. And the page it answers is told no more.
+     * request, for the chapter's page and nothing after it, with no
+     * Referer, no cookie and no Origin, in which nothing names the practice
+     * site or the wallet. The browser's own mark of the request is there,
+     * and it is all the request says of where the reader was: a link, on
+     * some host of the same site, that the reader pressed. And the page the
+     * request answers finds no referrer and no cookie.
      */
     const sentOnlyThePage = (arrival: Arrival, path: string, what: string): void => {
       assert.deepEqual(
@@ -144,12 +163,24 @@ scenario(
       assert.equal(headers.referer, undefined, `${what}: no Referer header`);
       assert.equal(headers.cookie, undefined, `${what}: no cookie`);
       assert.equal(headers.origin, undefined, `${what}: no Origin header`);
+      // What the browser adds by itself to a request between two hosts of one site, and no page can switch
+      // off. Seen, and accepted: it names no host and no page.
+      assert.deepEqual(
+        [headers['sec-fetch-site'], headers['sec-fetch-mode'], headers['sec-fetch-dest'], headers['sec-fetch-user']],
+        ['same-site', 'navigate', 'document', '?1'],
+        `${what}: the browser's own mark of the request`,
+      );
+      // The request names the host it is sent to, the stand-in, as every request does.
+      assert.equal(headers.host, mainSite.host, `${what}: the Host header`);
       for (const [name, value] of Object.entries(headers)) {
         const text = Array.isArray(value) ? value.join(' ') : (value ?? '');
-        assert.ok(!text.includes(practice.host) && !text.includes(practice.hostname), `${what}: the header ${name} names the practice site: ${text}`);
+        // The practice site's address is its name with its port. The name alone is the stand-in's too, and
+        // stands in no header but Host.
+        assert.ok(!text.includes(practice.host), `${what}: the header ${name} names the practice site: ${text}`);
+        if (name !== 'host') assert.ok(!text.includes(practice.hostname), `${what}: the header ${name} names the practice site's host: ${text}`);
         for (const secret of [record.fingerprint, record.xpub, record.firstAddress]) assert.ok(!text.includes(secret), `${what}: the header ${name} holds ${secret}`);
       }
-      assert.equal(arrival.referrer, '', `${what}: the main site's page is not told where the reader came from`);
+      assert.equal(arrival.referrer, '', `${what}: the main site's page finds no referrer`);
       assert.equal(arrival.cookie, '', `${what}: and it finds no cookie`);
       for (const secret of [record.fingerprint, record.xpub, record.firstAddress, practice.host]) assert.ok(!arrival.href.includes(secret), `${what}: the address holds ${secret}`);
     };

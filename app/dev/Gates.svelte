@@ -8,7 +8,7 @@
   //
   // Each block has its own stand-in wallet (Shown.svelte). The whole gate,
   // with its heading, is at any wallet route: /wallet?state=none,
-  // ?state=unreadable, ?state=newer, ?state=broken.
+  // ?state=unreadable, ?state=newer, ?state=broken, ?state=blocked.
 
   import Page from '../src/components/Page.svelte';
   import Section from '../src/components/Section.svelte';
@@ -54,5 +54,7 @@
     <Shown preset="newer" note="titled, as Home shows it"><StoredTrouble titled /></Shown>
     <Shown preset="broken"><StoredTrouble /></Shown>
     <Shown preset="broken" note="titled, as Home shows it"><StoredTrouble titled /></Shown>
+    <Shown preset="blocked" note="the browser did not let the page read its storage"><StoredTrouble /></Shown>
+    <Shown preset="blocked" note="titled, as Home shows it"><StoredTrouble titled /></Shown>
   </Section>
 </Page>

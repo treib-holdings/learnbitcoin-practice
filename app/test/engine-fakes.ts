@@ -229,6 +229,44 @@ export class BlockedStorage extends MemoryStorage {
   }
 }
 
+/**
+ * A storage the browser can switch off under the page, and on again: what
+ * its setting that blocks a site's data does. While `blocked`, every call
+ * throws, as the browser's own storage then does, and nothing is deleted:
+ * what was stored before is still in `map`, and is there again the moment
+ * the block is lifted.
+ */
+export class SwitchedStorage extends MemoryStorage {
+  blocked = false;
+  private refuse(): never {
+    throw new DOMException("Failed to read the 'localStorage' property from 'Window': Access is denied for this document.", 'SecurityError');
+  }
+  override get length(): number {
+    if (this.blocked) this.refuse();
+    return super.length;
+  }
+  override clear(): void {
+    if (this.blocked) this.refuse();
+    super.clear();
+  }
+  override getItem(key: string): string | null {
+    if (this.blocked) this.refuse();
+    return super.getItem(key);
+  }
+  override key(index: number): string | null {
+    if (this.blocked) this.refuse();
+    return super.key(index);
+  }
+  override removeItem(key: string): void {
+    if (this.blocked) this.refuse();
+    super.removeItem(key);
+  }
+  override setItem(key: string, value: string): void {
+    if (this.blocked) this.refuse();
+    super.setItem(key, value);
+  }
+}
+
 // -- counted events -------------------------------------------------------------
 
 /**

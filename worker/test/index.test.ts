@@ -15,8 +15,8 @@ import { API } from '@learnbitcoin/practice-contract';
 import type { LogLine } from '../src/deps.ts';
 import { OLDER_PAGE_COST, POT_STATS } from '../src/handler.ts';
 import { FIXED_HEADERS } from '../src/headers.ts';
-import { POT_STATS_KEEP_MS } from '../src/pot-stats.ts';
-import { ADDRESS, APP, POT_ADDRESS, READER_IP, TXID, fakeFetch, fakeLimiter, post, reply, wranglerConfig } from './fakes.ts';
+import { POT_STATS_KEEP_MS, POT_STATS_PAUSE_MS } from '../src/pot-stats.ts';
+import { ADDRESS, APP, POT_ADDRESS, READER_IP, TXID, fakeFetch, fakeLimiter, post, reply, whole, wranglerConfig } from './fakes.ts';
 import type { FetchCall } from './fakes.ts';
 
 /** The entry as Cloudflare calls it. */
@@ -45,7 +45,10 @@ const ORIGIN = 'https://practice-origin.learnbitcoin.com';
 
 type Limiters = Record<'CHAIN_LIMIT' | 'BROADCAST_LIMIT' | 'FAUCET_LIMIT' | 'POT_LIMIT' | 'EVENTS_LIMIT', ReturnType<typeof fakeLimiter>>;
 
-/** The bindings as a deploy of this repository would have them, with the secrets set. */
+/**
+ * The bindings as a deploy of this repository would have them, with the secrets set. The settings are the ones
+ * wrangler.jsonc carries, so the pot's counts are switched off: a test of that route says COUNTS_ON.
+ */
 function bindings(change: Record<string, string | undefined> = {}): { env: Env; limiters: Limiters } {
   const limiters: Limiters = {
     CHAIN_LIMIT: fakeLimiter(),
@@ -65,6 +68,9 @@ function bindings(change: Record<string, string | undefined> = {}): { env: Env; 
   } as unknown as Env;
   return { env, limiters };
 }
+
+/** The one change to the shipped settings that switches the pot's counts on. */
+const COUNTS_ON = { POT_COUNTS: 'on' };
 
 let logged: Array<{ level: 'log' | 'error'; line: unknown }> = [];
 let waiting: Promise<unknown>[] = [];
@@ -105,7 +111,7 @@ async function send(request: Request, env: Env, isolate: Entry = worker): Promis
 
 const get = (path: string): Request => new Request(`${APP}${path}`, { headers: { 'CF-Connecting-IP': READER_IP } });
 
-test("as shipped: the config names the faucet's bot check and says that events are counted", async () => {
+test("as shipped: the config names the faucet's bot check, says that events are counted, and says that the pot counts cannot be had", async () => {
   const { env } = bindings();
   const response = await send(get(API.config), env);
   assert.equal(response.status, 200);
@@ -122,8 +128,167 @@ test("as shipped: the config names the faucet's bot check and says that events a
     faucetSats: 100000,
     blockSeconds: 30,
     events: true,
+    potCounts: false,
   });
   assert.equal(asked.length, 0);
+});
+
+// -- the pot's counts, switched off ---------------------------------------------------------------------------------------
+
+/** What the entry logs for a request to a path the Worker does not know. */
+const unknownLine = (ms: number) => ({ level: 'log', line: { route: 'unknown', status: 404, upstream: null, ms, fault: null } });
+
+test('as shipped, the pot counts are switched off: a request for them gets, byte for byte, what a request for a path the Worker does not know gets, and nobody outside is asked, no limiter is counted and nothing is put off', async () => {
+  assert.equal(VARS.POT_COUNTS, 'off', 'wrangler.jsonc ships with the counts off');
+  // `outside` is as every test starts with it: whoever asks anything outside fails. The call would be
+  // recorded all the same (`asked`), and the answer would be a 502.
+  const { env, limiters } = bindings();
+  const as = (method: string, path: string, headers: Record<string, string> = {}): Request =>
+    new Request(`${APP}${path}`, {
+      method,
+      headers: { 'CF-Connecting-IP': READER_IP, ...headers },
+      body: method === 'GET' || method === 'HEAD' ? undefined : 'x',
+    });
+  const senders: Array<Record<string, string>> = [{}, { Origin: APP, 'Sec-Fetch-Site': 'same-origin' }, { Origin: 'https://evil.example', 'Sec-Fetch-Site': 'cross-site' }];
+  let sent = 0;
+  for (const method of ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']) {
+    for (const headers of senders) {
+      const counts = await whole(await send(as(method, API.potStats, headers), env));
+      assert.equal(counts.status, 404, method);
+      assert.equal(Buffer.from(counts.body, 'hex').toString(), '{"error":"not_found"}', method);
+      for (const [name, value] of Object.entries(FIXED_HEADERS)) assert.ok(counts.headers.some(([n, v]) => n === name.toLowerCase() && v === value), name);
+      for (const path of ['/api/pot/statz', '/api/nothing']) {
+        assert.deepEqual(counts, await whole(await send(as(method, path, headers), env)), `${method} ${path} ${JSON.stringify(headers)}`);
+      }
+      sent += 3;
+    }
+  }
+  assert.equal(sent, 63);
+  // The practice network, the bot check's service, the events service: none was asked anything.
+  assert.equal(asked.length, 0);
+  // No limiter was counted: not the pot's, where a look is counted while the counts are on, and no other.
+  for (const [name, limiter] of Object.entries(limiters)) assert.deepEqual(limiter.keys, [], name);
+  // Nothing was handed to waitUntil.
+  assert.equal(waiting.length, 0);
+  // Each wrote the line of an unknown path, and none the line of the route.
+  assert.deepEqual(
+    logged,
+    logged.map(({ line }) => unknownLine((line as LogLine).ms)),
+  );
+  assert.equal(logged.length, sent);
+  assert.ok(!JSON.stringify(logged).includes('pot_stats'));
+  // And the app is told, so that it does not ask.
+  const config = (await (await send(get(API.config), env)).json()) as { potCounts: unknown };
+  assert.equal(config.potCounts, false);
+});
+
+test('the pot counts are switched by the setting POT_COUNTS, read from the bindings like every other setting: the exact word "on" switches them on, and any other value leaves them off', async () => {
+  outside = (call) => {
+    assert.equal(call.url, `${ORIGIN}/bots/pot/stats`);
+    return botsCounts(3);
+  };
+  // On: the app is told so, and a look is answered. The practice network is asked, and the pot's limiter counts the look.
+  const on = bindings({ POT_COUNTS: 'on' });
+  assert.equal(((await (await send(get(API.config), on.env)).json()) as { potCounts: unknown }).potCounts, true);
+  const answered = await send(get(API.potStats), on.env);
+  assert.equal(answered.status, 200);
+  assert.equal(await answered.text(), '{"passedOn":3,"waiting":0,"handedOn":0}');
+  assert.equal(asked.length, 1);
+  assert.equal(on.limiters.POT_LIMIT.keys.length, 1);
+
+  // Off: as it ships, deleted, empty, not text at all, and every value that only looks like the word or
+  // means the same to a person. Each on a Worker that has just been started.
+  const off: unknown[] = ['off', undefined, '', ' ', 'ON', 'On', ' on', 'on ', ' on ', 'on\n', 'onn', '"on"', 'true', 'yes', '1', 'enabled', true, 1, null, ['on'], { on: true }];
+  const expected = await whole(await send(get('/api/nothing'), bindings().env));
+  for (const value of off) {
+    const what = JSON.stringify(value) ?? String(value);
+    const started = await newIsolate();
+    const { env, limiters } = bindings({ POT_COUNTS: value as string });
+    assert.equal(((await (await send(get(API.config), env, started)).json()) as { potCounts: unknown }).potCounts, false, what);
+    assert.deepEqual(await whole(await send(get(API.potStats), env, started)), expected, what);
+    assert.equal(limiters.POT_LIMIT.keys.length, 0, what);
+  }
+  assert.equal(asked.length, 1, 'the practice network was asked once in all: by the Worker whose setting said "on"');
+  // A setting that is missing or misspelled stops nothing else: the Worker answers, with the counts off, and logs no fault.
+  assert.ok(logged.every(({ level }) => level === 'log'));
+});
+
+test('nothing a request says switches the pot counts on, and nothing it says switches them off', async () => {
+  const says: Array<[what: string, request: () => Request]> = [
+    ['a header named like the setting', () => new Request(`${APP}${API.potStats}`, { headers: { POT_COUNTS: 'on', 'X-Pot-Counts': 'on' } })],
+    ['a cookie', () => new Request(`${APP}${API.potStats}`, { headers: { Cookie: 'POT_COUNTS=on; potCounts=true' } })],
+    ['a header that claims to come from the Worker itself', () => new Request(`${APP}${API.potStats}`, { headers: { 'CF-Worker': 'practice.learnbitcoin.com', 'CF-Connecting-IP': '127.0.0.1' } })],
+    ['our own page', () => new Request(`${APP}${API.potStats}`, { headers: { Origin: APP, 'Sec-Fetch-Site': 'same-origin', Referer: `${APP}/do/pass-it-on` } })],
+    ['a query string', () => new Request(`${APP}${API.potStats}?POT_COUNTS=on`)],
+    ['another query string', () => new Request(`${APP}${API.potStats}?potCounts=true&env.POT_COUNTS=on`)],
+    ['a body', () => new Request(`${APP}${API.potStats}`, { method: 'POST', headers: { Origin: APP, 'Content-Type': 'application/json' }, body: '{"POT_COUNTS":"on","potCounts":true}' })],
+    ['the settings asked for with a query string', () => new Request(`${APP}${API.config}?potCounts=true`)],
+    ['another host name', () => new Request(`http://localhost:8787${API.potStats}`)],
+    ['a host name that looks local', () => new Request(`https://on.localhost${API.potStats}`)],
+  ];
+  // Off, as shipped: each of them is answered as an unknown path is on that address, and the settings stay as they are.
+  const shipped = bindings();
+  for (const [what, request] of says) {
+    const unknown = new URL(request().url);
+    unknown.pathname = '/api/nothing';
+    unknown.search = '';
+    const expected = await whole(await send(new Request(unknown), shipped.env));
+    assert.deepEqual(await whole(await send(request(), shipped.env)), expected, what);
+    assert.equal(((await (await send(get(API.config), shipped.env)).json()) as { potCounts: unknown }).potCounts, false, what);
+  }
+  assert.equal(asked.length, 0, 'nobody outside was asked');
+  assert.equal(shipped.limiters.POT_LIMIT.keys.length, 0);
+  assert.ok(!JSON.stringify(logged).includes('pot_stats'));
+
+  // On: a request that says "off" is answered all the same. Only the setting decides.
+  outside = () => botsCounts(5);
+  const on = bindings(COUNTS_ON);
+  const off = new Request(`${APP}${API.potStats}`, { headers: { POT_COUNTS: 'off', 'X-Pot-Counts': 'off', Cookie: 'POT_COUNTS=off' } });
+  const answered = await send(off, on.env);
+  assert.equal(answered.status, 200);
+  assert.equal(await answered.text(), '{"passedOn":5,"waiting":0,"handedOn":0}');
+});
+
+test('an isolate goes by the setting it is handed with each request, and counts it has kept are neither given out nor lost while the setting says off', async () => {
+  // Cloudflare hands the entry its bindings with every request, and the entry reads the settings from them
+  // each time. On Cloudflare they are the same for every request of one deploy. Here one isolate is handed
+  // "on", then "off", then "on" again, to show that nothing is remembered of a setting, and that the holder
+  // of the counts is left alone while they are off.
+  let questions = 0;
+  outside = (call) => {
+    assert.equal(call.url, `${ORIGIN}/bots/pot/stats`);
+    questions += 1;
+    return botsCounts(questions);
+  };
+  await withClock(async () => {
+    const on = bindings(COUNTS_ON);
+    assert.equal(await (await send(get(API.potStats), on.env)).text(), '{"passedOn":1,"waiting":0,"handedOn":0}');
+    assert.equal(questions, 1);
+
+    // Off: an unknown path, although the isolate holds counts that are a moment old.
+    const off = bindings();
+    const expected = await whole(await send(get('/api/nothing'), off.env));
+    for (let n = 0; n < 5; n += 1) assert.deepEqual(await whole(await send(get(API.potStats), off.env)), expected);
+    assert.ok(!expected.body.includes(Buffer.from('passedOn').toString('hex')));
+    assert.equal(off.limiters.POT_LIMIT.keys.length, 0);
+    assert.equal(questions, 1);
+
+    // On again: the counts it had kept are still there, and are given without a question.
+    logged = [];
+    assert.equal(await (await send(get(API.potStats), bindings(COUNTS_ON).env)).text(), '{"passedOn":1,"waiting":0,"handedOn":0}');
+    assert.equal(questions, 1);
+    assert.deepEqual(
+      logged.map(({ line }) => [(line as LogLine).route, (line as LogLine).status, (line as LogLine).upstream]),
+      [['pot_stats', 200, null]],
+    );
+  });
+
+  // And an isolate that was only ever handed "off" has kept nothing: handed "on", it has to ask.
+  const other = await newIsolate();
+  for (let n = 0; n < 5; n += 1) assert.equal((await send(get(API.potStats), bindings().env, other)).status, 404);
+  assert.equal(questions, 1);
+  assert.equal(await (await send(get(API.potStats), bindings(COUNTS_ON).env, other)).text(), '{"passedOn":2,"waiting":0,"handedOn":0}');
+  assert.equal(questions, 2);
 });
 
 test('with the site key and the events site left empty, the faucet answers closed and asks nobody; an event gets its 202 and goes nowhere', async () => {
@@ -436,7 +601,8 @@ test('each route counts against its own limiter binding', async () => {
     ['EVENTS_LIMIT', post(API.event, { name: 'pageview', path: '/' })],
   ];
   for (const [name, request] of routes) {
-    const { env, limiters } = bindings();
+    // (With the pot's counts switched on: off, a look at them reaches no limiter at all.)
+    const { env, limiters } = bindings(COUNTS_ON);
     await send(request, env);
     for (const [other, limiter] of Object.entries(limiters)) {
       assert.equal(limiter.keys.length, other === name ? 1 : 0, `${name} / ${other}`);
@@ -444,10 +610,10 @@ test('each route counts against its own limiter binding', async () => {
   }
 });
 
-test('the pot counts go to the configured origin with the Access token and no bearer token, and are counted apart at the pot limiter', async () => {
+test('switched on, the pot counts go to the configured origin with the Access token and no bearer token, and are counted apart at the pot limiter', async () => {
   // What the bots answer (bots/practice_bots/bots.py): five fields. Three of them cross.
   outside = () => reply(200, { learners_passed_on: 128, sats_received: 3_840_000, coins_waiting: 3, coins_passed_to_newcomers: 125, faucet_payments: 400 });
-  const { env, limiters } = bindings();
+  const { env, limiters } = bindings(COUNTS_ON);
   const response = await send(get(API.potStats), env);
   assert.equal(response.status, 200);
   assert.equal(await response.text(), '{"passedOn":128,"waiting":3,"handedOn":125}');
@@ -486,7 +652,7 @@ test('the pot counts go to the configured origin with the Access token and no be
   // (A Worker that has just been started, so that it has no counts yet and must ask.)
   logged = [];
   outside = () => reply(200, { learners_passed_on: 0, coins_waiting: 0, coins_passed_to_newcomers: 0 });
-  const bare = bindings({ BOTS_API_TOKEN: undefined });
+  const bare = bindings({ ...COUNTS_ON, BOTS_API_TOKEN: undefined });
   const untokened = await newIsolate();
   assert.deepEqual(await (await send(get(API.potStats), bare.env, untokened)).json(), { passedOn: 0, waiting: 0, handedOn: 0 });
   assert.equal(asked.at(-1)?.url, `${ORIGIN}/bots/pot/stats`);
@@ -496,7 +662,7 @@ test('the pot counts go to the configured origin with the Access token and no be
   // An origin that is down: "unavailable", and one error line. (Again a Worker with no counts yet.)
   logged = [];
   outside = () => reply(502, '<html>Bad gateway</html>', 'text/html');
-  const failed = await send(get(API.potStats), bindings().env, await newIsolate());
+  const failed = await send(get(API.potStats), bindings(COUNTS_ON).env, await newIsolate());
   assert.equal(failed.status, 502);
   assert.deepEqual(await failed.json(), { error: 'unavailable' });
   assert.deepEqual(
@@ -527,9 +693,12 @@ async function withClock(body: (move: (ms: number) => void) => Promise<void>): P
   }
 }
 
-/** A look at the pot's counts by reader number `n`, with bindings of its own, as every request to the deployed Worker has. */
+/**
+ * A look at the pot's counts by reader number `n`, with bindings of its own, as every request to the deployed
+ * Worker has. The counts are switched on in them.
+ */
 async function look(n: number, isolate: Entry = worker): Promise<{ response: Response; limiters: Limiters }> {
-  const { env, limiters } = bindings();
+  const { env, limiters } = bindings(COUNTS_ON);
   const request = new Request(`${APP}${API.potStats}`, { headers: { 'CF-Connecting-IP': `198.51.100.${n + 1}` } });
   return { response: await send(request, env, isolate), limiters };
 }
@@ -586,7 +755,7 @@ test('requests that reach one isolate while the origin is being asked for the po
     new Promise<Response>((resolve) => {
       answer = resolve;
     });
-  const readers = Array.from({ length: 25 }, () => bindings());
+  const readers = Array.from({ length: 25 }, () => bindings(COUNTS_ON));
   const answers = readers.map(({ env }, n) => worker.fetch(new Request(`${APP}${API.potStats}`, { headers: { 'CF-Connecting-IP': `198.51.100.${n + 1}` } }), env, context));
   // Every one of them is counted at its limiter first. One turn later each has asked the origin or waits for the question that is out.
   for (let turns = 0; readers.some(({ limiters }) => limiters.POT_LIMIT.keys.length === 0); turns += 1) {
@@ -610,9 +779,9 @@ test('requests that reach one isolate while the origin is being asked for the po
   for (const { level, line } of logged) assert.deepEqual([level, (line as LogLine).route, (line as LogLine).status, (line as LogLine).upstream], ['log', 'pot_stats', 200, 200]);
 });
 
-test('pot counts the origin could not give are not kept by the isolate: the next request asks again, and old counts are not given once they have run out', async () => {
+test('pot counts the origin could not give are not kept by the isolate: it asks nobody for 5 seconds, then the next request asks again, and old counts are not given once they have run out', async () => {
   await withClock(async (move) => {
-    // A 200 whose body is not the three counts, then an origin that is down, then one that never answers in time.
+    // A 200 whose body is not the three counts, then an origin that is down, then one that does not let the Worker in.
     const bad: Array<[answer: () => Response, upstream: number | null, fault: string]> = [
       [() => reply(200, { learners_passed_on: '4', coins_waiting: 1, coins_passed_to_newcomers: 3 }), 200, 'origin_shape'],
       [() => reply(200, '<html>sign in</html>', 'text/html'), 200, 'origin_shape'],
@@ -622,30 +791,52 @@ test('pot counts the origin could not give are not kept by the isolate: the next
     for (const [n, [respond, upstream, fault]] of bad.entries()) {
       logged = [];
       outside = respond;
+      // The pause after the failure before this one is over: 5 seconds have passed since.
+      move(n * POT_STATS_PAUSE_MS);
       const { response } = await look(n);
       assert.equal(response.status, 502, fault);
       assert.deepEqual(await response.json(), { error: 'unavailable' }, fault);
       assert.equal(asked.length, n + 1, 'each of them asked: nothing was kept from the one before');
+      // In the 5 seconds that follow, the isolate asks nobody: a second and a third reader are told the same
+      // at once. Their lines name the fault, and no status of the origin's.
+      move(n * POT_STATS_PAUSE_MS + POT_STATS_PAUSE_MS - 1);
+      for (const reader of [100 + n, 200 + n]) {
+        const paused = await look(reader);
+        assert.equal(paused.response.status, 502, fault);
+        assert.deepEqual(await paused.response.json(), { error: 'unavailable' }, fault);
+        assert.equal(paused.limiters.POT_LIMIT.keys.length, 1, 'counted at the limiter all the same');
+      }
+      assert.equal(asked.length, n + 1, `${fault}: the origin was left alone`);
       assert.deepEqual(
         logged.map(({ level, line }) => ({ level, line: { ...(line as LogLine), ms: 0 } })),
-        [{ level: 'error', line: { route: 'pot_stats', status: 502, upstream, ms: 0, fault } }],
+        [
+          { level: 'error', line: { route: 'pot_stats', status: 502, upstream, ms: 0, fault } },
+          { level: 'error', line: { route: 'pot_stats', status: 502, upstream: null, ms: 0, fault } },
+          { level: 'error', line: { route: 'pot_stats', status: 502, upstream: null, ms: 0, fault } },
+        ],
       );
     }
 
     // A good answer is kept, and given while it is young, also when the origin has gone down meanwhile.
+    const well = bad.length * POT_STATS_PAUSE_MS;
+    move(well);
     outside = () => botsCounts(6);
     assert.deepEqual(await (await look(10)).response.json(), { passedOn: 6, waiting: 0, handedOn: 0 });
     assert.equal(asked.length, bad.length + 1);
     outside = () => reply(502, '<html>Bad gateway</html>', 'text/html');
-    move(POT_STATS_KEEP_MS - 1);
+    move(well + POT_STATS_KEEP_MS - 1);
     assert.deepEqual(await (await look(11)).response.json(), { passedOn: 6, waiting: 0, handedOn: 0 });
     assert.equal(asked.length, bad.length + 1, 'not asked: the kept counts were young enough');
     // Once they are 15 seconds old they are not given any more: the reader is told "unavailable".
-    move(POT_STATS_KEEP_MS);
+    move(well + POT_STATS_KEEP_MS);
     const late = await look(12);
     assert.equal(late.response.status, 502);
     assert.deepEqual(await late.response.json(), { error: 'unavailable' });
     assert.equal(asked.length, bad.length + 2);
+    // Another isolate knows nothing of that failure: it asks for itself, at once.
+    const other = await newIsolate();
+    assert.equal((await look(13, other)).response.status, 502);
+    assert.equal(asked.length, bad.length + 3);
   });
 });
 

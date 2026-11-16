@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { ADDRESS_PATTERN, API, ERROR_STATUS } from '@learnbitcoin/practice-contract';
 import type { ErrorCode } from '@learnbitcoin/practice-contract';
-import type { Fault, LogLine } from '../src/deps.ts';
+import type { Fault, LogLine, PotStatsHolder } from '../src/deps.ts';
 import {
   EVENT_BODY_MAX,
   FAUCET_BODY_MAX,
@@ -16,6 +16,7 @@ import {
   makeHandler,
 } from '../src/handler.ts';
 import { FIXED_HEADERS } from '../src/headers.ts';
+import { POT_STATS_PAUSE_MS, makePotStatsHolder } from '../src/pot-stats.ts';
 import { readerKey } from '../src/reader-key.ts';
 import {
   ADDRESS,
@@ -33,6 +34,7 @@ import {
   noNetwork,
   post,
   readJson,
+  whole,
   wranglerConfig,
 } from './fakes.ts';
 import type { Harness, HarnessOptions } from './fakes.ts';
@@ -136,6 +138,14 @@ test('GET /api/config answers the config, numbers as numbers', async () => {
   assert.match(text, /"electrumPort":50002,/);
   assert.deepEqual(h.trace, [], 'no limiter and no origin for a constant answer');
   assert.deepEqual(h.lines, [{ route: 'config', status: 200, upstream: null, ms: 5, fault: null }]);
+
+  // Whether the pot's counts can be had is one of the settings, a plain true or false. The app reads it here.
+  assert.match(text, /"potCounts":true\}$/);
+  const off = await run(get(API.config), { config: { potCounts: false } });
+  const told = await off.response.text();
+  assert.deepEqual(JSON.parse(told), { ...CONFIG, potCounts: false });
+  assert.match(told, /"potCounts":false\}$/);
+  assert.equal(told.replace('"potCounts":false', '"potCounts":true'), text, 'nothing else in the answer changes with it');
 });
 
 // -- the Esplora allowlist --------------------------------------------------------
@@ -1036,8 +1046,9 @@ test('the pot counts are answered as three whole numbers, and the answer is writ
   assert.deepEqual(JSON.parse(text), POT_COUNTS);
   // The pot's limiter, then the origin: nothing is kept yet, so this request asks. There is no
   // bot check on this route, and a look is not free: it can cost the practice network a
-  // question. What keeps many looks from costing many questions is that the origin is asked
-  // once for everyone (pot-stats.test.ts).
+  // question. What keeps many looks from costing many questions is that one isolate of the
+  // Worker asks the origin once for all the looks it answers (pot-stats.test.ts), and that the
+  // route is answered at all only where the settings switch it on (the tests further down).
   assert.deepEqual(h.trace, ['limit:pot', 'origin:potStats']);
   assert.deepEqual(h.originArgs, [], 'nothing of the request goes to the origin');
   // (This route looks at the clock twice more than the others: to see how old the kept counts
@@ -1171,11 +1182,300 @@ test('pot counts the origin cannot give come back as "unavailable", with the fau
     const h = await refusedWith(get(API.potStats), 'unavailable', ['limit:pot', 'origin:potStats'], {
       potStats: () => ({ ok: false, code: 'unavailable', detail: null, upstream, fault }),
     });
-    // (One look at the clock more than other routes take, to see how old the kept counts are: 10 ms.)
-    assert.deepEqual(h.lines, [{ route: 'pot_stats', status: 502, upstream, ms: 10, fault }], `${upstream} ${fault}`);
-    // An answer that failed is not kept: there is nothing for the next request to be given.
-    assert.deepEqual(h.deps.potStatsHolder, { kept: null, asking: null }, `${upstream} ${fault}`);
+    // (Two looks at the clock more than other routes take: to see how old the kept counts are, and to
+    // date the failure. Each look is 5 ms after the last: 15 ms.)
+    assert.deepEqual(h.lines, [{ route: 'pot_stats', status: 502, upstream, ms: 15, fault }], `${upstream} ${fault}`);
+    // An answer that failed is not kept: there are no counts for the next request to be given. What is
+    // noted is when it failed and with which fault, so that the origin is left alone for a moment.
+    assert.deepEqual(h.deps.potStatsHolder, { kept: null, asking: null, failed: { at: 1015, fault } }, `${upstream} ${fault}`);
+    // The next request finds that note: "unavailable" with the same fault, and neither the origin nor
+    // anything else but the limiter is asked for it.
+    h.trace.length = 0;
+    const next = await makeHandler(h.deps)(get(API.potStats));
+    assert.equal(next.status, 502, `${upstream} ${fault}`);
+    assert.deepEqual(await errorOf(next), { error: 'unavailable' }, `${upstream} ${fault}`);
+    assert.deepEqual(h.trace, ['limit:pot'], `${upstream} ${fault}`);
+    assert.deepEqual(h.lines.at(-1), { route: 'pot_stats', status: 502, upstream: null, ms: 10, fault }, `${upstream} ${fault}`);
   }
+  assert.equal(POT_STATS_PAUSE_MS, 5_000);
+});
+
+// -- the pot's counts, switched off --------------------------------------------------------------
+
+/**
+ * A holder that writes down every touch: a read of a field, a write to one, a look at which fields
+ * it has. The handler works on it as on any other. The test then says what the list must hold.
+ */
+function watchedHolder(inner: PotStatsHolder = makePotStatsHolder()): { holder: PotStatsHolder; touches: string[] } {
+  const touches: string[] = [];
+  const note = (what: string, key: string | symbol): void => {
+    touches.push(`${what} ${String(key)}`);
+  };
+  const holder = new Proxy(inner, {
+    get(target, key, receiver) {
+      note('read', key);
+      return Reflect.get(target, key, receiver);
+    },
+    set(target, key, value, receiver) {
+      note('write', key);
+      return Reflect.set(target, key, value, receiver);
+    },
+    has(target, key) {
+      note('has', key);
+      return Reflect.has(target, key);
+    },
+    ownKeys(target) {
+      note('keys', '');
+      return Reflect.ownKeys(target);
+    },
+    getOwnPropertyDescriptor(target, key) {
+      note('describe', key);
+      return Reflect.getOwnPropertyDescriptor(target, key);
+    },
+    defineProperty(target, key, descriptor) {
+      note('define', key);
+      return Reflect.defineProperty(target, key, descriptor);
+    },
+    deleteProperty(target, key) {
+      note('delete', key);
+      return Reflect.deleteProperty(target, key);
+    },
+  });
+  return { holder, touches };
+}
+
+/** The settings with the pot's counts switched off, as the Worker ships, and an origin that fails the test if it is asked for them. */
+const COUNTS_OFF: HarnessOptions = {
+  config: { potCounts: false },
+  potStats: () => {
+    throw new Error('the origin was asked for the pot counts while they are switched off');
+  },
+};
+
+/** Paths the Worker has never known, beside the pot's own: what a request for the counts must be answered like. */
+const NEVER_KNOWN = ['/api/pot/statz', '/api/pot/counts', '/api/nothing'];
+
+/** The line the handler writes for a path it does not know. */
+const UNKNOWN_LINE: LogLine = { route: 'unknown', status: 404, upstream: null, ms: 5, fault: null };
+
+test('with the pot counts switched off, a request for them gets, byte for byte, what a request for a path the Worker does not know gets: no limiter is counted, the origin is never asked, and the holder is not touched', async () => {
+  const methods = ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'];
+  // As a browser on our own page sends it, as a script with no page sends it, as another site's page does.
+  const senders: Array<Record<string, string>> = [
+    { 'CF-Connecting-IP': READER_IP },
+    { 'CF-Connecting-IP': READER_IP, Origin: APP, 'Sec-Fetch-Site': 'same-origin' },
+    { Origin: 'https://evil.example', 'Sec-Fetch-Site': 'cross-site', 'User-Agent': 'curl/8.7.1' },
+  ];
+  let compared = 0;
+  for (const method of methods) {
+    for (const headers of senders) {
+      const ask = (path: string): Request => new Request(`${APP}${path}`, { method, headers, body: method === 'GET' || method === 'HEAD' ? undefined : 'x' });
+      const what = `${method} ${JSON.stringify(headers)}`;
+
+      // One Worker, with the counts off. Its holder is watched, and its origin must not hear of the counts.
+      const h = harness(COUNTS_OFF);
+      const watched = watchedHolder();
+      h.deps.potStatsHolder = watched.holder;
+      const handler = makeHandler(h.deps);
+      const counts = await whole(await handler(ask(API.potStats)));
+      assert.equal(counts.status, 404, what);
+      assert.equal(Buffer.from(counts.body, 'hex').toString(), '{"error":"not_found"}', what);
+      for (const path of NEVER_KNOWN) {
+        assert.deepEqual(counts, await whole(await handler(ask(path))), `${what} against ${path}`);
+        compared += 1;
+      }
+      // The same line in the log for each of them: a route that is "unknown", and never "pot_stats".
+      assert.deepEqual(h.lines, [UNKNOWN_LINE, ...NEVER_KNOWN.map(() => UNKNOWN_LINE)], what);
+      // Nothing outside the handler was asked: no limiter, not the pot's and no other; not the origin.
+      assert.deepEqual(h.trace, [], what);
+      for (const [name, limiter] of Object.entries(h.limiters)) assert.deepEqual(limiter.keys, [], `${what}: ${name}`);
+      assert.deepEqual(h.originArgs, [], what);
+      assert.equal(h.pending.length, 0, `${what}: nothing was put off for later`);
+      // The holder was neither read nor written, and holds what a holder holds when it is made.
+      assert.deepEqual(watched.touches, [], what);
+      assert.deepEqual(makePotStatsHolder(), { kept: null, asking: null, failed: null });
+      assert.equal(JSON.stringify(watched.holder), JSON.stringify(makePotStatsHolder()), what);
+
+      // The answer to a path the Worker does not know is the same with the counts on. So "what an unknown
+      // path gets" is one thing, and the path of the counts gets exactly that while they are off.
+      const on = harness();
+      assert.deepEqual(await whole(await makeHandler(on.deps)(ask(NEVER_KNOWN[0]!))), counts, what);
+      // And with the counts on, the same request is not answered like that: this comparison can fail.
+      const answered = await makeHandler(on.deps)(ask(API.potStats));
+      assert.equal(answered.status, method === 'GET' ? 200 : 405, what);
+      assert.equal(on.lines.at(-1)?.route, 'pot_stats', what);
+    }
+  }
+  assert.equal(compared, methods.length * senders.length * NEVER_KNOWN.length);
+});
+
+test('with the pot counts switched off, nothing a request says switches them on: no header, no query string, no body, no other spelling of the path', async () => {
+  const h = harness(COUNTS_OFF);
+  const watched = watchedHolder();
+  h.deps.potStatsHolder = watched.holder;
+  const handler = makeHandler(h.deps);
+  const expected = await whole(await makeHandler(harness(COUNTS_OFF).deps)(get('/api/nothing')));
+
+  const headers: Array<Record<string, string>> = [
+    { POT_COUNTS: 'on' },
+    { 'Pot-Counts': 'on' },
+    { 'X-Pot-Counts': 'on', 'X-Pot-Stats': 'on' },
+    { 'X-Config': '{"potCounts":true}' },
+    { Cookie: 'POT_COUNTS=on; potCounts=true' },
+    { Authorization: 'Bearer anything' },
+    { 'CF-Worker': 'practice.learnbitcoin.com' },
+    { 'X-Forwarded-Host': 'localhost', 'X-Forwarded-For': '127.0.0.1' },
+    { 'X-HTTP-Method-Override': 'GET' },
+    { Origin: APP, 'Sec-Fetch-Site': 'same-origin', Referer: `${APP}/do/pass-it-on` },
+    { 'Cache-Control': 'no-cache', Pragma: 'no-cache' },
+    { 'CF-Connecting-IP': '' },
+    { Accept: 'application/json', 'Accept-Language': 'es' },
+  ];
+  for (const each of headers) {
+    assert.deepEqual(await whole(await handler(get(API.potStats, each))), expected, JSON.stringify(each));
+  }
+  // A body that says so, on every method that takes one.
+  for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) {
+    for (const body of ['{"potCounts":true}', '{"POT_COUNTS":"on"}', 'POT_COUNTS=on', 'on']) {
+      const request = new Request(`${APP}${API.potStats}`, { method, headers: { Origin: APP, 'Content-Type': 'application/json' }, body });
+      assert.deepEqual(await whole(await handler(request)), expected, `${method} ${body}`);
+    }
+  }
+  // A query string, and other spellings of the path. (The four that a URL reads as the same path are the
+  // same request to the handler. The rest were never the path of the counts.)
+  const paths = [
+    `${API.potStats}?POT_COUNTS=on`,
+    `${API.potStats}?potCounts=true`,
+    `${API.potStats}?on`,
+    `${API.potStats}?`,
+    `${API.potStats}#on`,
+    '/api/pot/./stats',
+    '/api/pot/x/../stats',
+    '/x/../api/pot/stats',
+    `${API.potStats}/`,
+    `${API.potStats}/on`,
+    `${API.potStats};on`,
+    `${API.potStats}%3FPOT_COUNTS=on`,
+    '/api/pot/Stats',
+    '/API/POT/STATS',
+    '/api//pot/stats',
+    '//api/pot/stats',
+    '/api/pot/stats%00',
+    '/api/pot/%73tats',
+  ];
+  for (const path of paths) {
+    assert.deepEqual(await whole(await handler(get(path))), expected, path);
+  }
+  // The settings the handler was given are as they were: a request reads them, and none writes to them.
+  assert.deepEqual(h.deps.config, { ...CONFIG, potCounts: false });
+  assert.equal((await run(get(API.config), COUNTS_OFF)).response.status, 200);
+  // And after all of them: no limiter, no origin, nothing kept, the holder untouched, nothing but "unknown" in the log.
+  assert.deepEqual(h.trace, []);
+  assert.deepEqual(watched.touches, []);
+  assert.equal(h.pending.length, 0);
+  assert.equal(h.lines.length, headers.length + 16 + paths.length);
+  for (const line of h.lines) assert.deepEqual(line, UNKNOWN_LINE);
+});
+
+test('with the pot counts switched off, what the holder holds is not given out and not changed: counts that were kept, a question that is out, a failure that was noted', async (t) => {
+  // A Worker's settings do not change while it runs. Should a holder hold something all the same when the
+  // counts are off, none of it leaves, and none of it is touched.
+  const kept = { stats: Object.freeze({ ...POT_COUNTS }), at: 1000 };
+  const states: Array<[what: string, holder: PotStatsHolder]> = [
+    ['counts are kept', { kept, asking: null, failed: null }],
+    ['a question is out', { kept: null, asking: { since: 1000, ended: null }, failed: null }],
+    ['a question has ended and its answer is still noted', { kept: null, asking: { since: 1000, ended: { ok: true, value: POT_COUNTS, upstream: 200 } }, failed: null }],
+    ['a failure is noted', { kept: null, asking: null, failed: { at: 1000, fault: 'origin_down' } }],
+  ];
+  const expected = await whole(await makeHandler(harness(COUNTS_OFF).deps)(get('/api/nothing')));
+  for (const [what, holder] of states) {
+    const before = JSON.stringify(holder);
+    const h = harness({ ...COUNTS_OFF, now: () => 1000 });
+    const watched = watchedHolder(holder);
+    h.deps.potStatsHolder = watched.holder;
+    const answer = await whole(await makeHandler(h.deps)(get(API.potStats)));
+    assert.deepEqual(answer, expected, what);
+    assert.ok(!Buffer.from(answer.body, 'hex').toString().includes('passedOn'), what);
+    assert.deepEqual(watched.touches, [], what);
+    assert.equal(JSON.stringify(holder), before, what);
+    assert.deepEqual(h.trace, [], what);
+    // (The clock of this harness stands still: 0 ms.)
+    assert.deepEqual(h.lines, [{ ...UNKNOWN_LINE, ms: 0 }], what);
+  }
+
+  // The same four holders with the counts on, and a second later: the handler goes by each of them. (So the
+  // watch above would have seen a touch, had there been one.) A request that waits for a question looks for
+  // its end with timers. The test owns them here, so that the nine seconds it waits take no time.
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const later = 1000 + 1_000;
+  const goes: Array<[status: number, body: unknown, asked: number]> = [];
+  for (const [what, holder] of states) {
+    const on = harness({ now: () => later, potStats: () => ({ ok: true, value: { passedOn: 1, waiting: 1, handedOn: 1 }, upstream: 200 }) });
+    const used = watchedHolder(holder);
+    on.deps.potStatsHolder = used.holder;
+    const answer = makeHandler(on.deps)(get(API.potStats));
+    // Past the limiter, the request has gone as far as it can without an answer.
+    for (let turns = 0; on.limiters.pot.keys.length < 1; turns += 1) {
+      assert.ok(turns < 10_000, `${what}: the request never reached the limiter`);
+      await new Promise((turn) => setImmediate(turn));
+    }
+    await new Promise((turn) => setImmediate(turn));
+    assert.ok(used.touches.length > 0, `${what}: with the counts on, the holder is read`);
+    if (holder.asking !== null && holder.asking.ended === null) {
+      for (let passed = 0; passed < 9_000; passed += 1) t.mock.timers.tick(1);
+    }
+    const response = await answer;
+    goes.push([response.status, await response.json(), on.trace.filter((step) => step === 'origin:potStats').length]);
+  }
+  assert.deepEqual(goes, [
+    // Kept counts are given.
+    [200, POT_COUNTS, 0],
+    // A question that is out is waited for, and this one never comes back.
+    [502, { error: 'unavailable' }, 0],
+    // A question whose answer is noted gives that answer to a request that waited for it.
+    [200, POT_COUNTS, 0],
+    // A failure that was noted a second ago: "unavailable", and the origin is left alone.
+    [502, { error: 'unavailable' }, 0],
+  ]);
+});
+
+test('only `true` switches the pot counts on for the handler: whatever else stands in its place leaves them off', async () => {
+  const expected = await whole(await makeHandler(harness(COUNTS_OFF).deps)(get('/api/nothing')));
+  // A Deps is built by code, and the type says true or false. Should something else be put there, it is not taken for a yes.
+  const stray: unknown[] = ['on', 'true', 'off', 1, {}, [], [true], null, undefined, Number.NaN, () => true];
+  for (const value of stray) {
+    const h = harness({ ...COUNTS_OFF, config: { potCounts: value as boolean } });
+    assert.deepEqual(await whole(await makeHandler(h.deps)(get(API.potStats))), expected, String(value));
+    assert.deepEqual(h.trace, [], String(value));
+  }
+  // False, said outright, and true.
+  assert.deepEqual(await whole(await makeHandler(harness(COUNTS_OFF).deps)(get(API.potStats))), expected);
+  const on = await run(get(API.potStats), { config: { potCounts: true } });
+  assert.equal(on.response.status, 200);
+  assert.deepEqual(on.h.trace, ['limit:pot', 'origin:potStats']);
+});
+
+test('switching the pot counts off changes nothing else: every other route answers as it does with them on', async () => {
+  const requests: Array<[what: string, make: () => Request]> = [
+    ['a chain read', () => get(READS[1]![0])],
+    ['a broadcast', () => post(`${API.esplora}/tx`, HEX)],
+    ['the faucet', () => post(API.faucet, FAUCET_BODY)],
+    ['the pot address', () => post(API.potAddress, null)],
+    ['an event', () => post(API.event, EVENT)],
+    ['an unknown path', () => get('/api/nothing')],
+    ['a wrong method', () => get(API.faucet)],
+  ];
+  for (const [what, make] of requests) {
+    const on = await run(make());
+    const off = await run(make(), { config: { potCounts: false } });
+    assert.deepEqual(await whole(off.response), await whole(on.response), what);
+    assert.deepEqual(off.h.trace, on.h.trace, what);
+    assert.deepEqual(off.h.lines, on.h.lines, what);
+  }
+  // "Pass it on" itself needs the pot's address, not its counts: it works with them off, and is counted at the pot's limiter as ever.
+  const address = await run(post(API.potAddress, null), { config: { potCounts: false } });
+  assert.deepEqual(await address.response.json(), { address: POT_ADDRESS });
+  assert.deepEqual(address.h.trace, ['limit:pot', 'origin:potAddress']);
 });
 
 // -- chain reads that fail ------------------------------------------------------------------------
@@ -1555,14 +1855,15 @@ test('every other request writes exactly one line, whether it went well or was r
     ['the pot address, wrong method', get(API.potAddress), {}, line('pot_address', 405)],
 
     // The pot's counts look at the clock once more than the other routes, to see how old the
-    // kept counts are (10 ms), and once more again to date an answer that came (15 ms).
+    // kept counts are (10 ms), and once more again to date what a question brought, counts or a
+    // failure (15 ms).
     ['the pot counts', get(API.potStats), {}, { ...line('pot_stats', 200, 200), ms: 15 }],
     ['the pot counts from another site', get(API.potStats, foreign), {}, { ...line('pot_stats', 200, 200), ms: 15 }],
     [
       'the pot counts, origin down',
       get(API.potStats),
       { potStats: () => ({ ok: false, code: 'unavailable', detail: null, upstream: 502, fault: 'origin_down' }) },
-      { ...line('pot_stats', 502, 502, 'origin_down'), ms: 10 },
+      { ...line('pot_stats', 502, 502, 'origin_down'), ms: 15 },
     ],
     ['the pot counts over the limit', get(API.potStats), { over: ['pot'] }, line('pot_stats', 429)],
     ['the pot counts, wrong method', post(API.potStats, null), {}, line('pot_stats', 405)],
@@ -1642,11 +1943,14 @@ test('when a part throws, the answer is unavailable and the log says the handler
     const { response, h } = await run(request, options);
     assert.equal(response.status, 502);
     assert.deepEqual(await errorOf(response), { error: 'unavailable' });
-    // (The pot's counts had looked at the clock once more by then, to see how old the kept counts were.)
-    assert.deepEqual(h.lines, [{ route, status: 502, upstream: null, ms: route === 'pot_stats' ? 10 : 5, fault: 'handler' }]);
+    // (The pot's counts had looked at the clock twice more by then: to see how old the kept counts were, and to
+    // date the question that broke.)
+    assert.deepEqual(h.lines, [{ route, status: 502, upstream: null, ms: route === 'pot_stats' ? 15 : 5, fault: 'handler' }]);
     for (const [name, value] of Object.entries(FIXED_HEADERS)) assert.equal(response.headers.get(name), value);
-    // A question that threw leaves nothing behind: no counts, and no question that later requests would wait for.
-    assert.deepEqual(h.deps.potStatsHolder, { kept: null, asking: null }, route);
+    // A question that threw leaves no counts behind, and no question that later requests would wait for: only
+    // the note that it failed, and when, so that the origin is left alone for a moment. No other route notes anything.
+    const failed = route === 'pot_stats' ? { at: 1015, fault: 'handler' } : null;
+    assert.deepEqual(h.deps.potStatsHolder, { kept: null, asking: null, failed }, route);
   }
   // A limiter that breaks is our fault too, and nothing behind it is asked.
   const h = harness();

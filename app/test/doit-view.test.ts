@@ -9,14 +9,16 @@
 // (doit-worlds.ts), and hold the screens' own decisions to the spec.
 
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
 import { test } from 'node:test';
-import { LANGS, STEPS, type StepId } from '@learnbitcoin/practice-contract';
+import { LANGS, STEPS, type AppConfig, type StepId } from '@learnbitcoin/practice-contract';
 import { ownAddresses, signPayment, viewPayment, type TxView } from '@learnbitcoin/practice-wallet';
 import { ACCOUNT, POT_ADDRESS, TXID, fundedState, sampleHistory } from '../dev/sample.ts';
 import { stripCount, stripShows, stripSpeaks, stripText, stripView, stepTitle } from '../src/components/doit/strip.ts';
 import { EXPLAIN_SLOTS, explain } from '../src/lib/doit/explain.ts';
-import { judge, type BlockedReason, type PartView, type StepView } from '../src/lib/doit/judge.ts';
+import { DEFAULT_CONFIG } from '../src/lib/config.ts';
+import { judge, type BlockedReason, type PartView, type StepView, type WalletTrouble } from '../src/lib/doit/judge.ts';
 import { CHAPTERS, STEP_DEFS, partCount, partDef } from '../src/lib/doit/steps.ts';
 import { fill, slotNames } from '../src/lib/format.ts';
 import { answerKey, positionsAnswered, positionsFor } from '../src/screens/doit/ask.ts';
@@ -24,6 +26,7 @@ import { bitsText, sentenceBits } from '../src/screens/doit/bits.ts';
 import {
   actionOf,
   askOf,
+  asksPotCount,
   canRestart,
   chapterHeading,
   chapterUrl,
@@ -155,7 +158,7 @@ test('each part that sends the reader into the wallet names one screen, and the 
 
 test('a need names the step or the screen that meets it', () => {
   const none = note();
-  const link = (id: StepId, part: number, reason: Exclude<BlockedReason, 'trouble'>, progress = none): string => {
+  const link = (id: StepId, part: number, reason: Exclude<BlockedReason, WalletTrouble>, progress = none): string => {
     const need = needOf(id, part, reason, progress, 'yes');
     const to =
       need.link === null ? 'no link' : need.link.kind === 'step' ? `step ${need.link.step}` : `${need.link.action.route.name}${need.link.action.part === undefined ? '' : `#${need.link.action.part}`}`;
@@ -270,6 +273,9 @@ test('"Start this step again" is offered on a step under way, and not while the 
   assert.equal(canRestart(judge('prove-the-backup', noWallet({ note: drill(0) })), 'yes', 'none'), true);
   // A stored wallet that cannot be used is no "wallet out of the browser": the step shows the wallet's own trouble.
   assert.equal(canRestart(out, 'yes', 'unreadable'), true);
+  // A storage the page was not let read: it sees no wallet either, and the note still names the one to bring back.
+  assert.equal(canRestart(out, 'yes', 'blocked'), false);
+  assert.equal(canRestart(judge('prove-the-backup', world({ chain: coins, note: drill(1) })), 'yes', 'blocked'), true, 'before the removal the note names nothing that could be lost');
   // Every other step, wallet or no wallet.
   const waiting = judge('waiting-room', noWallet({ note: note({ 'waiting-room': started(1, { tx: txid('a1'), sentAt: NOW }) }, 'waiting-room') }));
   assert.equal(canRestart(waiting, 'yes', 'none'), true);
@@ -325,6 +331,40 @@ test('"Hold some" links each new thing it names; no other step links the glossar
 });
 
 // -- chapters -----------------------------------------------------------------------------------
+
+test('the pot count is asked for under a done "Pass it on" alone, and only when the Worker\'s settings say that the counts can be had', () => {
+  // The settings the page carries built in say no. So nothing is asked before the Worker's own have arrived,
+  // and nothing at all when they do not arrive or say no, which is how the Worker ships.
+  assert.equal(DEFAULT_CONFIG.potCounts, false);
+  for (const id of STEPS) {
+    assert.equal(asksPotCount(id, DEFAULT_CONFIG), false, `${id}, built in`);
+    assert.equal(asksPotCount(id, { potCounts: false }), false, `${id}, the Worker says no`);
+    // The Worker says yes: asked under "Pass it on", and under no other step.
+    assert.equal(asksPotCount(id, { potCounts: true }), id === 'pass-it-on', `${id}, the Worker says yes`);
+    assert.equal(asksPotCount(id, { ...DEFAULT_CONFIG, potCounts: true }), id === 'pass-it-on', id);
+  }
+  // Only a plain true is a yes. (loadConfig lets nothing else through; this holds the screen's own line.)
+  for (const stray of ['on', 'true', 1, {}, [], null, undefined]) {
+    assert.equal(asksPotCount('pass-it-on', { potCounts: stray as unknown as boolean }), false, String(stray));
+  }
+  // It goes by that one setting: the faucet being open or events being counted do not switch it.
+  const allButTheCounts: AppConfig = { ...DEFAULT_CONFIG, turnstileSiteKey: 'a-site-key', events: true };
+  assert.equal(asksPotCount('pass-it-on', allButTheCounts), false);
+
+  // The card asks through this and through nothing else: one place calls the wallet for the counts, it is
+  // behind this answer, and it runs once.
+  const done = readFileSync(new URL('../src/screens/doit/Done.svelte', import.meta.url), 'utf8');
+  assert.equal(done.match(/wallet\.potStats\(\)/g)?.length, 1);
+  assert.match(done, /let countsWanted = \$derived\(asksPotCount\(id, wallet\.config\)\);/);
+  assert.match(done, /\$effect\(\(\) => \{\s*if \(!countsWanted \|\| asked\) return;\s*asked = true;\s*untrack\(\(\) => \{\s*void busyWhile\(wallet\.potStats\(\)\)/);
+  assert.doesNotMatch(done, /onMount\(\(\) => \{[^}]*potStats/, 'not asked when the piece is put on the page, whatever the settings say');
+  // And no other file of the app asks for them by the wallet.
+  const sources = readdirSync(new URL('../src/', import.meta.url), { recursive: true, withFileTypes: true })
+    .filter((entry) => entry.isFile() && /\.(svelte|ts)$/.test(entry.name))
+    .map((entry) => join(entry.parentPath, entry.name));
+  const askers = sources.filter((file) => /wallet\.potStats\(/.test(readFileSync(file, 'utf8'))).map((file) => file.slice(file.indexOf('/src/') + 1));
+  assert.deepEqual(askers, ['src/screens/doit/Done.svelte']);
+});
 
 test('a chapter\'s heading and its address on the main site, in the page\'s language', () => {
   assert.deepEqual(
@@ -580,7 +620,21 @@ test('"done" is said of a done step and of no other: a step the note follows and
 });
 
 test('every reason a part can be blocked for has its words in the strip, in both languages', () => {
-  const reasons: BlockedReason[] = ['no-wallet', 'no-coins', 'not-spendable-yet', 'nothing-sent', 'came-back-with-passkey', 'another-wallet', 'storage', 'trouble'];
+  // Written as an object, so that the compiler refuses a reason that is missing here.
+  const all: Record<BlockedReason, true> = {
+    'no-wallet': true,
+    'no-coins': true,
+    'not-spendable-yet': true,
+    'nothing-sent': true,
+    'came-back-with-passkey': true,
+    'another-wallet': true,
+    storage: true,
+    trouble: true,
+    broken: true,
+    unread: true,
+  };
+  const reasons = Object.keys(all) as BlockedReason[];
+  assert.equal(reasons.length, 10);
   for (const lang of LANGS) {
     const said = reasons.map((reason) => stripText({ step: 'hold-some', part: 1, parts: 4, says: { kind: 'need', reason } }, lang, NOW));
     assert.equal(new Set(said).size, reasons.length, lang);
@@ -589,6 +643,46 @@ test('every reason a part can be blocked for has its words in the strip, in both
   // The world gives the reasons the list above names: a wallet that is not here.
   const none = stripView(judge('the-seed', noWallet({ note: note({ 'the-seed': started() }, 'the-seed') })));
   assert.deepEqual(none.says, { kind: 'need', reason: 'no-wallet' });
+});
+
+test('the strip says "the stored wallet" only of a wallet that is stored: a failed self-test and a storage nobody could read have words of their own', () => {
+  const said = (status: 'unreadable' | 'newer' | 'broken' | 'blocked' | 'none', id: StepId = 'hold-some'): { reason: string; en: string; es: string; speaks: boolean } => {
+    // The step is followed and under way, as it has to be for a strip to show at all.
+    const strip = stripView(judge(id, world({ status, record: null, note: note({ [id]: started() }, id) })));
+    assert.equal(strip.says.kind, 'need', status);
+    return {
+      reason: strip.says.kind === 'need' ? strip.says.reason : '',
+      en: stripText(strip, 'en', NOW),
+      es: stripText(strip, 'es', NOW),
+      speaks: stripSpeaks(strip),
+    };
+  };
+  // Something is stored for the wallet, and it cannot be read or is a newer version's: "the stored wallet".
+  for (const status of ['unreadable', 'newer'] as const) {
+    assert.deepEqual(said(status), { reason: 'trouble', en: 'the stored wallet cannot be used', es: 'la billetera guardada no se puede usar', speaks: true }, status);
+  }
+  // The self-test failed. In that browser the page reads no wallet and none can have been made (session.ts),
+  // and About says so on the same screen: so the strip must not say that one is stored.
+  for (const id of STEPS) {
+    const broken = said('broken', id);
+    assert.deepEqual(broken, { reason: 'broken', en: 'the wallet cannot run in this browser', es: 'la billetera no funciona en este navegador', speaks: true }, id);
+    assert.doesNotMatch(`${broken.en} ${broken.es}`, /stored|guardada/, id);
+  }
+  // The browser did not let the page read its storage: whether a wallet is here is not known. Neither "the
+  // stored wallet" (the page saw none) nor "first: a practice wallet" (one may be stored).
+  for (const id of STEPS) {
+    const unread = said('blocked', id);
+    assert.deepEqual(unread, { reason: 'unread', en: 'this page could not look for a wallet here', es: 'esta página no pudo buscar una billetera aquí', speaks: true }, id);
+    assert.doesNotMatch(`${unread.en} ${unread.es}`, /stored wallet|billetera guardada|first:|primero:/, id);
+  }
+  // And a storage that was read and holds no wallet is still said as that.
+  assert.deepEqual(said('none', 'pass-it-on'), { reason: 'no-wallet', en: 'first: a practice wallet', es: 'primero: una billetera de práctica', speaks: true });
+  // The words in the table, and the reason each is drawn for.
+  assert.equal(en.stripNeed_trouble, 'the stored wallet cannot be used');
+  assert.equal(en.stripNeed_broken, 'the wallet cannot run in this browser');
+  assert.equal(es.stripNeed_broken, 'la billetera no funciona en este navegador');
+  assert.equal(en.stripNeed_unread, 'this page could not look for a wallet here');
+  assert.equal(es.stripNeed_unread, 'esta página no pudo buscar una billetera aquí');
 });
 
 // -- "What just happened", from keys to sentences ----------------------------------------------------------------

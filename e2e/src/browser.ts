@@ -1,8 +1,10 @@
 // Headless Chrome for the end-to-end tools: the smoke command and the scenarios.
 //
 // launchChrome() starts the Chrome installed on this machine (puppeteer-core
-// brings no browser of its own) on a throwaway profile. openPage() opens one
-// page of the local server and watches it:
+// brings no browser of its own) on a throwaway profile, or on a profile
+// folder the caller names and keeps (for what a browser holds when it is
+// closed and opened again, and for a setting of the browser itself:
+// setSiteData). openPage() opens one page of the local server and watches it:
 //
 //   - Every console error, every uncaught error and every violation of the
 //     page's Content-Security-Policy is recorded as a failure, in the page
@@ -35,7 +37,7 @@
 // its storage, a width, a language and a slow phone's speed.
 
 import type { ChildProcess } from 'node:child_process';
-import { existsSync, rmSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -83,13 +85,29 @@ export function endOnSignals(): void {
   }
 }
 
-export async function launchChrome(): Promise<Chrome> {
+export interface ChromeOptions {
+  /**
+   * A profile folder of the caller's own, in place of a throwaway one.
+   * Chrome keeps what its pages store in it (the pages of its own context:
+   * `browser.defaultBrowserContext()`), so a Chrome started on the same
+   * folder later finds it again, as a browser that was closed and opened
+   * again does. The folder is made if it is not there. It is NOT removed
+   * when Chrome is closed, or when this process ends: it is the caller's
+   * to remove.
+   */
+  profile?: string;
+}
+
+export async function launchChrome(options: ChromeOptions = {}): Promise<Chrome> {
   const executablePath = process.env.CHROME_PATH || DEFAULT_CHROME_PATH;
   if (!existsSync(executablePath)) {
     throw new Error(`No Chrome at ${executablePath}. Set CHROME_PATH to a Chrome or Chromium program.`);
   }
   endOnSignals();
-  const profile = await mkdtemp(join(tmpdir(), 'lbp-chrome-'));
+  /** True for a throwaway profile, which goes with its Chrome. */
+  const throwaway = options.profile === undefined;
+  const profile = options.profile ?? (await mkdtemp(join(tmpdir(), 'lbp-chrome-')));
+  if (!throwaway) await mkdir(profile, { recursive: true });
   /** Chrome's process, once it runs. */
   let running: ChildProcess | null = null;
   const removeProfile = () => {
@@ -103,8 +121,8 @@ export async function launchChrome(): Promise<Chrome> {
         // Gone already.
       }
     }
-    // The helpers go on writing for a moment after that.
-    rmSync(profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    // The helpers go on writing for a moment after that. (A profile the caller named is the caller's.)
+    if (throwaway) rmSync(profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   };
   // If this process ends before close() is called, the profile still goes.
   process.once('exit', removeProfile);
@@ -135,9 +153,34 @@ export async function launchChrome(): Promise<Chrome> {
     close: async () => {
       await browser.close();
       process.off('exit', removeProfile);
-      await rm(profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+      if (throwaway) await rm(profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     },
   };
+}
+
+/**
+ * Sets, in a profile folder, Chrome's own default for cookies and site
+ * data: what a reader sets under "Third-party cookies" and "On-device site
+ * data" in Chrome's settings. "block" is "Don't allow sites to save data on
+ * your device": Chrome then refuses every page the mere mention of its
+ * storage (reading `window.localStorage` throws a SecurityError), and
+ * deletes nothing that is stored. "allow" is Chrome's default.
+ *
+ * The setting is written where Chrome's settings page writes it, the
+ * profile's own Preferences file, so Chrome must not be running on the
+ * folder: it writes that file when it closes, and reads it when it starts.
+ * The folder must have been used by a Chrome once (launchChrome with
+ * `profile`), or there is no such file yet.
+ */
+export function setSiteData(profile: string, setting: 'allow' | 'block'): void {
+  const file = join(profile, 'Default', 'Preferences');
+  if (!existsSync(file)) throw new Error(`setSiteData: no Preferences file in ${profile}. Start Chrome on this profile once, and close it, first.`);
+  const preferences = JSON.parse(readFileSync(file, 'utf8')) as { profile?: { default_content_setting_values?: Record<string, number> } };
+  preferences.profile ??= {};
+  preferences.profile.default_content_setting_values ??= {};
+  // Chrome's numbers for a content setting: 1 allows, 2 blocks.
+  preferences.profile.default_content_setting_values.cookies = setting === 'block' ? 2 : 1;
+  writeFileSync(file, JSON.stringify(preferences));
 }
 
 // -- what fails a run ---------------------------------------------------------------

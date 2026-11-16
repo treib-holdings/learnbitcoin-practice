@@ -42,8 +42,9 @@
   //
   // The pot's limiter counts two things apart in the same way: asking for
   // the pot's address ("Pass it on"), and looking at the pot's counts, which
-  // anybody can do with a plain GET. The looks are counted under a second
-  // key of the reader's, so they can never use up what "Pass it on" needs
+  // anybody can do with a plain GET while the counts are switched on
+  // (POT_COUNTS, further down). The looks are counted under a second key of
+  // the reader's, so they can never use up what "Pass it on" needs
   // (src/handler.ts, POT_STATS): 60 a minute of each for one reader.
   //
   // Every limiter here is a brake on one reader. None of them is a cap for
@@ -51,16 +52,25 @@
   // practice network is not fixed: it can grow with the number of coins
   // that wait in the pot, and anybody can add coins to the pot. So the
   // limiter is not what keeps the looks of many readers away from the
-  // practice network. The Worker asks the network for the counts once and
-  // gives everyone that answer for 15 seconds (src/pot-stats.ts). The
-  // answer is kept in the Worker's memory, one for each isolate that
-  // Cloudflare runs the Worker in. An isolate has one question out at a
-  // time, whoever looks and however often, and while the network answers
-  // that comes to four questions a minute. It is not one answer for a
-  // whole Cloudflare location, and not one for the whole network. No
-  // setting in this file switches the keeping on or off, or changes the 15
-  // seconds. A look is still counted at the limiter first, and a reader
-  // over the limit is refused.
+  // practice network. Two other things are there for that.
+  //
+  // The first is in the Worker (src/pot-stats.ts). Each isolate that
+  // Cloudflare runs the Worker in asks the network for the counts once,
+  // keeps the answer in its memory, and gives it to every reader it serves
+  // for 15 seconds. An isolate has one question out at a time, whoever
+  // looks and however often. While the network answers, that comes to four
+  // questions a minute. While it does not, it comes to one every 5 seconds
+  // at the most: after a question that failed, the isolate asks no other
+  // for 5 seconds. All of that is a bound for one isolate. It is not one
+  // answer for a whole Cloudflare location, and not one for the whole
+  // network, and Cloudflare may run many isolates. No setting in this file
+  // changes the 15 or the 5 seconds, or switches the keeping off. A look
+  // is still counted at the limiter first, and a reader over the limit is
+  // refused.
+  //
+  // The second is the setting POT_COUNTS, which switches the counts off
+  // altogether, and off is how this file ships. The note at the setting
+  // says why, and when it may be switched on.
   //
   // namespace_id is a number we pick; it only has to be unique in the account.
   "ratelimits": [
@@ -110,7 +120,34 @@
     // The one host where passkeys are offered.
     "PASSKEY_HOST": "practice.learnbitcoin.com",
     "FAUCET_SATS": "100000",
-    "BLOCK_SECONDS": "30"
+    "BLOCK_SECONDS": "30",
+    // The pot's counts: the answer to GET /api/pot/stats, and the line
+    // under a done "Pass it on" that shows one of them. "off", as it
+    // ships, or "on". Only the exact word "on" switches them on. Any other
+    // value leaves them off, and so does a setting that is missing.
+    //
+    // While it is off, the Worker does not know that path. It answers a
+    // request for it as it answers any path it does not know: the same
+    // 404, the same headers, the same line in its log. It counts nothing
+    // at the limiter and asks the practice network nothing. GET
+    // /api/config tells the app that the counts cannot be had, and the app
+    // does not ask for them: the line is left out, and no request for it
+    // leaves the page. No request can switch it on. So while it is off,
+    // nothing on the public site can make the practice network read the
+    // pot's counts.
+    //
+    // It ships off because a look at the counts can cost the practice
+    // network a reading of every coin that waits in the pot, and what the
+    // Worker does about that is a bound for one isolate only (the note
+    // above the limiters).
+    //
+    // It may be switched on once the bots that run on the practice
+    // network's server keep their own reading of the counts, so that a
+    // look costs the node next to nothing however many isolates ask. That
+    // work is in bots/ of this repository and is not finished, and a
+    // change there takes effect on the server only when its bots have been
+    // built and started again. Until it is live there, leave this off.
+    "POT_COUNTS": "off"
   },
 
   // A deploy stops while one of these is not set on the Worker.

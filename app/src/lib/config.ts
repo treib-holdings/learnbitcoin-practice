@@ -10,10 +10,10 @@
 // may be empty: with no site key for the bot check, the faucet is closed.)
 //
 // The built-in values and the Worker's can say different things about the
-// same deployment: built in, there is no bot check and nothing is counted.
-// So loadConfig also says which of the two it is handing back, and a screen
-// never has to guess whether "the faucet is closed" is the Worker's word or
-// only the absence of one.
+// same deployment: built in, there is no bot check, nothing is counted and
+// the pot's counts are not asked for. So loadConfig also says which of the
+// two it is handing back, and a screen never has to guess whether "the
+// faucet is closed" is the Worker's word or only the absence of one.
 
 import { API, type AppConfig } from '@learnbitcoin/practice-contract';
 import type { FetchLike } from '@learnbitcoin/practice-wallet';
@@ -40,6 +40,11 @@ export const DEFAULT_CONFIG: Readonly<AppConfig> = Object.freeze({
   blockSeconds: 30,
   // Nothing is counted until the Worker says events are wanted.
   events: false,
+  // The pot's counts are not asked for until the Worker says they can be
+  // had. Only its own `true` says so: no answer, an answer without this
+  // field (a Worker older than the field) and a value of any other kind all
+  // leave it at false, and then no request for the counts leaves the page.
+  potCounts: false,
 });
 
 /**

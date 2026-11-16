@@ -66,6 +66,7 @@ import {
 } from '@learnbitcoin/practice-wallet';
 import {
   POT_STATS_KEEP_MS,
+  POT_STATS_PAUSE_MS,
   configFromEnv,
   makeBotCheck,
   makeForwardEvent,
@@ -118,6 +119,8 @@ const LOCAL_VARS: ConfigVars = {
   PASSKEY_HOST: 'localhost',
   FAUCET_SATS: String(FAUCET_SATS),
   BLOCK_SECONDS: '10',
+  // Switched on, where a deploy ships with it off: the tests of the pot's counts below run the route.
+  POT_COUNTS: 'on',
 };
 
 /** The same settings as the app must read them. Typed out, not computed: a key that the two sides spell differently shows here. */
@@ -132,6 +135,7 @@ const LOCAL_CONFIG: AppConfig = {
   faucetSats: FAUCET_SATS,
   blockSeconds: 10,
   events: true,
+  potCounts: true,
 };
 
 /**
@@ -396,7 +400,7 @@ test('config: every setting crosses from the Worker to the app, numbers as numbe
   assert.deepEqual(s.lines, [line('config', 200), line('config', 200)]);
 });
 
-test('as shipped: the settings built into the app are the ones in wrangler.jsonc, and with no secrets set the faucet is closed', async () => {
+test('as shipped: the settings built into the app are the ones in wrangler.jsonc, with no secrets set the faucet is closed, and the pot\'s counts are neither asked for nor answered', async () => {
   // The Worker's parts wired as worker/src/index.ts wires them, from the settings a deploy of
   // this repository carries. No secret is set, as in a checkout.
   const vars = wranglerConfig().vars as Record<string, string>;
@@ -426,6 +430,25 @@ test('as shipped: the settings built into the app are the ones in wrangler.jsonc
   assert.deepEqual({ ...shipped, turnstileSiteKey: '', events: false }, { ...DEFAULT_CONFIG });
   assert.equal(shipped.turnstileSiteKey, (vars.TURNSTILE_SITE_KEY ?? '').trim());
   assert.equal(shipped.events, (vars.PLAUSIBLE_DOMAIN ?? '').trim() !== '');
+
+  // The pot's counts are switched off as shipped, and the app carries them off: the two agree from the
+  // first moment, so a page of this app never asks for them. Asked for all the same, by the app's own
+  // client or by hand, they are a path the Worker does not know: the answer of any unknown path, with no
+  // limiter counted and the practice network left alone.
+  assert.equal(vars.POT_COUNTS, 'off');
+  assert.equal(shipped.potCounts, false);
+  assert.equal(DEFAULT_CONFIG.potCounts, false);
+  s.lines.length = 0;
+  const asking = await thrownBy(() => s.api.potStats());
+  assert.ok(asking instanceof ApiError);
+  assert.equal(asking.status, 404);
+  const byHand = await fetchFrom(s.handler, 'bare')(API.potStats);
+  const unknown = await fetchFrom(s.handler, 'bare')('/api/pot/statz');
+  assert.deepEqual([byHand.status, [...byHand.headers], await byHand.text()], [unknown.status, [...unknown.headers], await unknown.text()]);
+  assert.equal(byHand.status, 404);
+  assert.deepEqual(s.lines.splice(0), [line('unknown', 404), line('unknown', 404), line('unknown', 404)]);
+  assert.deepEqual(s.counted, [], 'no limiter was asked');
+  assert.deepEqual(s.network.requests(), [], 'and the practice network heard nothing');
 
   // The faucet is closed, with or without a site key, until the bot check has its secret.
   // The app has a word of its own for that, and nobody outside is asked.
@@ -1522,8 +1545,8 @@ test('the pot\'s counts: three numbers cross from the bots to the app, written b
   /** How often the bots have been asked for the counts. Until this test asks them itself, further down, that is how often the Worker has. */
   const asked = (): number => s.reached('GET', '/bots/pot/stats');
   /**
-   * For the Worker, 15 seconds pass. It gives everyone the bots' last answer until that answer is
-   * 15 seconds old (worker/src/pot-stats.ts), so this is how a test gets it to ask the bots again.
+   * For the Worker, 15 seconds pass. It gives every page it serves the bots' last answer until that answer
+   * is 15 seconds old (worker/src/pot-stats.ts), so this is how a test gets it to ask the bots again.
    */
   const answerRunsOut = (): void => {
     s.clock.ms += POT_STATS_KEEP_MS;
@@ -1611,7 +1634,7 @@ test('the pot\'s counts: three numbers cross from the bots to the app, written b
   ]);
 });
 
-test('the pot\'s counts are asked for once for everyone: sixty pages at the same moment, one question to the bots; and an answer that failed is not kept', async () => {
+test('the pot\'s counts are asked for once for every page this Worker serves: sixty pages at the same moment, one question to the bots; an answer that failed is not kept, and the bots are left alone for 5 seconds after it', async () => {
   // Something on the way holds the Worker's question to the bots until the test lets it through.
   let through: () => void = () => {};
   let gate: Promise<void> = Promise.resolve();
@@ -1649,7 +1672,8 @@ test('the pot\'s counts are asked for once for everyone: sixty pages at the same
   assert.deepEqual(s.lines.splice(0), Array.from({ length: 60 }, () => line('pot_stats', 200, 200)));
 
   // The answer runs out while the bots are stopped. Twenty pages ask: one question, which fails, and
-  // all twenty are told so. Nothing is kept of it: the next page asks again, and again.
+  // all twenty are told so. No counts are kept of it. For the 5 seconds that follow, a page that asks is
+  // told the same at once and the bots are not asked: stopped or slow, they are left alone for that long.
   s.clock.ms += POT_STATS_KEEP_MS;
   s.network.setFaucet('down');
   hold();
@@ -1659,18 +1683,34 @@ test('the pot\'s counts are asked for once for everyone: sixty pages at the same
   for (const each of failing) assert.equal(failureOf(await each), 'unavailable');
   assert.equal(asked(), 2);
   assert.deepEqual(s.lines.splice(0), Array.from({ length: 20 }, () => line('pot_stats', 502, 502, 'origin_down')));
+  for (const later of [0, POT_STATS_PAUSE_MS - 1]) {
+    s.clock.ms += later;
+    assert.equal(failureOf(await thrownBy(() => s.api.potStats())), 'unavailable');
+    assert.equal(asked(), 2, 'not asked in the pause');
+  }
+  // Each pause over, the next page asks again, and the bots are still stopped.
   for (const again of [3, 4]) {
+    s.clock.ms += again === 3 ? 1 : POT_STATS_PAUSE_MS;
     assert.equal(failureOf(await thrownBy(() => s.api.potStats())), 'unavailable');
     assert.equal(asked(), again);
   }
-  // The bots are back: the next page is answered, and that answer is kept for the pages after it.
+  // The bots are back. Within the pause after the last failure nobody finds out. After it the next page
+  // is answered, and that answer is kept for the pages after it.
   s.network.setFaucet('ok');
+  assert.equal(failureOf(await thrownBy(() => s.api.potStats())), 'unavailable');
+  assert.equal(asked(), 4);
+  s.clock.ms += POT_STATS_PAUSE_MS;
   assert.deepEqual(await s.api.potStats(), { passedOn: 0, waiting: 0, handedOn: 0 });
   assert.deepEqual(await s.api.potStats(), { passedOn: 0, waiting: 0, handedOn: 0 });
   assert.equal(asked(), 5);
+  // A page that asked the bots, or waited for that question, names their status in its line. A page that
+  // was turned away in a pause names none, and the fault of the question that failed.
   assert.deepEqual(s.lines.splice(0), [
+    line('pot_stats', 502, null, 'origin_down'),
+    line('pot_stats', 502, null, 'origin_down'),
     line('pot_stats', 502, 502, 'origin_down'),
     line('pot_stats', 502, 502, 'origin_down'),
+    line('pot_stats', 502, null, 'origin_down'),
     line('pot_stats', 200, 200),
     line('pot_stats', 200),
   ]);
@@ -1685,6 +1725,11 @@ test('the pot\'s counts when they cannot be read: the app is told "unavailable" 
     assert.equal(e.detail, null);
   };
 
+  /** For the Worker, 5 seconds pass: the pause after a question that failed is over, and the next page's question is asked. */
+  const pauseIsOver = (s: Stack): void => {
+    s.clock.ms += POT_STATS_PAUSE_MS;
+  };
+
   // The origin is down, sends the Worker to a login page, or forbids it.
   const s = stack();
   for (const { mode, upstream, fault } of [
@@ -1695,6 +1740,12 @@ test('the pot\'s counts when they cannot be read: the app is told "unavailable" 
     s.network.setOrigin(mode);
     await failed(s, 502, 'unavailable');
     assert.deepEqual(s.lines.splice(0), [line('pot_stats', 502, upstream, fault)], mode);
+    // Asked again at once, the app is told the same, and the origin is not asked: the line has no status of its.
+    const reached = s.network.requests().length;
+    await failed(s, 502, 'unavailable');
+    assert.equal(s.network.requests().length, reached, mode);
+    assert.deepEqual(s.lines.splice(0), [line('pot_stats', 502, null, fault)], mode);
+    pauseIsOver(s);
   }
   s.network.setOrigin('ok');
   // The bots alone are stopped, while the chain still answers.
@@ -1703,6 +1754,7 @@ test('the pot\'s counts when they cannot be read: the app is told "unavailable" 
   assert.equal(await s.api.esplora.tipHeight(), s.network.height());
   assert.deepEqual(s.lines.splice(0), [line('pot_stats', 502, 502, 'origin_down')]);
   s.network.setFaucet('ok');
+  pauseIsOver(s);
   assert.deepEqual(await s.api.potStats(), { passedOn: 0, waiting: 0, handedOn: 0 });
 
   // The pot's limiter refuses: "limit", and the bots are not asked. The Worker has an answer it
@@ -1756,18 +1808,22 @@ test('the pot\'s counts when they cannot be read: the app is told "unavailable" 
   for (const answer of wrong) {
     body = JSON.stringify(answer);
     await failed(between, 502, 'unavailable');
+    pauseIsOver(between);
   }
   body = '{"learners_passed_on": 4, "coins_waiting": 1, "coins_passed_to_newcomers": ';
   await failed(between, 502, 'unavailable');
+  pauseIsOver(between);
   assert.deepEqual(between.lines.splice(0), [...wrong, 'cut short'].map(() => line('pot_stats', 502, 200, 'origin_shape')));
   // A refusal in the faucet's own words is not passed on either: a count has no refusal a reader could act on.
   body = JSON.stringify({ error: 'The faucet is busy; try again in a minute', code: 'busy' });
   status = 429;
   await failed(between, 502, 'unavailable');
   assert.deepEqual(between.lines.splice(0), [line('pot_stats', 502, 429, 'origin_shape')]);
-  // And with the counts as they should be, the same stack answers.
+  // And with the counts as they should be, the same stack answers, once the pause after that failure is over.
   body = JSON.stringify(whole);
   status = 200;
+  await failed(between, 502, 'unavailable');
+  pauseIsOver(between);
   assert.deepEqual(await between.api.potStats(), { passedOn: 4, waiting: 1, handedOn: 3 });
 });
 

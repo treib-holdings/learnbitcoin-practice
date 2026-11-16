@@ -10,7 +10,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { ADDRESS_PATTERN } from '@learnbitcoin/practice-contract';
-import { POT_STATS_KEEP_MS, type LogLine } from '@learnbitcoin/practice-worker';
+import { POT_STATS_KEEP_MS, POT_STATS_PAUSE_MS, type LogLine } from '@learnbitcoin/practice-worker';
 import { DEFAULT_CONFIG } from '../../app/src/lib/config.ts';
 import { makeFakeOrigin } from '../src/fake-origin.ts';
 import { DUMMY_TOKEN, LOCAL_VARS, TEST_SITE_KEY, localVars, startStack, wranglerVars, type Stack, type StackOptions } from '../src/stack.ts';
@@ -62,6 +62,39 @@ test('the settings of a local run: the ones a deploy carries, with three laid ov
   await withStack({ vars: { FAUCET_SATS: '50000', BLOCK_SECONDS: '10' } }, async (stack) => {
     assert.equal(stack.config.faucetSats, 50_000);
     assert.equal(stack.config.blockSeconds, 10);
+  });
+});
+
+test('the pot\'s counts are switched off in a local run, as they are shipped: their path is an unknown path, and the network is not asked; a scenario switches them on in its settings', async () => {
+  assert.equal(wranglerVars().POT_COUNTS, 'off');
+  assert.ok(!('POT_COUNTS' in LOCAL_VARS), 'a local run does not lay its own value over it');
+  await withStack({}, async (stack) => {
+    assert.equal(stack.config.potCounts, false);
+    const counts = await get(stack, '/api/pot/stats');
+    const unknown = await get(stack, '/api/pot/statz');
+    assert.deepEqual([counts.status, [...counts.headers], await counts.text()], [unknown.status, [...unknown.headers], await unknown.text()]);
+    assert.equal(counts.status, 404);
+    assert.deepEqual((await (await get(stack, '/api/pot/statz')).json()) as unknown, { error: 'not_found' });
+    assert.deepEqual(stack.lines.map((line) => [line.route, line.status, line.upstream, line.fault]), [
+      ['unknown', 404, null, null],
+      ['unknown', 404, null, null],
+      ['unknown', 404, null, null],
+    ]);
+    assert.deepEqual(stack.network!.requests(), [], 'the stand-in network heard nothing');
+    // "Pass it on" itself needs the pot's address, and that is answered as ever.
+    assert.equal((await post(stack, '/api/pot/address')).status, 200);
+  });
+  // Only the exact word switches them on, here as in the Worker.
+  for (const value of ['ON', ' on', 'true', '1', '']) {
+    await withStack({ vars: { POT_COUNTS: value } }, async (stack) => {
+      assert.equal(stack.config.potCounts, false, JSON.stringify(value));
+      assert.equal((await get(stack, '/api/pot/stats')).status, 404, JSON.stringify(value));
+    });
+  }
+  await withStack({ vars: { POT_COUNTS: 'on' } }, async (stack) => {
+    assert.equal(stack.config.potCounts, true);
+    assert.deepEqual(await (await get(stack, '/api/pot/stats')).json(), { passedOn: 0, waiting: 0, handedOn: 0 });
+    assert.deepEqual(stack.network!.requests(), [{ method: 'GET', path: '/bots/pot/stats' }]);
   });
 });
 
@@ -181,9 +214,10 @@ test('log lines are recorded, handed to the caller, and can be capped', async ()
   });
 });
 
-test("the pot's counts are kept by the stack's Worker as by the deployed one: the network is asked once, and again when the scenario says that 15 seconds have passed", async () => {
+test("switched on, the pot's counts are kept by the stack's Worker as by the deployed one: the network is asked once, again when the scenario says that 15 seconds have passed, and after a failure only when it says that 5 have", async () => {
   const none = { passedOn: 0, waiting: 0, handedOn: 0 };
-  await withStack({}, async (stack) => {
+  const ON = { vars: { POT_COUNTS: 'on' } };
+  await withStack(ON, async (stack) => {
     const asked = (): number => stack.network!.requests().filter((request) => request.path === '/bots/pot/stats').length;
     const counts = async (): Promise<unknown> => (await get(stack, '/api/pot/stats')).json();
 
@@ -193,7 +227,7 @@ test("the pot's counts are kept by the stack's Worker as by the deployed one: th
     const pot = ((await (await post(stack, '/api/pot/address')).json()) as { address: string }).address;
     assert.match(pot, ADDRESS_PATTERN);
     stack.network!.fund(pot, 5_000);
-    // The Worker has an answer from a moment ago and gives it to everyone. The network is not
+    // The Worker has an answer from a moment ago and gives it to every request. The network is not
     // asked: nothing switches the keeping off for a local run.
     for (let look = 0; look < 25; look += 1) assert.deepEqual(await counts(), none);
     assert.equal(asked(), 1);
@@ -226,10 +260,20 @@ test("the pot's counts are kept by the stack's Worker as by the deployed one: th
     assert.deepEqual(await errorOf(await get(stack, '/api/pot/stats')), [502, 'unavailable']);
     assert.equal(stack.lines.at(-1)?.fault, 'origin_down');
     assert.equal(asked(), 3);
+
+    // The bots are back at once. For 5 seconds after the question that failed, the Worker asks nobody: a
+    // page is told "unavailable" without it. A scenario that needs the counts back says that the time has passed.
+    stack.network!.setFaucet('ok');
+    assert.deepEqual(await errorOf(await get(stack, '/api/pot/stats')), [502, 'unavailable']);
+    assert.deepEqual([stack.lines.at(-1)?.upstream, stack.lines.at(-1)?.fault], [null, 'origin_down']);
+    assert.equal(asked(), 3);
+    stack.advanceClock(POT_STATS_PAUSE_MS);
+    assert.deepEqual(await counts(), { passedOn: 1, waiting: 1, handedOn: 0 });
+    assert.equal(asked(), 4);
   });
 
   // Another stack is another Worker: it has kept nothing, and asks for itself.
-  await withStack({}, async (other) => {
+  await withStack(ON, async (other) => {
     assert.deepEqual(await (await get(other, '/api/pot/stats')).json(), none);
     assert.equal(other.network!.requests().filter((request) => request.path === '/bots/pot/stats').length, 1);
   });

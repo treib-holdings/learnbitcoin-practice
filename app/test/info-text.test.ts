@@ -689,6 +689,38 @@ test('About, "what our server sees": a link back to a chapter stays in this tab,
   // The page itself names no policy of its own: a <meta name="referrer"> in it would stand in for the header.
   assert.doesNotMatch(source('index.html'), /referrer/i);
 
+  // -- What "no referrer" does not mean. The request for the chapter's page carries no Referer header, and
+  //    the page it leads to finds document.referrer empty. But a browser marks that request with a header of
+  //    its own that no page can switch off, "Sec-Fetch-Site: same-site": the wallet's host and the main site's
+  //    are two hosts of one site. So the main site's server can tell that the reader followed a link on some
+  //    host of its own site (e2e/scenarios/doit-chapter.test.ts reads the header at a stand-in). No sentence
+  //    shown to a reader says otherwise: none speaks of a referrer at all, and none says that the main site
+  //    is not told, or cannot tell, where the reader was. What About says is what the address carries, and
+  //    that nothing about the wallet travels. --
+  for (const [area, tables] of Object.entries(strings)) {
+    for (const lang of LANGS) {
+      for (const [key, text] of Object.entries(tables[lang] as Table)) {
+        const where = `${area}.${lang}.${key}`;
+        assert.doesNotMatch(text, /\breferr?er\b|\bSec-Fetch\b/i, where);
+        assert.doesNotMatch(text, /(is|are) (not|never) told where|told nothing|cannot (tell|know|see) where you|does not (know|learn|see) where you/i, where);
+        assert.doesNotMatch(text, /no (se le dice|sabe|se entera|puede saber) (de|desde) dónde/i, where);
+      }
+    }
+  }
+  // The comments of the pieces that draw a link off this site keep to the same: "no referrer", and what a
+  // browser still sends. None says that the other site is told nothing.
+  const pieces = ['src/components/doit/ChapterLink.svelte', 'src/components/styles.ts', 'src/components/OutLink.svelte'];
+  for (const file of pieces) {
+    const text = source(file).replace(/\s*\n\s*(\/\/|\*)\s*/g, ' ');
+    assert.doesNotMatch(text, /is not told by the browser where the reader comes from/, file);
+    assert.doesNotMatch(text, /the other site is told nothing about this one/, file);
+    assert.doesNotMatch(text, /the other site is not told where the reader came from/, file);
+  }
+  const said = source('src/components/doit/ChapterLink.svelte').replace(/\s*\n\s*\/\/\s*/g, ' ');
+  assert.match(said, /carries no Referer header, and the page it leads to finds document\.referrer empty\. That is all "no referrer" means/);
+  assert.match(said, /"Sec-Fetch-Site: same-site" \(and "Sec-Fetch-User: \?1" for a link the reader pressed\), because the wallet's host and the main site's are two hosts of one site\./);
+  assert.match(said, /It names no host and no page\./);
+
   // -- This tab, and these links only. The one piece that draws a link back has no target and no rel ... --
   const link = source('src/components/doit/ChapterLink.svelte');
   assert.doesNotMatch(code(link), /target=|rel=/);

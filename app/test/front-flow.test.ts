@@ -36,6 +36,10 @@ test('gate: what is stored decides first, whatever else is true', () => {
       const where = `canStore ${canStore}, stop ${stop}`;
       // Something stored that cannot be used: the shared piece, never a way to make another wallet.
       for (const status of ['unreadable', 'newer', 'broken'] as const) assert.equal(frontGate(status, canStore, stop), 'trouble', `${status}, ${where}`);
+      // A storage this page was not let read: a wallet may be in it. The same piece, which says that the page
+      // cannot tell. Never the screen's own content, and never "this browser refuses to store" alone: that
+      // would leave out that a wallet made before may still be here.
+      assert.equal(frontGate('blocked', canStore, stop), 'trouble', `blocked, ${where}`);
       // A wallet is here: one browser keeps one.
       assert.equal(frontGate('ready', canStore, stop), 'here', where);
     }
@@ -58,8 +62,13 @@ test('gate: with nothing stored, the screen is open unless the browser stores no
 });
 
 test('gate: every status has an answer', () => {
-  const statuses: WalletStatus[] = ['none', 'ready', 'unreadable', 'newer', 'broken'];
+  // Written as an object, so that the compiler refuses a status that is missing here.
+  const all: Record<WalletStatus, true> = { none: true, ready: true, unreadable: true, newer: true, broken: true, blocked: true };
+  const statuses = Object.keys(all) as WalletStatus[];
+  assert.equal(statuses.length, 6);
   for (const status of statuses) assert.ok(typeof frontGate(status, true, null) === 'string', status);
+  // Only a storage that was read and holds nothing lets a wallet be made or brought here.
+  for (const status of statuses) assert.equal(frontGate(status, true, null) === 'open', status === 'none', status);
 });
 
 // -- which wallet is here ---------------------------------------------------------

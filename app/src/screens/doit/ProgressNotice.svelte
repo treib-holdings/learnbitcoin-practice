@@ -6,11 +6,15 @@
   //          tab left open across an update). This version reads nothing of
   //          it, writes nothing and deletes nothing: the one way on is
   //          Reload.
+  //   unread the browser did not let this page read its storage at all.
+  //          That is not "no progress": a note made before may still be
+  //          stored. So the notice says that the page cannot tell, and
+  //          the list under it shows no state for any step.
   //   no     the browser will not store anything for this page, or refused
   //          the last write: progress cannot be kept here.
   //
-  // It draws nothing while progress can be kept. Both notices are there
-  // when the screen opens, so neither is read out as an alert.
+  // It draws nothing while progress can be kept. Each notice is there
+  // when the screen opens, so none is read out as an alert.
 
   import Notice from '../../components/Notice.svelte';
   import ReloadButton from '../../components/wallet/ReloadButton.svelte';
@@ -25,6 +29,10 @@
 
 {#if doit.kept === 'newer'}
   <Notice kind="problem" silent text={t.newer} data-testid="do-newer">
+    <ReloadButton />
+  </Notice>
+{:else if doit.read === 'blocked'}
+  <Notice kind="problem" silent text={t.noRead} data-testid="do-no-read">
     <ReloadButton />
   </Notice>
 {:else if doit.kept === 'no'}

@@ -18,16 +18,20 @@ import {
   answerBlock,
   answerCoins,
   firstOpen,
+  isWalletTrouble,
   judge,
   pickPositions,
   seedWallet,
   stepState,
+  troubleOf,
   verdictOf,
   waitedFor,
   walletFacts,
   wordsPassed,
+  type BlockedReason,
   type PartView,
   type Seen,
+  type WalletTrouble,
   type World,
 } from '../src/lib/doit/judge.ts';
 import { emptyProgress, type StepNote } from '../src/lib/doit/progress.ts';
@@ -41,7 +45,19 @@ const DO: PartView = { state: 'now', txid: null, waiting: null, confirmations: n
 const blocked = (reason: Extract<PartView, { state: 'blocked' }>['reason']): PartView => ({ state: 'blocked', reason });
 const unknown = (reason: Extract<PartView, { state: 'unknown' }>['reason']): PartView => ({ state: 'unknown', reason });
 
-const TROUBLE: WalletStatus[] = ['unreadable', 'newer', 'broken'];
+/**
+ * The wallet's own trouble: every status in which no wallet can be used here, with the reason judge() gives
+ * for it. Something stored that cannot be used is "trouble". A browser the wallet cannot run in is "broken":
+ * nothing was read there and no wallet can have been made, so it is never told as "the stored wallet". A
+ * storage the page was not let read is "unread": whether a wallet is here is not known, so it is never told
+ * as "no wallet".
+ */
+const TROUBLE: [WalletStatus, WalletTrouble][] = [
+  ['unreadable', 'trouble'],
+  ['newer', 'trouble'],
+  ['broken', 'broken'],
+  ['blocked', 'unread'],
+];
 
 /** A world in which `id` is started with its first `done` parts ticked, and is the step followed. */
 function at(id: StepId, done: number, spec: WorldSpec = {}, extra: StepNote = {}, others: Parameters<typeof note>[0] = {}): World {
@@ -61,7 +77,13 @@ const SCAN_FAILED = { chain: chain(null, { error: 'network' as const, retryAt: N
 // -- the rules that hold for every step -----------------------------------------------------
 
 test('a step that was never opened: nothing is judged for it', () => {
-  const worlds = [world(), noWallet(), world({ chain: chain(state([{ tx: 'c1', sats: 100_000 }])), history: [tx({ tx: 'c1', direction: 'received' })] }), world({ status: 'broken', record: null })];
+  const worlds = [
+    world(),
+    noWallet(),
+    world({ chain: chain(state([{ tx: 'c1', sats: 100_000 }])), history: [tx({ tx: 'c1', direction: 'received' })] }),
+    world({ status: 'broken', record: null }),
+    world({ status: 'blocked', record: null }),
+  ];
   for (const id of STEPS) {
     for (const seen of worlds) {
       assert.deepEqual(judge(id, seen), { id, state: 'not-started', parts: STEP_DEFS[id].parts.map((): PartView => LATER), at: null }, id);
@@ -78,7 +100,7 @@ test('a done step shows every part ticked, whatever the wallet is doing now', ()
     // After "Send all": no coin is left. After Remove: no wallet. And every kind of trouble.
     { chain: chain(state()) },
     { status: 'none', record: null },
-    ...TROUBLE.map((status): WorldSpec => ({ status, record: null })),
+    ...TROUBLE.map(([status]): WorldSpec => ({ status, record: null })),
     LOOKING,
     SCAN_FAILED,
     { kept: 'no' },
@@ -121,18 +143,68 @@ test('the state of a step, from its note alone: never opened, under way, done', 
   assert.equal(stepState(started(3, { doneAt: NOW })), 'done');
 });
 
-test('trouble with what is stored for the wallet blocks the open part of every step, whichever part it is', () => {
-  for (const status of TROUBLE) {
+test('the wallet\'s own trouble blocks the open part of every step, whichever part it is, and each kind under its own reason', () => {
+  for (const [status, reason] of TROUBLE) {
     for (const id of STEPS) {
       for (let done = 0; done < partCount(id); done++) {
         const seen = at(id, done, { status, record: null }, { wallet: FP, tx: txid('a1'), sentAt: NOW });
         const view = judge(id, seen);
         assert.equal(view.at, done + 1, `${status} ${id} ${done}`);
-        assert.deepEqual(view.parts[done], blocked('trouble'), `${status} ${id} part ${done + 1}`);
+        assert.deepEqual(view.parts[done], blocked(reason), `${status} ${id} part ${done + 1}`);
         assert.ok(view.parts.every((part) => part.state !== 'now'), 'no part is "now"');
       }
     }
   }
+});
+
+test('a browser that failed the self-test is never "the stored wallet", and a storage the page could not read is never "no wallet"', () => {
+  // Which status is which trouble. Every status has a line, and the two without trouble say so.
+  const all: Record<WalletStatus, WalletTrouble | null> = { none: null, ready: null, unreadable: 'trouble', newer: 'trouble', broken: 'broken', blocked: 'unread' };
+  for (const [status, reason] of Object.entries(all) as [WalletStatus, WalletTrouble | null][]) assert.equal(troubleOf(status), reason, status);
+  // The three reasons that are the wallet's own, and no other.
+  const reasons: Record<BlockedReason, boolean> = {
+    'no-wallet': false,
+    'no-coins': false,
+    'not-spendable-yet': false,
+    'nothing-sent': false,
+    'came-back-with-passkey': false,
+    'another-wallet': false,
+    storage: false,
+    trouble: true,
+    broken: true,
+    unread: true,
+  };
+  for (const [reason, own] of Object.entries(reasons) as [BlockedReason, boolean][]) assert.equal(isWalletTrouble(reason), own, reason);
+
+  for (const id of STEPS) {
+    for (let done = 0; done < partCount(id); done++) {
+      const extra = { wallet: FP, tx: txid('a1'), sentAt: NOW };
+      // The self-test failed. Nothing was read and no wallet can have been made: "trouble" is the reason for a
+      // wallet that IS stored and cannot be used, and the strip would say "the stored wallet cannot be used".
+      const broken = open(id, at(id, done, { status: 'broken', record: null }, extra));
+      assert.deepEqual(broken, blocked('broken'), `${id} part ${done + 1}`);
+      // The storage could not be read. "no-wallet" would have the step say "there is none", and offer to make
+      // one beside a wallet that may still be stored.
+      const unread = open(id, at(id, done, { status: 'blocked', record: null }, extra));
+      assert.deepEqual(unread, blocked('unread'), `${id} part ${done + 1}`);
+      // And the same step with a storage that was read and holds no wallet is another thing altogether.
+      const none = open(id, at(id, done, { status: 'none', record: null }, extra));
+      assert.notDeepEqual(none, unread, `${id} part ${done + 1}`);
+      assert.notDeepEqual(none, broken, `${id} part ${done + 1}`);
+    }
+  }
+  // "Make a practice wallet" is the one part that no wallet does not block: the reader can make one now. Not so
+  // where the page could not look: nothing is made beside a wallet nobody can see.
+  assert.deepEqual(open('hold-some', at('hold-some', 0, { status: 'none', record: null })), DO);
+  assert.deepEqual(open('hold-some', at('hold-some', 0, { status: 'blocked', record: null })), blocked('unread'));
+  // The drill's restore, with nothing here, is "now" (restore from the paper). Not where the page could not look.
+  const drill = { wallet: FP, was: 'words' as const };
+  assert.equal(open('prove-the-backup', at('prove-the-backup', 2, { status: 'none', record: null }, drill))?.state, 'now');
+  assert.deepEqual(open('prove-the-backup', at('prove-the-backup', 2, { status: 'blocked', record: null }, drill)), blocked('unread'));
+  assert.deepEqual(open('prove-the-backup', at('prove-the-backup', 2, { status: 'broken', record: null }, drill)), blocked('broken'));
+  // A done "The seed" names no wallet of this browser in either state: it says nothing of what is here now.
+  const seed = note({ 'the-seed': started(3, { doneAt: NOW, wallet: FP }) });
+  for (const status of ['broken', 'blocked'] as const) assert.equal(seedWallet(world({ note: seed, status, record: null })), 'none', status);
 });
 
 test('facts that are not known yet are "unknown", never "blocked": the page does not say "no coins" while it is still looking', () => {
@@ -610,8 +682,10 @@ test('where progress cannot be written, the parts are shown as the wallet stands
       assert.deepEqual([view.at, view.parts[0]], [1, blocked('storage')], id);
       assert.ok(view.parts.slice(1).every((part) => part.state === 'later'), id);
     }
-    // Trouble with the wallet is said as trouble, not as storage.
-    assert.deepEqual(judge('the-seed', world({ kept, status: 'unreadable', record: null })).parts[0], blocked('trouble'));
+    // Trouble with the wallet is said as trouble, not as storage: each kind under its own reason.
+    for (const [status, reason] of TROUBLE) {
+      assert.deepEqual(judge('the-seed', world({ kept, status, record: null })).parts[0], blocked(reason), status);
+    }
     // No question is open, so no answer is taken.
     assert.equal(answerBlock(world({ kept, chain: funded, history }), '190'), 'not-now');
   }
@@ -749,7 +823,7 @@ test('a part that waits for a payment says "no wallet" before it says "nothing s
   // After "Send another" the note holds no payment. With no wallet here either, the wallet is what is missing first.
   for (const [id, done] of [['pass-it-on', 2], ['waiting-room', 1], ['waiting-room', 2]] as const) {
     assert.deepEqual(open(id, at(id, done, { status: 'none', record: null })), blocked('no-wallet'), id);
-    for (const status of TROUBLE) assert.deepEqual(open(id, at(id, done, { status, record: null })), blocked('trouble'), `${id} ${status}`);
+    for (const [status, reason] of TROUBLE) assert.deepEqual(open(id, at(id, done, { status, record: null })), blocked(reason), `${id} ${status}`);
     // A wallet is here: then it is the payment that is missing.
     assert.deepEqual(open(id, at(id, done, { chain: chain(state([{ tx: 'c1', sats: 50_000 }])) })), blocked('nothing-sent'), id);
   }

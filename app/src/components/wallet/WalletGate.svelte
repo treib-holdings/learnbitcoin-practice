@@ -10,6 +10,9 @@
   //   unreadable  what is stored cannot be read: reload, or remove it
   //   newer       the page is out of date: reload
   //   broken      the self-test failed: use another browser
+  //   blocked     the browser did not let this page read its storage: the
+  //               page cannot tell whether a wallet is here, and says so.
+  //               Never the gate for "none": that one says there is no wallet
   //
   // So no wallet screen ever has to ask whether there is a wallet. A route
   // that needs none (Home, Create, Restore, About, the Sparrow page) is
@@ -67,6 +70,10 @@
   </Page>
 {:else if gate === 'newer'}
   <Page title={t.newerTitle} titleName={t.newerName}>
+    <StoredTrouble />
+  </Page>
+{:else if gate === 'blocked'}
+  <Page title={t.blockedTitle} titleName={t.blockedName}>
     <StoredTrouble />
   </Page>
 {:else}

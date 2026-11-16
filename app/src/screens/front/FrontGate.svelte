@@ -3,8 +3,9 @@
   // made or brought here, chosen by frontGate() in flow.ts:
   //
   //   open        nothing is in the way: the screen's own content, between the tags
-  //   trouble     what is stored cannot be used (unreadable, newer, broken):
-  //               the shared StoredTrouble piece, as the gate of a wallet screen shows it
+  //   trouble     what is stored cannot be used (unreadable, newer, broken),
+  //               or this page was not let look at it (blocked): the shared
+  //               StoredTrouble piece, as the gate of a wallet screen shows it
   //   here        a wallet is in this browser already: which one, and the way into it
   //   arrived     the wallet said one arrived from another tab, and shows none yet: reload
   //   no-storage  this browser refuses to store anything, so nothing is made:

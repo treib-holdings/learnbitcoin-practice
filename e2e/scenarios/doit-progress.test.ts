@@ -33,11 +33,21 @@
 //      when they arrive, and not before
 //   9. in a browser that fails the wallet's self-test the steps keep their
 //      note as in any other, and About says so: its line speaks of the
-//      wallet only, and names the note once one is stored
+//      wallet only, and names the note once one is stored; the strip says
+//      that the wallet cannot run in this browser, and nothing of a stored
+//      wallet
+//  10. what a read dropped from a note (a way back that is not the step's
+//      own chapter, a field this page does not know) is still in the
+//      browser after the read, and leaves it at the next write, whatever
+//      that write is for: also where every started step is done and none
+//      is followed, and no visit changes anything
+//  11. a done step on a later day, with no wallet in the browser: each of
+//      the six cards says what the reader did and saw, in the past tense,
+//      and nothing of what the wallet, the chain or the pot holds now
 //
-// Scenarios 2, 7 and 9 touch nothing of the stand-in (they pay no wallet
-// and make no block) and could run against a real practice network as
-// they are. The other six are local only: they pay the wallet from the
+// Scenarios 2, 7, 9, 10 and 11 touch nothing of the stand-in (they pay no
+// wallet and make no block) and could run against a real practice network
+// as they are. The other six are local only: they pay the wallet from the
 // stand-in and make blocks.
 
 import assert from 'node:assert/strict';
@@ -483,6 +493,9 @@ scenario(
     assert.equal(await page.page.$eval(`li[data-step="hold-some"] ${hook('do-state')}`, (state) => (state.textContent ?? '').trim()), fill(en.stateDone, { date: formatDate(doneAt / 1000, 'en', 'utc') }));
     assert.deepEqual(await page.page.$$eval(hook('do-following'), (marks) => marks.map((mark) => mark.closest('li')?.getAttribute('data-step'))), ['pass-it-on']);
     assert.equal(await page.text('do-forget'), en.forget);
+    // Over a note that was read, the list says what such a note holds.
+    assert.equal(await page.text('do-forget-what'), en.forgetWhat);
+    assert.equal(await countOf(page, 'do-forget-unreadable'), 0);
     const stored = await noteText(page);
     const wallet = await page.stored();
     assert.ok(stored !== null && wallet !== null);
@@ -509,6 +522,9 @@ scenario(
     assert.equal(await noteText(page), stored, 'an answer in the first moment forgets nothing');
     const question = await page.text('do-forget-question');
     assert.ok(question.includes(en.forgetAsk) && question.includes(en.forgetWarn), question);
+    // It speaks of what this site keeps, which is all the button can erase: not of everything in the browser.
+    assert.ok(question.includes('Every tick and every finished step is erased from what this site keeps in this browser.'), question);
+    assert.ok(!/erased from this browser/.test(question), question);
     assert.equal(await page.text('do-forget-confirm'), en.forgetYes);
 
     // -- "Keep it": the question closes, and nothing has changed --
@@ -525,8 +541,11 @@ scenario(
     await page.click('do-forget-confirm');
     await page.waitFor('do-forgotten');
     assert.equal(await page.text('do-forgotten'), en.forgotten);
+    assert.equal(en.forgotten, 'Your "Do it" progress was forgotten. This site keeps none of it now.');
     assert.equal(await page.waitForStatus(en.forgotten), en.forgotten);
+    // And that is so: of all this site keeps in this browser, the wallet's record is what is left.
     assert.deepEqual(await storageKeys(page), ['lbp_wallet_v1']);
+    assert.deepEqual(await page.page.evaluate(() => [sessionStorage.length, document.cookie]), [0, '']);
     assert.equal(await page.stored(), wallet, 'the wallet\'s record is as it was');
     assert.deepEqual(
       await page.page.$$eval(hook('do-state'), (states) => states.map((state) => state.getAttribute('data-state'))),
@@ -837,7 +856,7 @@ scenario(
 );
 
 scenario(
-  'What is stored under the note\'s key and is no note counts as no progress, is left alone by the list and by About, which says that something is stored there that it cannot read, and is replaced when a step is opened; in a note, a field that fails its check is dropped by itself, a step this version does not know is not read, and the rest stands',
+  'What is stored under the note\'s key and is no note counts as no progress, is left alone by the list and by About, which both say that something is stored there that this page cannot read, and is replaced when a step is opened; in a note, a field that fails its check is dropped by itself, a step this version does not know is not read, and the rest stands',
   { timeout: 150_000 },
   async (s) => {
     const NONSENSE = 'not a note {';
@@ -852,6 +871,13 @@ scenario(
     );
     for (const absent of ['do-newer', 'do-no-storage', 'do-following']) assert.equal(await countOf(page, absent), 0, absent);
     assert.equal(await countOf(page, 'do-forget'), 1);
+    // What the list says is kept is said of what is there: something this page cannot read, in About's own
+    // words. The sentence written for a note (which steps were opened and done, which parts are ticked) is not
+    // drawn over a value nobody could read.
+    assert.equal(await page.text('do-forget-unreadable'), en.forgetUnreadable);
+    assert.equal(en.forgetUnreadable, `${about.noteUnreadableNow.replace(/\.$/, '')}. "${en.forget}" erases it.`);
+    assert.equal(await countOf(page, 'do-forget-what'), 0);
+    assert.ok(!(await page.page.evaluate(() => document.body.innerText)).includes('keeps a note of your progress'), 'the note\'s sentence stands over a value that is no note');
     assert.equal(await noteText(page), NONSENSE);
 
     // -- About says what is so: no wallet, and something stored where the note goes that this page cannot
@@ -880,6 +906,13 @@ scenario(
       also: ['Hay algo guardado donde va la nota de tu progreso de "Hazlo", y esta página no puede leerlo.'],
     });
     // Reading About wrote nothing over it either.
+    assert.equal(await noteText(page), NONSENSE);
+    // The list in Spanish says the same of it, and offers the same button.
+    await page.goto('/es/do');
+    await page.waitFor('do-list');
+    assert.equal(await page.text('do-forget-unreadable'), 'Hay algo guardado donde va la nota de tu progreso de "Hazlo", y esta página no puede leerlo. "Olvidar mi progreso" lo borra.');
+    assert.equal(await countOf(page, 'do-forget-what'), 0);
+    assert.equal(await page.text('do-forget'), strings.doit.es.forget);
     assert.equal(await noteText(page), NONSENSE);
     await page.goto('/do');
     await page.waitFor('do-list');
@@ -917,6 +950,9 @@ scenario(
     );
     assert.equal(await countOf(page, 'do-following'), 0);
     assert.equal(await stripOf(page), null);
+    // This one is a note, and was read: the list says what a note holds, and no longer that it cannot read it.
+    assert.equal(await page.text('do-forget-what'), en.forgetWhat);
+    assert.equal(await countOf(page, 'do-forget-unreadable'), 0);
     // The step that was started with one sound tick: that tick stands, and the part after it is the open one.
     await pickStep(page, 'hold-some');
     assert.deepEqual(await partsOf(page), ['ticked', 'blocked', 'later', 'later']);
@@ -951,7 +987,7 @@ scenario(
     await ends(
       s,
       reader,
-      [view('/do'), view('/about'), view('/es/about'), view('/do'), view('/do/the-seed'), view('/do'), view('/do/hold-some'), view('/about'), view('/about')],
+      [view('/do'), view('/about'), view('/es/about'), view('/es/do'), view('/do'), view('/do/the-seed'), view('/do'), view('/do/hold-some'), view('/about'), view('/about')],
       { records: [testRecord()], words: [WORDS], addresses: [testRecord().firstAddress], txids: [] },
       { untouched: NONSENSE },
     );
@@ -1027,7 +1063,7 @@ scenario(
 );
 
 scenario(
-  'In a browser that fails the wallet\'s self-test About speaks of the wallet only: before any step it says that no wallet is read or stored here, and once a step\'s screen has been opened it adds that the note of the progress is kept, in both languages; the wallet\'s record that was stored before is never read, changed or removed, and "Forget my progress" takes the second sentence away again',
+  'In a browser that fails the wallet\'s self-test About speaks of the wallet only: before any step it says that no wallet is read or stored here, and once a step\'s screen has been opened it adds that the note of the progress is kept, in both languages, and the strip says that the wallet cannot run in this browser and nothing of a stored wallet; the wallet\'s record that was stored before is never read, changed or removed, and "Forget my progress" takes the second sentence away again',
   { timeout: 150_000 },
   async (s) => {
     const record = testRecord();
@@ -1101,7 +1137,18 @@ scenario(
     assert.equal(after.says, `${about.keepNowLabel} ${about.keepNowBroken} ${about.noteAlsoNow}`);
     assert.deepEqual(after.also, [about.noteAlsoNow]);
     assert.ok(after.calls.every((call): boolean => call === `getItem ${PROGRESS_KEY}`), after.calls.join(', '));
+    // The strip under the header, on this screen: the step the reader is on, and why it cannot go on. Nothing
+    // was read here and no wallet can have been made, so it says nothing of a stored wallet: it says that the
+    // wallet cannot run in this browser.
+    const strip = await untilStrip(page, 'hold-some', 'need');
+    assert.equal(strip.words, en.stripNeed_broken);
+    assert.equal(strip.words, 'the wallet cannot run in this browser');
+    assert.ok(!/stored wallet/.test(strip.text), strip.text);
     const spanish = await rightNow('/es/about');
+    const tira = await untilStrip(page, 'hold-some', 'need');
+    assert.equal(tira.words, strings.doit.es.stripNeed_broken);
+    assert.equal(tira.words, 'la billetera no funciona en este navegador');
+    assert.ok(!/billetera guardada/.test(tira.text), tira.text);
     assert.deepEqual([spanish.kept, spanish.note], ['broken', 'yes']);
     assert.equal(spanish.says, `${strings.about.es.keepNowLabel} ${strings.about.es.keepNowBroken} ${strings.about.es.noteAlsoNow}`);
     assert.equal(
@@ -1133,5 +1180,148 @@ scenario(
       addresses: [record.firstAddress],
       txids: [],
     });
+  },
+);
+
+scenario(
+  'What a read dropped from the note leaves the browser at the next write, whatever that write is for: under a note of this version that holds two ways back that are not the step\'s own chapter and fields this page does not know, with every started step done and none followed, the list, About and Home read it and write nothing, and the first step screen that is opened, a done one, stores the note again as this page writes it',
+  { timeout: 150_000 },
+  async (s) => {
+    const site = s.stack.config.siteUrl;
+    const at = Date.now() - 3 * 86_400_000;
+    // As a hand or another program might leave it: this page never writes such a note. Two steps done three
+    // days ago, each with a way back that is not its own chapter's page, and fields no version has had.
+    const PLANTED = JSON.stringify({
+      v: 1,
+      following: null,
+      steps: {
+        'hold-some': { started: true, doneAt: at, from: '/u/reader-4f1c9a7e/campaign-77', parts: { 1: true, 2: true, 3: true, 4: true }, memo: 'kept by hand' },
+        'pass-it-on': { started: true, doneAt: at, from: '/newsletter', parts: { 1: true, 2: true, 3: true } },
+      },
+      words: 'never here',
+    });
+    const PLANTED_TEXT = ['campaign-77', 'reader-4f1c9a7e', '/newsletter', 'never here', 'kept by hand', 'memo', 'from'];
+    const reader = await begin(s, '/do', { storage: { [PROGRESS_KEY]: PLANTED } });
+    const { page } = reader;
+
+    // -- The list reads the note: two steps done, none followed. What this page does not know is as if it were
+    //    not there, and no screen is shown it. A look is no change: the stored text is as it was. --
+    await page.waitFor('do-list');
+    assert.deepEqual([await listState(page, 'hold-some'), await listState(page, 'pass-it-on'), await listState(page, 'no-balances')], ['done', 'done', 'not-started']);
+    assert.equal(await countOf(page, 'do-following'), 0);
+    for (const text of PLANTED_TEXT.slice(0, 5)) assert.ok(!(await page.page.evaluate(() => document.documentElement.outerHTML)).includes(text), text);
+    assert.equal(await noteText(page), PLANTED);
+
+    // -- About and Home read it too, and write nothing --
+    await page.goto('/about');
+    await page.waitFor('about-kept-now');
+    assert.equal(await attributeOf(page, 'about-kept-now', 'data-note'), 'yes');
+    assert.equal(await noteText(page), PLANTED);
+    await page.goto('/');
+    await page.waitFor('home-do-link');
+    assert.equal(await stripOf(page), null);
+    assert.equal(await noteText(page), PLANTED);
+
+    // -- A done step's screen is opened. Nothing about the step changes: it was done, and it is not followed.
+    //    But a step's screen hands the note to the one function that writes it, and that function stores the
+    //    note as it was read. The two ways back and the fields this page does not know are out of the browser. --
+    await page.click('home-do-link');
+    await arrivesAt(page, '/do');
+    assert.equal(await noteText(page), PLANTED);
+    await pickStep(page, 'hold-some');
+    await page.waitFor('step-done');
+    // The link back was built from the note as read all along: the step's own chapter, in this page's language.
+    assert.equal(await hrefOf(page, 'step-back'), `${site}/journey/what-bitcoin-actually-is#done=hold-some`);
+    const tidy = await noteText(page);
+    assert.ok(tidy !== null);
+    assert.deepEqual(JSON.parse(tidy), {
+      v: 1,
+      following: null,
+      steps: {
+        'hold-some': { started: true, doneAt: at, parts: { 1: true, 2: true, 3: true, 4: true } },
+        'pass-it-on': { started: true, doneAt: at, parts: { 1: true, 2: true, 3: true } },
+      },
+    });
+    for (const text of PLANTED_TEXT) assert.ok(!tidy.includes(text), `the stored note still holds "${text}"`);
+
+    // -- From here on the stored text is what this page writes, and a visit that changes nothing writes nothing --
+    await reloadStep(page);
+    await page.waitFor('step-done');
+    assert.equal(await noteText(page), tidy);
+    await page.click('step-list');
+    await arrivesAt(page, '/do');
+    await pickStep(page, 'pass-it-on');
+    await page.waitFor('step-done');
+    assert.equal(await hrefOf(page, 'step-back'), `${site}/journey/how-bitcoin-works#done=pass-it-on`);
+    assert.equal(await noteText(page), tidy);
+    // Both steps were done on an earlier visit: nothing here counted either again.
+    assert.deepEqual(stepsCounted(s), {});
+
+    // The end holds the stored note to its closed shape (noteIsPublic): the listed fields and no others, and a
+    // way back that is the step's own chapter or is not there. No wallet was ever in this browser: what must
+    // not show up anywhere is held against the harness's own test wallet.
+    await ends(
+      s,
+      reader,
+      [view('/do'), view('/about'), view('/'), view('/do'), view('/do/hold-some'), view('/do/hold-some'), view('/do'), view('/do/pass-it-on')],
+      { records: [testRecord()], words: [WORDS], addresses: [testRecord().firstAddress], txids: [] },
+    );
+  },
+);
+
+scenario(
+  'A done step on a later day, in a browser that has no wallet any more: each of the six cards says what the reader did and saw, in the past tense, in English and in Spanish, and nothing of what the wallet, the chain or the pot holds now',
+  { timeout: 150_000 },
+  async (s) => {
+    // All six steps, done three days ago. Since then the wallet was removed from this browser, and the practice
+    // chain here has never heard of it: no coin of it, no payment, nothing in the pot from it.
+    const at = Date.now() - 3 * 86_400_000;
+    const stored = noteFor({ following: null, steps: Object.fromEntries(STEPS.map((id) => [id, { started: true as const, doneAt: at }])) });
+    const reader = await begin(s, '/do', { storage: { [PROGRESS_KEY]: stored } });
+    const { page } = reader;
+    await page.waitFor('do-list');
+    assert.deepEqual(await storageKeys(page), [PROGRESS_KEY]);
+    assert.deepEqual(
+      await page.page.$$eval(hook('do-state'), (states) => states.map((state) => state.getAttribute('data-state'))),
+      STEPS.map(() => 'done'),
+    );
+
+    // What each card says, word for word. Each is what happened on the day, so it is as true today.
+    const SAID: Record<(typeof STEPS)[number], string> = {
+      'hold-some':
+        "You got practice coins, and you did not have to take this page's word for it: the explorer showed the same coin in the same block. On Bitcoin it works the same way. Verify, don't trust.",
+      'pass-it-on': 'Your payment got into a block, and the pot took your coins to hand on to a learner who comes after you. The fee was what went in less what came out.',
+      'no-balances':
+        'You counted the coins in your wallet, and opened one of its payments to see what it did to them. A wallet keeps no balance: it holds coins, and its total is what they add up to. A payment uses coins up whole and makes new ones: one for the address paid and, when something is left over, one back to you as change.',
+      'waiting-room':
+        'Your payment reached six confirmations: its own block and five on top. On Bitcoin, undoing a payment that deep means redoing all six blocks faster than the rest of the network adds new ones. That is why six confirmations is the usual line for "settled".',
+      'the-seed': 'You said you wrote your 12 words on paper, and three of them matched. Three right words do not prove the other nine: "Prove the backup" does that.',
+      'prove-the-backup': 'The wallet came back from its 12 words, with its coins. The chain kept them the whole time, and the words only unlocked them: you own keys, not coins.',
+    };
+    // What would be a claim about today: what the reader, the wallet or the pot holds, where a payment is.
+    const NOW = {
+      en: /\byou hold\b|\byour wallet (holds|keeps|has)\b|\bis in a block\b|\bholds your coins\b|\bhas six confirmations\b|\bare on paper\b|\bstill\b|\bnow\b|\btoday\b/i,
+      es: /\btienes monedas\b|\btu billetera (tiene|guarda)\b|\bestá en un bloque\b|\bguarda tus monedas\b|\btiene seis confirmaciones\b|\bestán en papel\b|\btodavía\b|\bahora\b|\bhoy\b/i,
+    };
+    const counted: EventBody[] = [view('/do')];
+    for (const id of STEPS) {
+      for (const lang of ['en', 'es'] as const) {
+        const path = `${lang === 'es' ? '/es' : ''}/do/${id}`;
+        await page.goto(path);
+        await page.waitFor('step-done');
+        counted.push(view(path));
+        const said = await page.text('step-done-text');
+        assert.equal(said, strings.doit[lang][`done_${id}`], `${id} (${lang})`);
+        if (lang === 'en') assert.equal(said, SAID[id], id);
+        assert.doesNotMatch(said, NOW[lang], `${id} (${lang})`);
+        // No wallet is here, and the card does not ask for one: a done step needs nothing.
+        assert.equal(await countOf(page, 'step-need'), 0, `${id} (${lang})`);
+      }
+    }
+    // Nothing was written, and nothing was counted again.
+    assert.equal(await noteText(page), stored);
+    assert.deepEqual(stepsCounted(s), {});
+    // No wallet is in this browser: what must not show up anywhere is held against the harness's own test wallet.
+    await ends(s, reader, counted, { records: [testRecord()], words: [WORDS], addresses: [testRecord().firstAddress], txids: [] });
   },
 );

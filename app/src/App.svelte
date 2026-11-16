@@ -4,7 +4,9 @@
   // A screen that shows a wallet is drawn only when this browser has one it
   // can use. Otherwise the gate stands in its place (WalletGate): no wallet
   // here, a stored wallet that cannot be read, a page that is out of date,
-  // or a browser that failed the self-test.
+  // a browser that failed the self-test, or one that did not let the page
+  // read its storage (the gate then says that it cannot tell whether a
+  // wallet is here, never that there is none).
   //
   // The wallet arrives as a prop and is put in Svelte's context here, once.
   // Every screen and piece then reaches it with useWallet()

@@ -68,9 +68,20 @@ test('"Remove it" and a restore each leave their word, and the screen they lead 
     /\{#if removed && progressKept\(doit\.read\)\}[\s\S]*?<Notice kind="info" text=\{t\.removed\} data-testid="home-removed" \/>\s*<Notice kind="info" text=\{d\.staysAfterRemove\} data-testid="home-progress-stays">[\s\S]*?\{:else if removed\}\s*<Notice kind="info" text=\{t\.removed\} data-testid="home-removed" \/>\s*\{\/if\}\s*<div>\s*<Button variant="primary"[^>]*data-testid="home-create"/,
   );
   const overview = source('screens/Overview.svelte');
-  assert.match(overview, /const restored = takeOutcome\('restored'\);/);
+  assert.match(overview, /const restoredNow = takeOutcome\('restored'\);/);
   assert.match(overview, /if \(restored\) void tick\(\)\.then\(\(\) => announce\(t\.restoredHere\)\);/);
   assert.match(overview, /\{#if restored\}\s*<Notice kind="info" text=\{t\.restoredHere\} data-testid="overview-restored" \/>/);
+  // The Overview's line says what this browser keeps, in the present tense: "This browser now keeps them."
+  // So it is not drawn from the outcome alone, which is read once and never changes while the screen stays
+  // on the page (and a page the browser brings back from its memory stays as it was). It follows the wallet:
+  // the one that was here when the screen opened, by its public key, and still kept with its words.
+  assert.match(overview, /const restoredXpub = wallet\.record\?\.xpub \?\? null;/);
+  assert.match(
+    overview,
+    /let restored = \$derived\(restoredNow && wallet\.record\?\.kind === 'words' && wallet\.record\.xpub === restoredXpub\);/,
+  );
+  // Nothing else on the screen is drawn from the outcome itself.
+  assert.equal(overview.match(/restoredNow/g)?.length, 2, 'taken once, and used once: in the rule above');
 
   // The sentences: a wallet is "removed" from this browser, never "deleted", and its coins stay where they are.
   assert.equal(strings.home.en.removed, 'The wallet was removed from this browser. Its coins stay on the practice network.');

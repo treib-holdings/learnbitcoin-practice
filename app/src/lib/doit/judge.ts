@@ -28,7 +28,7 @@
 import { spendableCoins, type TxView } from '@learnbitcoin/practice-wallet';
 import { parseSats } from '../format.ts';
 import type { Route } from '../router.ts';
-import type { WalletApi, WordsAtResult } from '../wallet-api.ts';
+import type { WalletApi, WalletStatus, WordsAtResult } from '../wallet-api.ts';
 import type { Progress, StepNote } from './progress.ts';
 import { STEP_DEFS, partDef, type Fact, type StepId } from './steps.ts';
 
@@ -95,15 +95,24 @@ export function walletFacts(wallet: World['wallet']): World['wallet'] {
 /**
  * What is missing, for a part the reader cannot do yet.
  *
- *   no-wallet               no practice wallet is in this browser
+ *   no-wallet               no practice wallet is in this browser: its storage was read, and holds none
  *   no-coins                the wallet holds no coin (or none that the part can use)
  *   not-spendable-yet       a coin is here, and can be spent once a block has taken it in
  *   nothing-sent            the part needs a payment of this wallet's own, and there is none
  *   came-back-with-passkey  the wallet returned through its passkey, which proves the passkey and not the paper
  *   another-wallet          the wallet in this browser is not the one the step named
  *   storage                 progress cannot be written here, so nothing more can be ticked
- *   trouble                 what is stored for the wallet cannot be read, was written by a
- *                           newer version of the page, or the page's self-test failed
+ *   trouble                 something is stored for the wallet that cannot be used: it cannot be
+ *                           read, or it was written by a newer version of the page
+ *   broken                  the page's self-test failed: no wallet can run in this browser. Nothing
+ *                           was read and none can have been made, so this is never told as
+ *                           "the stored wallet"
+ *   unread                  the browser did not let this page read its storage: whether a wallet
+ *                           is here is not known. Never told as "no wallet"
+ *
+ * The last three are the wallet's own trouble (WalletTrouble): the step's
+ * screen shows the wallet's piece for them (StoredTrouble), not a sentence
+ * of its own.
  */
 export type BlockedReason =
   | 'no-wallet'
@@ -113,7 +122,38 @@ export type BlockedReason =
   | 'came-back-with-passkey'
   | 'another-wallet'
   | 'storage'
-  | 'trouble';
+  | 'trouble'
+  | 'broken'
+  | 'unread';
+
+/** The reasons that are the wallet's own trouble, whatever the step: what the wallet's own piece speaks for. */
+export type WalletTrouble = Extract<BlockedReason, 'trouble' | 'broken' | 'unread'>;
+
+/** True for a reason that is the wallet's own trouble. */
+export function isWalletTrouble(reason: BlockedReason): reason is WalletTrouble {
+  return reason === 'trouble' || reason === 'broken' || reason === 'unread';
+}
+
+/**
+ * The wallet's own trouble for each status, or null where there is none: a
+ * wallet is here, or the storage was read and holds none. Every status is
+ * named, so one added to the wallet later does not build until it has a
+ * line here.
+ */
+export function troubleOf(status: WalletStatus): WalletTrouble | null {
+  switch (status) {
+    case 'unreadable':
+    case 'newer':
+      return 'trouble';
+    case 'broken':
+      return 'broken';
+    case 'blocked':
+      return 'unread';
+    case 'none':
+    case 'ready':
+      return null;
+  }
+}
 
 /**
  * Why the facts are not known.
@@ -224,10 +264,16 @@ const now = (extra: { txid?: string | null; waiting?: Waiting | null; confirmati
   unlock: extra.unlock ?? false,
 });
 
-/** What stands in the way when a part needs a wallet in this browser, or null when one is here. */
+/**
+ * What stands in the way when a part needs a wallet in this browser, or
+ * null when one is here. "no-wallet" is said only of a storage that was
+ * read: where the page could not look, or the wallet cannot run at all,
+ * the reason is the wallet's own trouble.
+ */
 function noWallet(seen: Seen): Verdict | null {
   const { status, record } = seen.wallet;
-  if (status === 'unreadable' || status === 'newer' || status === 'broken') return blocked('trouble');
+  const trouble = troubleOf(status);
+  if (trouble !== null) return blocked(trouble);
   if (status !== 'ready' || record === null) return blocked('no-wallet');
   return null;
 }
@@ -435,7 +481,8 @@ function verdictOn(fact: Fact, id: StepId, seen: Seen): Verdict {
     }
 
     case 'restored-from-words': {
-      if (status === 'unreadable' || status === 'newer' || status === 'broken') return blocked('trouble');
+      const trouble = troubleOf(status);
+      if (trouble !== null) return blocked(trouble);
       // Nothing here: the one thing to do is restore, from the paper.
       if (status !== 'ready' || record === null) return now();
       if (note?.wallet === undefined || record.fingerprint !== note.wallet) return blocked('another-wallet');
@@ -534,7 +581,7 @@ export function judge(id: StepId, seen: Seen): StepView {
     }
     at = number;
     // No tick can be written here: a part that needs one stops at that, unless the wallet itself is in trouble.
-    const stuck = live && part.kind !== 'state' && !(verdict.is === 'blocked' && verdict.reason === 'trouble');
+    const stuck = live && part.kind !== 'state' && !(verdict.is === 'blocked' && isWalletTrouble(verdict.reason));
     views.push(stuck ? { state: 'blocked', reason: 'storage' } : partView(verdict));
   });
   return { id, state, parts: views, at };
@@ -630,7 +677,8 @@ export function wordsPassed(positions: readonly number[], result: WordsAtResult)
  *
  *   same   yes
  *   other  another wallet is here: the screen says so, and offers the check again for it
- *   none   no wallet is here (or none was noted)
+ *   none   no wallet is known to be here (or none was noted): the screen then says nothing
+ *          of the wallet in this browser, which is right also where the page could not look
  */
 export function seedWallet(seen: Seen): 'same' | 'other' | 'none' {
   const checked = seen.note.steps['the-seed']?.wallet;

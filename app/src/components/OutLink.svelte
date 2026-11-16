@@ -1,9 +1,11 @@
 <script lang="ts">
   // A link that leaves this site: the main site, the explorer, the source
   // code. It opens in a new tab (each click a tab of its own), so the
-  // wallet's tab (and a passkey wallet's unlock) stays as it is, and the
-  // other site is not told where the reader came from. A small arrow marks
-  // it, and a screen reader is told that a new tab opens.
+  // wallet's tab (and a passkey wallet's unlock) stays as it is, and it
+  // sends no referrer: the other site is not sent the address of the page
+  // the reader was on (styles.ts, OUTSIDE, says what a browser still
+  // sends). A small arrow marks it, and a screen reader is told that a new
+  // tab opens.
   //
   //   <OutLink href={url} text={t.chapterLink} />
   //

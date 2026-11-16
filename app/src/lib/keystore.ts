@@ -269,19 +269,28 @@ function storedText(local: Storage): string | null | undefined {
 
 /**
  * The wallet in this browser: its record, null when nothing is stored,
- * "newer" when what is stored says it was written by a later version of
- * this app (a whole number above 1 as its `v`), or "unreadable" when it is
- * anything else that is not a sound version-1 record (damaged, or edited by
- * hand). Never throws and never writes.
+ * "blocked" when the browser will not let this page read its storage at
+ * all, "newer" when what is stored says it was written by a later version
+ * of this app (a whole number above 1 as its `v`), or "unreadable" when it
+ * is anything else that is not a sound version-1 record (damaged, or edited
+ * by hand). Never throws and never writes.
  *
- * The two are kept apart because they end differently. An unreadable record
- * stays as it is until the reader chooses Reload or Remove. A newer record
- * may be a good wallet, met by a tab that was opened before an update: this
- * version never removes it, and the only way out it offers is Reload.
+ * "blocked" is not null. A browser that is told to block a site's data
+ * refuses the page every look at its storage and deletes nothing: a wallet
+ * made before, with its 12 words if it was kept with them, is still on the
+ * disk and is back the moment the block is lifted. So a page that could not
+ * look does not know whether a wallet is here, and must not say that none is.
+ *
+ * "unreadable" and "newer" are kept apart because they end differently. An
+ * unreadable record stays as it is until the reader chooses Reload or
+ * Remove. A newer record may be a good wallet, met by a tab that was opened
+ * before an update: this version never removes it, and the only way out it
+ * offers is Reload.
  */
-export function loadRecord(local: Storage): WalletRecord | null | 'unreadable' | 'newer' {
+export function loadRecord(local: Storage): WalletRecord | null | 'unreadable' | 'newer' | 'blocked' {
   const text = storedText(local);
-  if (text === null || text === undefined) return null;
+  if (text === undefined) return 'blocked';
+  if (text === null) return null;
   let value: unknown;
   try {
     value = JSON.parse(text);
@@ -354,7 +363,7 @@ export function saveRecordIfNone(local: Storage, record: WalletRecord): boolean 
  */
 export function replaceRecord(local: Storage, expectFingerprint: string, record: WalletRecord): boolean {
   const stored = loadRecord(local);
-  if (stored === null || typeof stored === 'string' || stored.fingerprint !== expectFingerprint) return false; // nothing, unreadable or newer
+  if (stored === null || typeof stored === 'string' || stored.fingerprint !== expectFingerprint) return false; // nothing, unreadable, newer or blocked
   return writeRecord(local, record);
 }
 
@@ -375,7 +384,7 @@ function deleteRecord(local: Storage): boolean {
  */
 export function removeWallet(local: Storage, expectFingerprint: string): boolean {
   const stored = loadRecord(local);
-  if (stored === null || typeof stored === 'string' || stored.fingerprint !== expectFingerprint) return false; // nothing, unreadable or newer
+  if (stored === null || typeof stored === 'string' || stored.fingerprint !== expectFingerprint) return false; // nothing, unreadable, newer or blocked
   return deleteRecord(local);
 }
 

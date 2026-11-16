@@ -83,8 +83,10 @@ export const START_COMMANDS: readonly StartCommand[] = [
  *               screen offers Reload and Remove
  *   newer       the page is out of date: reload
  *   broken      the self-test failed: no wallet can be used in this browser
+ *   blocked     the browser did not let this page read its storage: whether
+ *               a wallet is here is not known. Allow site data, and reload
  */
-export type WalletNote = 'none' | 'unreadable' | 'newer' | 'broken';
+export type WalletNote = 'none' | 'unreadable' | 'newer' | 'broken' | 'blocked';
 
 /**
  * What stands in step 5 for a wallet in this state. Null: a wallet is here,
@@ -103,5 +105,7 @@ export function walletNote(status: WalletStatus): WalletNote | null {
       return 'newer';
     case 'broken':
       return 'broken';
+    case 'blocked':
+      return 'blocked';
   }
 }

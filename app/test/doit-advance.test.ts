@@ -85,6 +85,7 @@ test('while no step is started, no change of the world writes anything', () => {
     world({ chain: FUNDED, history: [tx({ tx: 'a1' }), ...RECEIVED], route: { name: 'tx', txid: txid('a1') }, lastSent: paid('a1', true), wordsShown: 4 }),
     noWallet({ route: { name: 'do' } }),
     world({ status: 'unreadable', record: null }),
+    world({ status: 'blocked', record: null }),
   ];
   for (const before of [null, ...worlds]) {
     for (const now of worlds) assert.deepEqual(advance(before, now), { changes: [], waited: {} });
@@ -165,7 +166,8 @@ test('a state ticks on any screen, for every started step, whether or not it is 
 
 test('trouble with the stored wallet, and facts that are not known, tick nothing', () => {
   const begun = note({ 'hold-some': started(0), 'pass-it-on': started(0), 'prove-the-backup': started(2, { wallet: FP, was: 'words' }) }, 'hold-some');
-  for (const spec of [{ status: 'unreadable', record: null }, { status: 'newer', record: null }, { status: 'broken', record: null }] as WorldSpec[]) {
+  // The last of the four: the browser stopped letting the page read its storage. Nothing is known of the wallet then.
+  for (const spec of [{ status: 'unreadable', record: null }, { status: 'newer', record: null }, { status: 'broken', record: null }, { status: 'blocked', record: null }] as WorldSpec[]) {
     assert.deepEqual(changes(world({ note: begun }), world({ ...spec, note: begun })), [], String(spec.status));
   }
   // The first look is still running, or failed: a wallet is here (hold-some part 1), and nothing is known of its coins.
@@ -576,6 +578,9 @@ test('prove-the-backup stays where it is: back through the passkey, another wall
   assert.deepEqual(changes(world({ note: checked, record: record('words', OTHER_FP) }), noWallet({ note: checked })), [], 'another wallet was removed');
   assert.deepEqual(changes(here, world({ note: checked, record: record('words', OTHER_FP) })), [], 'another tab put another wallet in its place');
   assert.deepEqual(changes(here, world({ note: checked, status: 'unreadable', record: null })), [], 'what is stored became unreadable: not a removal');
+  // The browser stopped letting the page read its storage (site data blocked): the wallet is still on the disk.
+  // A page that can no longer see it has not seen it removed.
+  assert.deepEqual(changes(here, world({ note: checked, status: 'blocked', record: null })), [], 'the storage can no longer be read: not a removal');
   assert.deepEqual(changes(null, noWallet({ note: checked })), [], 'a page that loads with no wallet saw nothing removed');
   assert.deepEqual(changes(noWallet({ note: checked }), noWallet({ note: checked })), []);
   // Not while another step is followed, or none.
@@ -635,6 +640,7 @@ test('answered(): the tick of a question or of the reader\'s word, and only whil
     // Not when the wallet has gone, or is in trouble.
     assert.equal(answered(id, noWallet({ note: seen.note })), null, id);
     assert.equal(answered(id, world({ ...spec, status: 'unreadable', record: null, note: seen.note })), null, id);
+    assert.equal(answered(id, world({ ...spec, status: 'blocked', record: null, note: seen.note })), null, id);
   }
   // A part that is not a question: the world ticks those, never the reader.
   for (const id of STEPS) {

@@ -30,6 +30,13 @@
 //   - The pot's line counts payments, not people, and never says whose they
 //     are: the page is given a number, and cannot know that the reader's own
 //     payment is among the ones counted.
+//   - A done step's sentences (done_<step>, and the card under a done
+//     "Prove the backup") are drawn from the step's note on every later
+//     visit, for as long as the note lives: with the wallet removed, the
+//     practice chain started again, the pot's coins handed on. So they say
+//     what the reader did and saw, in the past tense, or what is true of
+//     Bitcoin whatever happens here. None says what the wallet, the chain,
+//     the pot or this browser holds now.
 //
 // The Spanish name of "Do it" is "Hazlo", the term the site's voice notes
 // propose. The Spanish here is a first draft that no native reviewer has
@@ -63,14 +70,27 @@ export const en = {
    */
   forgetWhat:
     "This browser keeps a note of your progress: which steps you have opened and done, which parts are ticked, and what a step needs on its way, such as a wallet fingerprint and a payment it waits for. The About page lists it all. The note itself is never sent to us. Opening a step's screen and finishing a step are counted, as the About page says.",
+  /**
+   * In its place, when what is stored under the note's key is no note this version can read (damaged, or
+   * changed by hand: this page never writes such a value). The sentence above describes a note, and no note was
+   * read. So this one says what About says of the same browser, word for word (noteUnreadableNow in about.ts),
+   * and what the button under it does.
+   */
+  forgetUnreadable:
+    'Something is stored where the note of your "Do it" progress goes, and this page cannot read it. "Forget my progress" erases it.',
   forget: 'Forget my progress',
   forgetAsk: 'Forget your "Do it" progress in this browser?',
+  /**
+   * Of this site, not of the browser: "Forget my progress" erases what this site stores, and cannot reach what
+   * another site keeps in the same browser. (Once the main site's chapters stamp a step as done, that stamp is
+   * LearnBitcoin's own, kept by its pages: one more sentence will be needed here then.)
+   */
   forgetWarn:
-    'Every tick and every finished step is erased from this browser. Your wallet and its coins are not touched, and each step can be done again.',
+    'Every tick and every finished step is erased from what this site keeps in this browser. Your wallet and its coins are not touched, and each step can be done again.',
   forgetYes: 'Forget it',
   forgetNo: 'Keep it',
-  /** Said by the status region, and shown on the list, once the note is gone. */
-  forgotten: 'Your "Do it" progress was forgotten. This browser keeps none of it now.',
+  /** Said by the status region, and shown on the list, once the note is gone. Of this site, as above. */
+  forgotten: 'Your "Do it" progress was forgotten. This site keeps none of it now.',
   forgetRefused:
     'This browser did not let this page erase your progress, so it is still kept here. Allow site data for this page, then try again.',
 
@@ -80,6 +100,13 @@ export const en = {
     'This page is out of date. Your "Do it" progress was saved by a newer version of it, so this version shows none of it and changes none of it. Reload the page to get the newer version.',
   noStorage:
     'This browser refuses to store anything for this page, so your "Do it" progress cannot be kept here. That happens in some private windows, and when site data is blocked. Open this page in an ordinary window, or allow site data, and reload.',
+  /**
+   * The browser did not let this page read its storage. That is not "no progress": a note made before may
+   * still be stored, so the list shows no state for any step under this notice. In the past tense, so that it
+   * stays true until the page looks again.
+   */
+  noRead:
+    'This browser did not let this page read what it may have stored here, so the page cannot tell whether you have "Do it" progress in this browser, and cannot keep any. That happens when site data is blocked. Allow site data for this page, then reload.',
 
   // -- Home's short section, and the Overview's one line --
   homeBody:
@@ -327,18 +354,20 @@ export const en = {
   // -- a step that is done --
   /** {date} is a day, such as "November 15, 2026". */
   doneOn: 'Done on {date}.',
+  // What the reader did and saw, in the past tense (see the top of this file): each is read again on every
+  // later visit, when the wallet may be gone, the chain started again, and the pot's coins handed on.
   'done_hold-some':
-    "You hold practice coins, and you did not have to take this page's word for it: the explorer showed the same coin in the same block. On Bitcoin it works the same way. Verify, don't trust.",
+    "You got practice coins, and you did not have to take this page's word for it: the explorer showed the same coin in the same block. On Bitcoin it works the same way. Verify, don't trust.",
   'done_pass-it-on':
-    'Your payment is in a block, and the pot holds your coins for a learner who comes after you. The fee was what went in less what came out: the payment\'s own screen shows the figures.',
+    'Your payment got into a block, and the pot took your coins to hand on to a learner who comes after you. The fee was what went in less what came out.',
   'done_no-balances':
-    'Your wallet keeps no balance. It holds coins, and its total is what they add up to. A payment uses coins up whole and makes new ones: one for the address paid and, when something is left over, one back to you as change.',
+    'You counted the coins in your wallet, and opened one of its payments to see what it did to them. A wallet keeps no balance: it holds coins, and its total is what they add up to. A payment uses coins up whole and makes new ones: one for the address paid and, when something is left over, one back to you as change.',
   'done_waiting-room':
-    'Your payment has six confirmations: its own block and five on top. To undo it now, someone would have to redo all six faster than the rest of the network adds new ones. That is why six confirmations is the usual line for "settled".',
+    'Your payment reached six confirmations: its own block and five on top. On Bitcoin, undoing a payment that deep means redoing all six blocks faster than the rest of the network adds new ones. That is why six confirmations is the usual line for "settled".',
   'done_the-seed':
-    'You said your 12 words are on paper, and three of them matched. Three right words do not prove the other nine: "Prove the backup" does that.',
+    'You said you wrote your 12 words on paper, and three of them matched. Three right words do not prove the other nine: "Prove the backup" does that.',
   'done_prove-the-backup':
-    'The wallet came back from its 12 words, with its coins. The chain kept them the whole time, and the words only unlock them: you own keys, not coins.',
+    'The wallet came back from its 12 words, with its coins. The chain kept them the whole time, and the words only unlocked them: you own keys, not coins.',
   /**
    * Under a done "Pass it on": how many payments, never how many people, and never whose. The count is the
    * pot's own, of the chain as it stands, and the Worker may hand out one that is a few seconds old. A done
@@ -360,10 +389,15 @@ export const en = {
    * then: the wallet kept with its words, the wallet back behind its passkey, no wallet, another wallet. So it
    * says what the restore did, in the past tense, and names About for what is kept now. The button is quoted
    * as Home draws it (strings/wallet.ts, openButton).
+   *
+   * Of the passkey it promises nothing. The passkey lives in the reader's password manager, where it can have
+   * been deleted or lost since, and this page cannot know. So the card says what the restore did not do (it
+   * did not change the passkey), what holds if the reader still has it, and what brings the wallet back if
+   * it fails: the 12 words, as Settings says before a removal.
    */
   changedTitle: 'What the restore changed',
   changed:
-    'When you restored the wallet from its 12 words, this browser began to keep it with those words, not encrypted, and stopped asking for the passkey. The passkey still opens the same wallet. About says what this browser keeps right now. To go back to the passkey for that wallet, remove the wallet that is in this browser, if there is one, and choose "Open with my passkey".',
+    'When you restored the wallet from its 12 words, this browser began to keep it with those words, not encrypted, and stopped asking for the passkey. The restore did not change the passkey: if you still have it, it opens the same wallet, and if it ever fails, the 12 words bring the wallet back. About says what this browser keeps right now. To go back to the passkey for that wallet, remove the wallet that is in this browser, if there is one, and choose "Open with my passkey".',
   sparrow: 'One more proof: open the same wallet in Sparrow',
   /** {step} is the next step's title. Only within the same chapter. */
   next: 'Next step: {step}',
@@ -386,7 +420,12 @@ export const en = {
   'stripNeed_came-back-with-passkey': 'first: remove it, and restore from the 12 words',
   'stripNeed_another-wallet': 'another wallet is here',
   stripNeed_storage: 'progress cannot be kept here',
+  /** Something is stored for the wallet that cannot be read, or that a newer version of the page wrote. */
   stripNeed_trouble: 'the stored wallet cannot be used',
+  /** The self-test failed. Nothing was read and no wallet can have been made here: never "the stored wallet". */
+  stripNeed_broken: 'the wallet cannot run in this browser',
+  /** The browser did not let this page read its storage: whether a wallet is here is not known. Never "first: a practice wallet". */
+  stripNeed_unread: 'this page could not look for a wallet here',
   stripUnknown: 'looking up your coins...',
   stripFailed: 'your coins could not be looked up',
   /** {ago} is how long ago, such as "12 seconds ago". */
@@ -469,13 +508,15 @@ export const es: Record<keyof typeof en, string> = {
   forgetTitle: 'Tu progreso',
   forgetWhat:
     'Este navegador guarda una nota de tu progreso: qué pasos abriste y cuáles terminaste, qué partes están marcadas, y lo que un paso necesita por el camino, como una huella de la billetera y un pago que espera. La página Acerca de lo enumera todo. La nota en sí nunca se nos envía. Abrir la pantalla de un paso y terminar un paso se cuentan, como dice la página Acerca de.',
+  forgetUnreadable:
+    'Hay algo guardado donde va la nota de tu progreso de "Hazlo", y esta página no puede leerlo. "Olvidar mi progreso" lo borra.',
   forget: 'Olvidar mi progreso',
   forgetAsk: '¿Olvidar tu progreso de "Hazlo" en este navegador?',
   forgetWarn:
-    'Cada marca y cada paso terminado se borra de este navegador. Tu billetera y sus monedas no se tocan, y cada paso se puede volver a hacer.',
+    'Cada marca y cada paso terminado se borra de lo que este sitio guarda en este navegador. Tu billetera y sus monedas no se tocan, y cada paso se puede volver a hacer.',
   forgetYes: 'Olvidarlo',
   forgetNo: 'Conservarlo',
-  forgotten: 'Tu progreso de "Hazlo" se olvidó. Este navegador ya no guarda nada de él.',
+  forgotten: 'Tu progreso de "Hazlo" se olvidó. Este sitio ya no guarda nada de él.',
   forgetRefused:
     'Este navegador no dejó que esta página borrara tu progreso, así que sigue guardado aquí. Permite los datos del sitio para esta página y vuelve a intentarlo.',
 
@@ -483,6 +524,8 @@ export const es: Record<keyof typeof en, string> = {
     'Esta página está desactualizada. Tu progreso de "Hazlo" lo guardó una versión más nueva de ella, así que esta versión no muestra nada de él ni lo cambia. Recarga la página para tener la versión más nueva.',
   noStorage:
     'Este navegador se niega a guardar cualquier cosa de esta página, así que tu progreso de "Hazlo" no se puede conservar aquí. Pasa en algunas ventanas privadas, y cuando los datos del sitio están bloqueados. Abre esta página en una ventana normal, o permite los datos del sitio, y recarga.',
+  noRead:
+    'Este navegador no dejó que esta página leyera lo que pueda tener guardado aquí, así que la página no puede saber si tienes progreso de "Hazlo" en este navegador, y tampoco puede guardarlo. Pasa cuando los datos del sitio están bloqueados. Permite los datos del sitio para esta página y recarga.',
 
   homeBody:
     'Pasos cortos que acompañan a los capítulos del Recorrido, cada uno hecho en tu propia billetera de práctica y comprobado contra la cadena de práctica.',
@@ -688,17 +731,17 @@ export const es: Record<keyof typeof en, string> = {
 
   doneOn: 'Hecho el {date}.',
   'done_hold-some':
-    'Tienes monedas de práctica, y no tuviste que creerle a esta página: el explorador mostró la misma moneda en el mismo bloque. En Bitcoin funciona igual. Verifica, no confíes.',
+    'Recibiste monedas de práctica, y no tuviste que creerle a esta página: el explorador mostró la misma moneda en el mismo bloque. En Bitcoin funciona igual. Verifica, no confíes.',
   'done_pass-it-on':
-    'Tu pago está en un bloque, y el fondo común guarda tus monedas para alguien que viene después de ti. La comisión fue lo que entró menos lo que salió: la pantalla del pago muestra las cifras.',
+    'Tu pago entró en un bloque, y el fondo común recibió tus monedas para pasarlas a alguien que viene después de ti. La comisión fue lo que entró menos lo que salió.',
   'done_no-balances':
-    'Tu billetera no lleva ningún saldo. Tiene monedas, y su total es lo que suman. Un pago gasta monedas enteras y crea monedas nuevas: una para la dirección de destino y, cuando sobra algo, otra de vuelta para ti como cambio.',
+    'Contaste las monedas de tu billetera, y abriste uno de sus pagos para ver qué hizo con ellas. Una billetera no lleva ningún saldo: tiene monedas, y su total es lo que suman. Un pago gasta monedas enteras y crea monedas nuevas: una para la dirección de destino y, cuando sobra algo, otra de vuelta para ti como cambio.',
   'done_waiting-room':
-    'Tu pago tiene seis confirmaciones: su propio bloque y cinco encima. Para deshacerlo ahora, alguien tendría que rehacer los seis más rápido de lo que el resto de la red agrega bloques nuevos. Por eso seis confirmaciones son la línea habitual de "liquidado".',
+    'Tu pago llegó a seis confirmaciones: su propio bloque y cinco encima. En Bitcoin, deshacer un pago a esa profundidad exige rehacer los seis bloques más rápido de lo que el resto de la red agrega bloques nuevos. Por eso seis confirmaciones son la línea habitual de "liquidado".',
   'done_the-seed':
-    'Dijiste que tus 12 palabras están en papel, y tres de ellas coincidieron. Tres palabras correctas no comprueban las otras nueve: eso lo hace "Comprueba el respaldo".',
+    'Dijiste que escribiste tus 12 palabras en papel, y tres de ellas coincidieron. Tres palabras correctas no comprueban las otras nueve: eso lo hace "Comprueba el respaldo".',
   'done_prove-the-backup':
-    'La billetera volvió desde sus 12 palabras, con sus monedas. La cadena las conservó todo el tiempo, y las palabras solo las desbloquean: tienes claves, no monedas.',
+    'La billetera volvió desde sus 12 palabras, con sus monedas. La cadena las conservó todo el tiempo, y las palabras solo las desbloquearon: tienes claves, no monedas.',
   potCount: 'Hasta ahora se han pasado {count} pagos al fondo común.',
   potCountOne: 'Hasta ahora se ha pasado un pago al fondo común.',
   seedChecked: 'Las tres palabras se comprobaron para la billetera con la huella de la billetera {fingerprint}.',
@@ -707,7 +750,7 @@ export const es: Record<keyof typeof en, string> = {
   seedRechecked: 'Comprobado. Las tres palabras quedan comprobadas para la billetera que está aquí.',
   changedTitle: 'Lo que cambió con la restauración',
   changed:
-    'Cuando restauraste la billetera desde sus 12 palabras, este navegador empezó a guardarla con esas palabras, sin cifrar, y dejó de pedir la llave de acceso (passkey). La llave de acceso sigue abriendo la misma billetera. La página Acerca de dice qué guarda este navegador ahora mismo. Para volver a la llave de acceso con esa billetera, quita la billetera que haya en este navegador, si hay alguna, y elige "Abrir con mi llave de acceso (passkey)".',
+    'Cuando restauraste la billetera desde sus 12 palabras, este navegador empezó a guardarla con esas palabras, sin cifrar, y dejó de pedir la llave de acceso (passkey). La restauración no cambió la llave de acceso: si todavía la tienes, abre la misma billetera, y si alguna vez falla, las 12 palabras recuperan la billetera. La página Acerca de dice qué guarda este navegador ahora mismo. Para volver a la llave de acceso con esa billetera, quita la billetera que haya en este navegador, si hay alguna, y elige "Abrir con mi llave de acceso (passkey)".',
   sparrow: 'Una comprobación más: abre la misma billetera en Sparrow',
   next: 'Siguiente paso: {step}',
 
@@ -726,6 +769,8 @@ export const es: Record<keyof typeof en, string> = {
   'stripNeed_another-wallet': 'aquí hay otra billetera',
   stripNeed_storage: 'el progreso no se puede guardar aquí',
   stripNeed_trouble: 'la billetera guardada no se puede usar',
+  stripNeed_broken: 'la billetera no funciona en este navegador',
+  stripNeed_unread: 'esta página no pudo buscar una billetera aquí',
   stripUnknown: 'buscando tus monedas...',
   stripFailed: 'no se pudieron buscar tus monedas',
   stripWaiting: 'esperando un bloque, se envió {ago}',

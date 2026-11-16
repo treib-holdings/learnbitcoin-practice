@@ -33,9 +33,11 @@
   //                that can never make a wallet, and the other way on
   //
   // Before any of that the screen looks at what this browser holds. A
-  // wallet that is here already, something stored that cannot be read, and
-  // a browser that refuses to store anything each stand in the screen's
-  // place, so that nothing is made that could not be kept.
+  // wallet that is here already, something stored that cannot be read, a
+  // storage the page was not let look into (a wallet may be in it) and a
+  // browser that refuses to store anything each stand in the screen's
+  // place, so that nothing is made that could not be kept, and nothing
+  // beside a wallet nobody can see.
   //
   // While a passkey prompt is open, and while a wallet is being made,
   // <main> is marked busy (busyWhile).

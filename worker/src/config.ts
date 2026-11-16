@@ -3,6 +3,13 @@
 // The settings are the "vars" in wrangler.jsonc. Every one of them reaches
 // the Worker as text, so the three numbers are turned into numbers here, once,
 // and the app never has to wonder whether a port is 50002 or "50002".
+//
+// Three of them switch something on or off: the faucet (a site key, or
+// none), the counting of events (a site to count them under, or none) and
+// the pot's counts ("on", or anything else). What the app is told about
+// each is worked out here, from the setting alone, and the Worker itself
+// goes by that same answer (index.ts, handler.ts). No request has a say
+// in it.
 
 import type { AppConfig } from '@learnbitcoin/practice-contract';
 
@@ -20,6 +27,8 @@ export interface ConfigVars {
   PASSKEY_HOST: string;
   FAUCET_SATS: string | number;
   BLOCK_SECONDS: string | number;
+  /** "on": the pot's counts can be had. Any other value, and a setting that is missing: they cannot. */
+  POT_COUNTS: string;
 }
 
 /**
@@ -40,7 +49,24 @@ export function configFromEnv(vars: ConfigVars): AppConfig {
     faucetSats: whole('FAUCET_SATS', vars.FAUCET_SATS, Number.MAX_SAFE_INTEGER),
     blockSeconds: whole('BLOCK_SECONDS', vars.BLOCK_SECONDS, 86_400),
     events: text(vars.PLAUSIBLE_DOMAIN) !== '',
+    potCounts: switchedOn(vars.POT_COUNTS),
   };
+}
+
+/**
+ * Whether the pot's counts are switched on: only when the setting is the
+ * word "on", exactly. Everything else is off: "off", an empty or a missing
+ * setting, a value that is not text, and every other spelling ("ON", " on",
+ * "true", "yes", "1").
+ *
+ * The other settings are trimmed before they are read. This one is not, on
+ * purpose. Switched on, it opens a way from the public site to the
+ * practice network (handler.ts, pot-stats.ts), and off is how the Worker
+ * ships: so it takes one word, and a value that only looks like that word
+ * leaves the way shut.
+ */
+function switchedOn(value: unknown): boolean {
+  return value === 'on';
 }
 
 function text(value: unknown): string {

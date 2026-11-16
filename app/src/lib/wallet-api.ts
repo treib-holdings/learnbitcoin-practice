@@ -30,7 +30,8 @@ import type { Route } from './router.ts';
 // -- what is here ---------------------------------------------------------------
 
 /**
- * none        this browser has no practice wallet
+ * none        this browser has no practice wallet: its storage was read,
+ *             and holds none
  * ready       a wallet is here (it may be locked: see `unlocked`)
  * unreadable  something is stored under the wallet's key but cannot be read;
  *             nothing is overwritten until the reader chooses Remove
@@ -39,8 +40,15 @@ import type { Route } from './router.ts';
  *             this page never removes it: the one way out is Reload
  * broken      the self-test failed: this browser derives wrong keys, so no
  *             wallet may be made, opened or restored
+ * blocked     the browser did not let this page read its storage (site data
+ *             is blocked, say). Whether a wallet is kept here is NOT KNOWN:
+ *             a browser that blocks a site's data deletes none of it, so a
+ *             wallet made before may still be stored, with its 12 words. No
+ *             screen may say "no wallet" of this state. Nothing can be
+ *             made, opened, restored or removed until the page can read
+ *             again: the way out is to allow site data, and Reload
  */
-export type WalletStatus = 'none' | 'ready' | 'unreadable' | 'newer' | 'broken';
+export type WalletStatus = 'none' | 'ready' | 'unreadable' | 'newer' | 'broken' | 'blocked';
 
 /**
  * The stored record without the 12 words. A record that still holds its words
@@ -456,7 +464,7 @@ export interface WalletApi {
    * Deletes this wallet's record from this browser and drops its keys. Other stored
    * data is left alone. With status "unreadable" it deletes what cannot be read.
    * "gone": the stored wallet is no longer the one this page loaded (another tab),
-   * or status is "newer" or "none"; nothing was deleted.
+   * or status is "newer", "none" or "blocked"; nothing was deleted.
    */
   removeWallet(): 'removed' | 'gone';
   /** The wallet's public descriptors (receive and change), for Settings and the Sparrow page. Null with no wallet. */

@@ -281,7 +281,12 @@ export class StandIn implements WalletApi {
   // it only says "the faucet is open". The bot check is never run here
   // (askFaucet never asks for a token), so a screen that waits for the
   // wallet to ask loads no outside script in the gallery.
-  config = $state.raw<AppConfig>({ ...DEFAULT_CONFIG, turnstileSiteKey: 'stand-in', events: false });
+  //
+  // The pot's counts are switched on here, so that the gallery can show
+  // the line under a done "Pass it on" (potStats() below answers it). The
+  // deployed Worker ships with them off: that page then looks as it does
+  // here with potStats=unavailable, and asks nothing.
+  config = $state.raw<AppConfig>({ ...DEFAULT_CONFIG, turnstileSiteKey: 'stand-in', events: false, potCounts: true });
   // As if the Worker had answered: the settings above are "this deployment's".
   settings = $state<SettingsState>('loaded');
   passkeyOffered = $state<boolean | null>(true);

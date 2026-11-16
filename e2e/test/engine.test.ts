@@ -76,6 +76,8 @@ const LOCAL_VARS: ConfigVars = {
   PASSKEY_HOST: 'localhost',
   FAUCET_SATS: String(FAUCET_SATS),
   BLOCK_SECONDS: '10',
+  // As shipped. Nothing in this file looks at the pot's counts.
+  POT_COUNTS: 'off',
 };
 
 /** A fetch that hands each request to the Worker's handler, dressed as one of the app's own pages dresses it. */

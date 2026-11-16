@@ -16,11 +16,21 @@
   // the question before a wallet is removed, the question must be seen
   // before it can be answered: opening it brings the whole of it on screen,
   // and neither answer takes a press in the first moment after it opened.
+  // The line above the button says what is stored. For a note, what a note
+  // holds. For a stored value that is no note this version can read, that
+  // something is stored there which the page cannot read, in the words
+  // About uses for it: the sentence written for a note would describe what
+  // nobody has read.
   //
   // Under a note that a newer version of this page wrote, the list shows
   // the six steps without states and without "Forget my progress": this
   // version reads nothing of that note and deletes nothing. The notice at
   // the top says so, and offers Reload.
+  //
+  // The same where the browser did not let this page read its storage: no
+  // states (a step shown as "Not started" would be said of a note nobody
+  // could look for, and one made before may still be stored), no "Forget my
+  // progress", and the notice at the top says that the page cannot tell.
 
   import { tick } from 'svelte';
   import Actions from '../components/Actions.svelte';
@@ -49,8 +59,11 @@
   let lang = $derived(router.lang);
   let t = $derived(strings.doit[lang]);
 
-  /** Under a newer version's note the steps are listed without states: this version has read none. */
-  let stated = $derived(doit.kept !== 'newer');
+  /**
+   * Under a newer version's note the steps are listed without states: this version has read none. And where
+   * the browser did not let this page read its storage: nobody knows then which steps were started or done.
+   */
+  let stated = $derived(doit.kept !== 'newer' && doit.read !== 'blocked');
 
   /** Something is stored that this version may erase: a note, or something unreadable in its place. */
   let canForget = $derived(stated && (doit.read === 'kept' || doit.read === 'unreadable'));
@@ -120,9 +133,11 @@
     focusHeading();
   }
 
-  // A step opened in another tab after the note was forgotten here starts a new one: the line that says "none" must go.
+  // "None of it" is true only while nothing is stored where the note goes. A step opened in another tab after
+  // the note was forgotten here starts a new one, and another tab can leave anything else under the key: the
+  // line goes as soon as the storage holds something again, or can no longer be read.
   $effect(() => {
-    if (doit.read === 'kept') forgotten = false;
+    if (doit.read !== 'none') forgotten = false;
   });
 
   const STEP_LINK = `rounded-sm text-lg font-semibold text-ink-800 underline decoration-ink-300 underline-offset-4 hover:text-orange-600 hover:decoration-orange-400 ${FOCUS}`;
@@ -179,7 +194,12 @@
   {#if canForget}
     <Section title={t.forgetTitle}>
       <div bind:this={root} class="space-y-4">
-        <p class="text-pretty leading-relaxed text-ink-700">{t.forgetWhat}</p>
+        {#if doit.read === 'unreadable'}
+          <!-- Something is stored that is no note this version can read: said as About says it, and what the button does. -->
+          <p class="text-pretty leading-relaxed text-ink-700" data-testid="do-forget-unreadable">{t.forgetUnreadable}</p>
+        {:else}
+          <p class="text-pretty leading-relaxed text-ink-700" data-testid="do-forget-what">{t.forgetWhat}</p>
+        {/if}
         {#if refused}
           <Notice kind="problem" text={t.forgetRefused} data-testid="do-forget-refused" />
         {/if}

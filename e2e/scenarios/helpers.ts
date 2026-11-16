@@ -33,14 +33,24 @@
 //   - page.waitForStatus() also hears what the status region said before the
 //     call. Before a step whose message can be the same words as an earlier
 //     one, call page.forgetStatus().
-//   - The Worker keeps the pot's counts for 15 seconds, here as when it is
-//     deployed (worker/src/pot-stats.ts). The first look at them in a
-//     scenario is the network's answer of that moment. A look within the 15
-//     seconds after it is given the same answer, whatever has happened on
-//     the network since, and with the network down too. A scenario that
-//     needs the Worker to ask again says that the time has passed:
-//     s.stack.advanceClock(POT_STATS_KEEP_MS), with the constant from the
-//     Worker's package. Nothing switches the keeping off.
+//   - The pot's counts are switched off, here as in the Worker that is
+//     deployed (POT_COUNTS in worker/wrangler.jsonc): a done "Pass it on"
+//     shows no count line, its page asks for none, and the Worker does not
+//     know the path. A scenario that reads the count line switches them on
+//     in its own settings: `stack: { vars: { POT_COUNTS: 'on' } }` in the
+//     scenario's options, as doit-to-the-pot.test.ts does.
+//   - Where they are on, the Worker keeps the pot's counts for 15 seconds,
+//     here as when it is deployed (worker/src/pot-stats.ts). The first look
+//     at them in a scenario is the network's answer of that moment. A look
+//     within the 15 seconds after it is given the same answer, whatever has
+//     happened on the network since, and with the network down too. A
+//     scenario that needs the Worker to ask again says that the time has
+//     passed: s.stack.advanceClock(POT_STATS_KEEP_MS), with the constant
+//     from the Worker's package. And after a question that failed, the
+//     Worker asks nobody for 5 seconds: a scenario that brings the network
+//     back and wants the count on the next page says that this time has
+//     passed too, s.stack.advanceClock(POT_STATS_PAUSE_MS). Nothing
+//     switches the keeping or the pause off.
 //   - The main site is no part of a scenario's world. A link to it names a
 //     host that the pages may not reach, and a page that follows one fails
 //     its scenario (a request to another host). A scenario that has to
@@ -48,6 +58,13 @@
 //     its address to the Worker as SITE_URL (`stack: { vars }` in the
 //     scenario's options) and lets its pages reach it (`allow`), as
 //     doit-chapter.test.ts does.
+//   - The pages of a scenario share one Chrome with the other scenarios of
+//     their file, each in a context of its own that is gone with the page.
+//     A scenario about what a browser keeps when it is closed and opened
+//     again, or about a setting of the browser itself (site data blocked),
+//     starts a Chrome of its own on a profile folder it names: s.chromeOn().
+//     Its pages are watched, and checked at the scenario's end, like any
+//     other.
 //   - Every file in this folder is a scenario file (*.test.ts) or a helper
 //     (helpers.ts, or a name ending in helpers.ts). Under any other name a
 //     file of scenarios would never be run, and nothing would say so: the
@@ -76,7 +93,7 @@ import type { StandInCall } from '../src/fake-turnstile.ts';
 import { serve, type LocalServer } from '../src/serve.ts';
 import { DUMMY_TOKEN, startStack, type RealOrigin, type Stack, type StackOptions } from '../src/stack.ts';
 
-export { FUNDED_COINS, OTHER_WORDS, TEST_MADE_AT, TEST_WORDS, freshRecord, fundTestWallet, testRecord } from '../src/browser.ts';
+export { FUNDED_COINS, OTHER_WORDS, TEST_MADE_AT, TEST_WORDS, freshRecord, fundTestWallet, setSiteData, testRecord } from '../src/browser.ts';
 export type { OpenOptions, OpenedPage, Passkey, PasskeyKind } from '../src/browser.ts';
 export { DUMMY_TOKEN };
 
@@ -270,12 +287,30 @@ export interface ScenarioOptions {
   timeout?: number;
 }
 
+/** A Chrome of a scenario's own, on a profile folder that outlives it (Scenario.chromeOn). */
+export interface OwnChrome {
+  /**
+   * Opens a path of the app in a page of this Chrome's own context, where
+   * what the page stores is written to the profile folder. Every page
+   * opened here shares that storage, as the tabs of one browser do.
+   */
+  open(path?: string, options?: Omit<OpenOptions, 'path' | 'context'>): Promise<OpenedPage>;
+  /**
+   * Closes this Chrome, as a reader closes the browser. What its pages
+   * stored stays in the profile folder. Until this has ended, nothing else
+   * may use the folder (setSiteData, a second Chrome). Left open, it is
+   * closed when the scenario ends.
+   */
+  close(): Promise<void>;
+}
+
 export interface Scenario {
   /** The app's address in this scenario: http://localhost:<port>. */
   url: string;
   /**
    * The Worker's side: its recorders (`events`, `lines`, `botChecks`), `over` to make a limiter refuse, the
-   * config, and `advanceClock` to let time pass for the Worker (it keeps the pot's counts for 15 seconds).
+   * config, and `advanceClock` to let time pass for the Worker (where the pot's counts are switched on, it keeps
+   * them for 15 seconds, and asks nobody for 5 seconds after a question that failed).
    */
   stack: Stack;
   /** The practice network, with the calls that work on the stand-in and on a real one alike. */
@@ -294,6 +329,24 @@ export interface Scenario {
    * the reader's browser could do.
    */
   openElsewhere(): Promise<OpenedPage>;
+  /**
+   * Starts another site (http://elsewhere.test:<port>), where every path
+   * answers one empty page, and gives its address. For a reader who leaves
+   * the app in the same tab and comes back: the page that goes there is
+   * opened with `allow: [address]`. The site is closed when the scenario
+   * ends.
+   */
+  elsewhere(): Promise<string>;
+  /**
+   * Starts a Chrome of this scenario's own on `profile`, a folder the
+   * scenario names, and removes when it is done with it. For what a browser
+   * keeps when it is closed and opened again, and for a setting of the
+   * browser itself: close it, change the setting (setSiteData), and start
+   * another on the same folder. Its pages are watched like the pages of
+   * s.open(), and what they recorded is checked at the scenario's end, also
+   * for a Chrome that was closed long before.
+   */
+  chromeOn(profile: string): Promise<OwnChrome>;
   /**
    * Says that the Worker is meant to log this fault in this scenario: the
    * scenario takes the practice network down, say ("origin_down"). A fault
@@ -379,6 +432,31 @@ export function scenario(
           const page = await openPage(browser, elsewhere.url, { allow: [url] });
           pages.push(page);
           return page;
+        },
+        elsewhere: async () => {
+          const elsewhere = await startElsewhere();
+          closers.push(elsewhere.close);
+          return elsewhere.url;
+        },
+        chromeOn: async (profile) => {
+          const own = await launchChrome({ profile });
+          let closed = false;
+          const close = async (): Promise<void> => {
+            if (closed) return;
+            closed = true;
+            await own.close();
+          };
+          // Should the scenario end with it open: closed before the servers are.
+          closers.push(close);
+          return {
+            open: async (path = '/', openOptions = {}) => {
+              // In Chrome's own context, not one made for the page: only that one is written to the profile.
+              const page = await openPage(own, url, { ...openOptions, path, context: own.browser.defaultBrowserContext() });
+              pages.push(page);
+              return page;
+            },
+            close,
+          };
         },
         expectFault: (fault) => {
           if ((fault as Fault) === 'handler') throw new Error('expectFault: a handler that throws is never meant to happen');

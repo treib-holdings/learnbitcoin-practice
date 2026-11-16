@@ -35,7 +35,8 @@ export type Stop = 'exists' | 'no-storage' | 'reload';
 /**
  * What Create and Restore show:
  *   open        nothing is in the way: the screen's own content
- *   trouble     what is stored cannot be used (unreadable, newer, broken): the shared StoredTrouble piece
+ *   trouble     what is stored cannot be used (unreadable, newer, broken), or this page was not
+ *               let look at what is stored (blocked): the shared StoredTrouble piece
  *   here        a wallet is in this browser already
  *   arrived     the wallet answered "exists" and still shows none: reload to see it
  *   no-storage  this browser refuses to store anything: say so and stop
@@ -45,14 +46,17 @@ export type Gate = 'open' | 'trouble' | 'here' | 'arrived' | 'no-storage' | 'rel
 
 /**
  * Which of them it is. What is stored comes first: a wallet that is here,
- * or something that cannot be read, decides whatever else is true. `stop`
- * is how the screen's last action ended, when that stopped the screen.
+ * or something that cannot be read, decides whatever else is true. So does
+ * a storage the page was not let look into: a wallet may be in it, and
+ * nothing is made beside a wallet nobody can see. `stop` is how the
+ * screen's last action ended, when that stopped the screen.
  */
 export function frontGate(status: WalletStatus, canStore: boolean, stop: Stop | null): Gate {
   switch (status) {
     case 'unreadable':
     case 'newer':
     case 'broken':
+    case 'blocked':
       return 'trouble';
     case 'ready':
       return 'here';

@@ -735,7 +735,7 @@ const NO_WAY_BACK: unknown[] = [
   // Nothing, and letters that are not plain.
   '',
   '/café',
-  '/‮journey',
+  '/\u202ejourney',
   // Too long for anything.
   `/${'a'.repeat(200)}`,
   `/${'a/'.repeat(150)}`,
@@ -957,7 +957,7 @@ test('the way back, walked from the address to the link: from the English chapte
   }
 });
 
-test('a stored note that names any other page loses that field when it is read, and no write puts it back', () => {
+test('a stored note that names any other page loses that field when it is read, the next write of any kind takes it out of the storage, and no write puts it back', () => {
   const storage = new MemoryStorage();
   // As a hand, another program or an earlier build of this page might have left it: free text, and another step's chapter.
   const planted = {
@@ -990,10 +990,20 @@ test('a stored note that names any other page loses that field when it is read, 
   assert.equal(chapterLink(SITE, 'waiting-room', 'es', read.progress.steps['waiting-room']), `${SITE}/es/recorrido/como-funciona-bitcoin#do-waiting-room`);
   assert.equal(chapterLink(SITE, 'hold-some', 'en', read.progress.steps['hold-some']), `${SITE}/es/recorrido/que-es-bitcoin-en-realidad#done=hold-some`);
 
-  // A change with nothing to change writes nothing (what is stored stays until there is something to write).
+  // The next write stores the note as it was read: without the three fields. Whatever that write is for: here
+  // it is a change that changes nothing ("Stop following" for a step that is not followed).
   const idle = writeProgress(storage as Storage, { kind: 'stop', step: 'the-seed' });
-  assert.deepEqual([idle.ok, idle.ok && idle.changed, stored(storage)], [true, false, text]);
-  // The first write that has something to write stores the note as it was read: without the three fields.
+  assert.ok(idle.ok);
+  assert.deepEqual([idle.changed, idle.read, idle.progress], [true, read.progress, read.progress], 'written, and nothing of the note changed');
+  const tidied = stored(storage) ?? '';
+  assert.notEqual(tidied, text);
+  assert.doesNotMatch(tidied, /reader-4f1c9a7e|campaign|newsletter|be-your-own-bank/);
+  assert.deepEqual(JSON.parse(tidied), read.progress, 'the stored note is the note as it was read');
+  assert.equal(storage.writes, 1);
+  // From then on the stored text is what this page writes, and a change with nothing to change writes nothing.
+  const again = writeProgress(storage as Storage, { kind: 'stop', step: 'the-seed' });
+  assert.deepEqual([again.ok, again.ok && again.changed, stored(storage), storage.writes], [true, false, tidied, 1]);
+  // A write that has something to write goes on from there.
   const after = write(storage, tick('pass-it-on', 2, NOW + 1, { tx: TX, sentAt: NOW + 1 }));
   assert.deepEqual(after.steps, {
     'hold-some': { started: true, doneAt: NOW - 9, from: '/es/recorrido/que-es-bitcoin-en-realidad', parts: ticks(1, 2, 3, 4) },
@@ -1027,6 +1037,129 @@ test('a stored note that names any other page loses that field when it is read, 
   // "Start this step again" on a step that has a way back of its own keeps it.
   const own: Progress = { v: 1, following: null, steps: { 'pass-it-on': { started: true, from: '/es/recorrido/como-funciona-bitcoin', parts: ticks(1) } } };
   assert.deepEqual(applyChange(own, { kind: 'restart', step: 'pass-it-on', at: NOW }).steps['pass-it-on'], { started: true, from: '/es/recorrido/como-funciona-bitcoin' });
+});
+
+test('what a read dropped leaves the storage at the next write, whatever that write is for; reading never writes', () => {
+  // A browser in which every started step is done and none is followed. No visit to the list, to Home, to About
+  // or to a wallet screen writes anything there, and before this rule nothing a done step's screen does wrote
+  // either: so text that a read drops stayed in the storage for good.
+  const done = (parts: number, extra: Record<string, unknown> = {}): Record<string, unknown> => ({ started: true, doneAt: NOW - 9, parts: ticks(...Array.from({ length: parts }, (_, at) => at + 1)), ...extra });
+  const planted = {
+    v: 1,
+    following: null,
+    // A field no note has, at the top.
+    campaign: 'spring-77',
+    steps: {
+      // Ways back that are not the step's own chapter: free text, and another step's chapter.
+      'hold-some': done(4, { from: '/u/reader-4f1c9a7e/campaign-77' }),
+      'pass-it-on': done(3, { from: '/newsletter' }),
+      // A field no step's note has, a wallet fingerprint that is none, and a tick for a part the step has not.
+      'the-seed': done(3, { wallet: FP, remark: 'typed by somebody', parts: { 1: true, 2: true, 3: true, 9: true } }),
+      'waiting-room': done(3, { wallet: 'not-a-fingerprint' }),
+      // A step this page does not have.
+      'steal-the-seed': { started: true, from: '/elsewhere' },
+    },
+  };
+  const hostile = /reader-4f1c9a7e|campaign|newsletter|typed by somebody|not-a-fingerprint|steal-the-seed|elsewhere|spring-77|"9"/;
+  /** What a read makes of it: the six steps and the listed fields, each under its check. */
+  const sound: Progress = {
+    v: 1,
+    following: null,
+    steps: {
+      'hold-some': { started: true, doneAt: NOW - 9, parts: ticks(1, 2, 3, 4) },
+      'pass-it-on': { started: true, doneAt: NOW - 9, parts: ticks(1, 2, 3) },
+      'waiting-room': { started: true, doneAt: NOW - 9, parts: ticks(1, 2, 3) },
+      'the-seed': { started: true, doneAt: NOW - 9, wallet: FP, parts: ticks(1, 2, 3) },
+    },
+  };
+
+  // Reading, as often and in as many ways as a page reads: nothing is written, and the text stays as planted.
+  const looked = new MemoryStorage();
+  put(looked, planted);
+  const text = stored(looked) ?? '';
+  assert.match(text, hostile);
+  for (let look = 0; look < 5; look++) {
+    const read = readProgress(looked as Storage);
+    assert.deepEqual([read.state, read.progress], ['kept', sound]);
+    for (const id of STEPS) chapterLink(SITE, id, 'en', read.progress.steps[id]);
+    stripStep(read.progress, NOW);
+    watchedScreen({ name: 'step', id: 'hold-some' }, read.progress);
+  }
+  assert.deepEqual([looked.writes, stored(looked)], [0, text], 'a look is no change');
+
+  // Every kind of change a page can hand in, each on a storage of its own. None of them changes anything in
+  // this note (every step is done, none is followed). Each is a write all the same, and after it the stored
+  // text is the note as it was read: nothing that the read dropped is left.
+  const changes: Change[] = [
+    // A done step's screen is opened: what a visit to a finished step does.
+    open('hold-some', NOW + 1),
+    open('pass-it-on', NOW + 1, '/newsletter'),
+    { kind: 'follow', step: 'hold-some', at: NOW + 1 },
+    { kind: 'stop', step: 'pass-it-on' },
+    tick('the-seed', 3, NOW + 1),
+    tick('no-balances', 1, NOW + 1),
+    { kind: 'payment', step: 'pass-it-on', tx: TX, sentAt: NOW + 1 },
+    { kind: 'send-another', step: 'waiting-room' },
+    { kind: 'restart', step: 'hold-some', at: NOW + 1 },
+    // A change that names no step of this page at all.
+    { kind: 'stop', step: 'steal-the-seed' as StepId },
+  ];
+  for (const change of changes) {
+    const storage = new MemoryStorage();
+    put(storage, planted);
+    const result = writeProgress(storage as Storage, change);
+    assert.ok(result.ok, change.kind);
+    assert.deepEqual(result.read, sound, change.kind);
+    assert.deepEqual(result.progress, sound, `${change.kind}: the note itself is as it was read`);
+    assert.equal(result.changed, true, `${change.kind}: something was written`);
+    assert.equal(storage.writes, 1, change.kind);
+    const after = stored(storage) ?? '';
+    assert.doesNotMatch(after, hostile, change.kind);
+    assert.equal(after, JSON.stringify(sound), `${change.kind}: the stored text is exactly what this page writes`);
+    // Once: the next change that changes nothing writes nothing.
+    const again = writeProgress(storage as Storage, change);
+    assert.deepEqual([again.ok, again.ok && again.changed, storage.writes, stored(storage)], [true, false, 1, after], change.kind);
+  }
+
+  // The same when the change does apply: what is written is the note as read, with the change, and nothing else.
+  const opened = new MemoryStorage();
+  put(opened, planted);
+  const first = write(opened, open('no-balances', NOW + 1, '/journey/how-bitcoin-works'));
+  assert.deepEqual(first.steps['no-balances'], { started: true, from: '/journey/how-bitcoin-works' });
+  assert.doesNotMatch(stored(opened) ?? '', hostile);
+
+  // What this rule does not do. A note this page wrote is left alone by a change that changes nothing (the
+  // stored text is already what this page writes)...
+  const clean = new MemoryStorage();
+  put(clean, JSON.stringify(sound));
+  for (const change of changes) {
+    const result = writeProgress(clean as Storage, change);
+    assert.deepEqual([result.ok, result.ok && result.changed], [true, false], change.kind);
+  }
+  assert.equal(clean.writes, 0);
+  // ...something that is no note at all stays until there is a change to write (the list offers "Forget my
+  // progress" for it)...
+  for (const junk of ['not json {', '[1]', '"text"', '{"v":0}', '']) {
+    const storage = new MemoryStorage();
+    put(storage, junk);
+    const result = writeProgress(storage as Storage, { kind: 'stop', step: 'hold-some' });
+    assert.deepEqual([result.ok, result.ok && result.changed, storage.writes, stored(storage)], [true, false, 0, junk], junk);
+  }
+  // ...a newer version's note is never written over, whatever is in it...
+  const newer = new MemoryStorage();
+  put(newer, { ...planted, v: 2 });
+  const kept = stored(newer);
+  assert.deepEqual(writeProgress(newer as Storage, open('hold-some', NOW + 1)), { ok: false, why: 'newer' });
+  assert.deepEqual([newer.writes, stored(newer)], [0, kept]);
+  // ...and where nothing is stored, a change that changes nothing still stores nothing.
+  const empty = new MemoryStorage();
+  assert.deepEqual(writeProgress(empty as Storage, { kind: 'stop', step: 'hold-some' }), { ok: true, read: emptyProgress(), progress: emptyProgress(), changed: false });
+  assert.deepEqual([empty.writes, stored(empty)], [0, null]);
+  // A browser that refuses the write: "storage", and the planted text is still what is stored.
+  const full = new FullStorage();
+  put(full, planted);
+  assert.deepEqual(writeProgress(full as Storage, { kind: 'stop', step: 'hold-some' }), { ok: false, why: 'storage' });
+  assert.equal(stored(full), text);
 });
 
 // -- what the wallet is told -------------------------------------------------------------------

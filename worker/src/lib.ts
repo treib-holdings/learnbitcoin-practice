@@ -9,8 +9,9 @@ export { makeOrigin } from './origin.ts';
 export { makeBotCheck } from './bot-check.ts';
 export { makeForwardEvent } from './events.ts';
 export { configFromEnv } from './config.ts';
-// The holder of the pot's counts, which whoever builds a Deps makes once, and how long the counts are kept.
-export { POT_STATS_KEEP_MS, makePotStatsHolder } from './pot-stats.ts';
+// The holder of the pot's counts, which whoever builds a Deps makes once; how long the counts are kept; and how
+// long the origin is left alone after a question that failed.
+export { POT_STATS_KEEP_MS, POT_STATS_PAUSE_MS, makePotStatsHolder } from './pot-stats.ts';
 
 export type { OriginOptions } from './origin.ts';
 export type { BotCheckOptions } from './bot-check.ts';

@@ -8,9 +8,9 @@
 // step stands is not decided here either: that is judge() in
 // lib/doit/judge.ts, and everything below starts from what it answers.
 
-import type { Lang } from '@learnbitcoin/practice-contract';
+import type { AppConfig, Lang } from '@learnbitcoin/practice-contract';
 import { fill, formatSats, slotNames } from '../../lib/format.ts';
-import { SIX_BLOCKS, type BlockedReason, type PartView, type StepView, type Waited } from '../../lib/doit/judge.ts';
+import { SIX_BLOCKS, type BlockedReason, type PartView, type StepView, type Waited, type WalletTrouble } from '../../lib/doit/judge.ts';
 import type { Progress, Read } from '../../lib/doit/progress.ts';
 import { STEP_DEFS, partCount, partDef, partKey, type Chapter, type Fact, type StepId } from '../../lib/doit/steps.ts';
 import type { Route } from '../../lib/router.ts';
@@ -55,10 +55,31 @@ export function fillFrom(template: string, values: SlotValues): string {
  * it is, so the screens that speak of what this browser keeps (Settings,
  * the question before a wallet is removed, Home after one was) say so
  * while there is one. Something stored under the note's key that is no note
- * names no wallet and no payment, and does not count.
+ * names no wallet and no payment, and does not count. Nor does a storage
+ * the page was not let read ("blocked"): nobody knows then whether a note
+ * is there, and those screens say nothing of one.
  */
 export function progressKept(read: Read['state']): boolean {
   return read === 'kept' || read === 'newer';
+}
+
+// -- the pot's count under a done "Pass it on" ----------------------------------------
+
+/**
+ * Whether the card of a done step asks the Worker for the pot's counts: for
+ * "Pass it on" alone, and only when the Worker's settings say that the
+ * counts can be had (`potCounts`, from GET /api/config).
+ *
+ * The settings the page carries built in say that they cannot, and the
+ * Worker's take their place only when they have arrived. So nothing is
+ * asked before then. And where the Worker says no, which is how it ships,
+ * nothing is asked at all: the line is left out, no request for the counts
+ * leaves the page, and so none can show in a console or in a log.
+ *
+ * Only `true` counts as a yes.
+ */
+export function asksPotCount(id: StepId, config: Pick<AppConfig, 'potCounts'>): boolean {
+  return id === 'pass-it-on' && config.potCounts === true;
 }
 
 // -- a step's keys in the table -------------------------------------------------------
@@ -270,8 +291,10 @@ function isDone(note: Progress, id: StepId): boolean {
 
 /**
  * What is missing for a part that cannot be done yet, and the step or the
- * screen that meets it. "trouble" has no sentence here: the screen shows
- * the wallet's own piece for a stored wallet that cannot be used.
+ * screen that meets it. The wallet's own trouble has no sentence here: for
+ * a stored wallet that cannot be used, a wallet that cannot run in this
+ * browser and a storage the page was not let read, the screen shows the
+ * wallet's own piece.
  *
  * A wallet and coins are what "Hold some" gives, so a step that lacks
  * either points there, unless that step is done: then the reader has been
@@ -279,7 +302,7 @@ function isDone(note: Progress, id: StepId): boolean {
  * way "There are no balances" points to "Pass it on" for the payment it
  * needs.
  */
-export function needOf(id: StepId, part: number, reason: Exclude<BlockedReason, 'trouble'>, note: Progress, kept: 'yes' | 'no' | 'newer'): Need {
+export function needOf(id: StepId, part: number, reason: Exclude<BlockedReason, WalletTrouble>, note: Progress, kept: 'yes' | 'no' | 'newer'): Need {
   const fact = partDef(id, part)?.on;
   const via = (step: StepId, otherwise: Action): NeedLink =>
     step !== id && !isDone(note, step) ? { kind: 'step', step } : { kind: 'screen', action: otherwise };
@@ -354,12 +377,14 @@ export function checkedInSeed(id: StepId, part: number, note: Progress): boolean
  * it: the step would then ask for "a wallet", and lead to making a new one
  * while the first waits on paper. In that state the one thing to do is
  * restore. (With another wallet here the step can be started again: that
- * is one of the two ways on it names.)
+ * is one of the two ways on it names.) The same while the page was not let
+ * read its storage ("blocked"): it cannot see a wallet then, and the note
+ * is still all that names the one that has to come back.
  */
 export function canRestart(view: StepView, kept: 'yes' | 'no' | 'newer', status: string): boolean {
   if (view.state !== 'started' || kept !== 'yes') return false;
   const removal = STEP_DEFS[view.id].parts.findIndex((each) => each.on === 'wallet-removed');
-  return !(removal !== -1 && view.parts[removal]?.state === 'ticked' && status === 'none');
+  return !(removal !== -1 && view.parts[removal]?.state === 'ticked' && (status === 'none' || status === 'blocked'));
 }
 
 // -- the glossary -------------------------------------------------------------------------

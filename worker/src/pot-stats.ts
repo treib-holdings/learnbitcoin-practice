@@ -1,6 +1,8 @@
-// The pot's counts: one answer of the origin's, for everyone.
+// The pot's counts: one answer of the origin's for all the readers that one
+// isolate of the Worker serves.
 //
-// GET /api/pot/stats is open to anybody. It is a plain GET, with no page of
+// While the settings switch it on (handler.ts, config.potCounts), GET
+// /api/pot/stats is open to anybody. It is a plain GET, with no page of
 // ours behind it and no bot check. Each reader has a budget for it
 // (handler.ts, POT_STATS), but a budget for each reader is no cap for all
 // readers together. And what one answer costs the practice network is not
@@ -9,16 +11,23 @@
 //
 // The counts are the same for every reader, and they change only when a
 // block comes or the faucet pays. So the Worker does not ask the origin for
-// them once per request. It asks once, and gives everyone that answer:
+// them once per request. An isolate of it asks once, and gives every
+// request it answers that answer:
 //
 //   - A good answer is kept for 15 seconds from the moment it came
 //     (POT_STATS_KEEP_MS). Until then every request is given it, and the
 //     origin is not asked.
 //   - While a question is out, every request that arrives waits for that
 //     same question. However many arrive, the origin has one to answer.
-//   - An answer that failed is never kept: a refusal, a body that is not the
-//     three counts, no answer in time. Those who waited for it are told
-//     "unavailable", and the next request asks again.
+//   - An answer that failed is never kept, and never given out as counts: a
+//     refusal, a body that is not the three counts, no answer in time.
+//     Those who waited for it are told "unavailable". So is every request
+//     that arrives in the 5 seconds after it failed (POT_STATS_PAUSE_MS),
+//     and the origin is not asked for any of them. Without that pause, an
+//     origin that fails or is slow would be asked again the moment it had
+//     failed, and again: it would get no rest in the one state in which
+//     each question may cost it the most. (The same pause follows a
+//     question that broke, which is a mistake of ours and not an answer.)
 //
 // The reader's own budget is counted before any of this (handler.ts), so a
 // reader who is over it is refused, whatever is kept here.
@@ -47,10 +56,21 @@
 //     locations, and a request is answered where it arrives.
 //
 // So the bound is one for each isolate, not one for each location and not
-// one for the whole network: an isolate has at most one question out at a
-// time, and after a good answer it asks no other for 15 seconds, which is
-// four questions a minute, whoever asks and however often. Losing an
-// isolate loses the kept answer and nothing else, and costs one question.
+// one for the whole network. An isolate has at most one question out at a
+// time. After a good answer it asks no other for 15 seconds, which is four
+// questions a minute, whoever asks and however often. After an answer that
+// failed it asks no other for 5 seconds: about twelve a minute when every
+// question fails at once, and fewer the longer each takes to fail. Losing
+// an isolate loses what it kept and nothing else, and costs one question.
+//
+// What this file cannot bound is how many isolates there are to ask. The
+// looks of one caller are not promised the same isolate either: sent one
+// after another, each over a connection of its own, they may each reach a
+// different one, and each of those asks for itself. Nothing here measures
+// that. So every figure above is a figure for one isolate, and none of
+// them is a cap on what the practice network is asked in all. That is why
+// the counts are switched off as the Worker ships (POT_COUNTS in
+// wrangler.jsonc, which says when they may be switched on).
 //
 // The documentation warns against keeping state at the top of a module,
 // for two reasons: what one request leaves there the next one sees, and
@@ -68,10 +88,7 @@
 //
 //   - It cannot hold a question that is still out. That has to live in the
 //     isolate's memory whatever keeps the answer, so the cache would be a
-//     second holder beside this one. And when an entry runs out, every
-//     isolate with a request in hand would ask at once, each for itself:
-//     under a flood, which is what this file is for, that comes to the
-//     same bound, one question for each isolate.
+//     second holder beside this one, not one in its place.
 //   - Each request would cost a read of the cache, which is a wait for
 //     something outside the Worker. Here a request that is given the kept
 //     answer waits for nothing.
@@ -80,6 +97,18 @@
 //     opposite of the "no-store" every answer of this Worker carries
 //     (headers.ts). No test could hold that to a clock. Here the rule is a
 //     few lines that the tests run with a clock of their own.
+//
+// What the cache would give, and this holder does not, is one kept answer
+// for all the isolates of a location. How much that is worth depends on
+// how the looks arrive. When an entry runs out, every isolate that has a
+// request in hand at that moment would still ask, each for itself. So
+// under a flood, with every isolate busy, the cache comes to the same
+// bound as this holder: one question for each isolate. It is the same
+// bound only then. For looks that come a few at a time and are spread
+// over many isolates, the first isolate's answer would serve the others
+// of its location from the cache, and here each of them asks for itself.
+// This file does not make up for that difference. The setting does: the
+// counts stay switched off until it no longer matters (above).
 //
 //
 // How a request waits for a question that another request asked
@@ -134,13 +163,52 @@
 //     its own until 10 seconds after the question was asked
 //     (POT_STATS_WAIT_MS), and no longer. Then it is told "unavailable",
 //     and the question is given up on: the next request asks anew.
+//
+//
+// The four states, and the clock
+//
+// The holder is in one of four states, and never in two (deps.ts says
+// why). In each, a request that has passed the limiter does one thing:
+//
+//   counts are kept       younger than 15 seconds: the request is given
+//                         them. The origin is not asked.
+//   a question is out     younger than 10 seconds: the request waits for
+//                         it. The origin is not asked again.
+//   a failure is noted    younger than 5 seconds: the request is told
+//                         "unavailable". The origin is not asked.
+//   none of these         the request asks, and notes its question.
+//
+// Whatever has grown too old is dropped where it is found, and the request
+// then asks, as in the last line. So while the clock runs forward, the
+// questions of one isolate are at least 5 seconds apart. The next one
+// comes no sooner than 15 seconds after counts came, 5 seconds after a
+// failure, or 10 seconds after a question was asked that never came back.
+//
+// All of this is timed by one clock (Deps.now), and a clock can be set.
+// Set back, it leaves things in the holder dated later than now. Such a
+// date says nothing about how old a thing is, so none of the three is
+// trusted on the strength of it: counts dated later than now are thrown
+// away, a question dated later than now counts as lost, and a failure
+// dated later than now is forgotten. Each is dropped as if it had grown
+// too old. Waited out instead, a question or a failure dated an hour
+// ahead would keep readers from the counts for an hour: nobody would ask,
+// and nothing would be kept.
+//
+// So a clock that jumps, forward or back, cannot keep readers from the
+// counts for longer than a state's own time, counted from the jump: 5
+// seconds after a failure, 10 seconds for a question that does not come
+// back. And one jump can cost the origin one question that it would not
+// have been asked yet, and no more than one: what follows that question
+// is dated by the clock as it then runs. (A clock that went back at every
+// look would have every look ask. The Worker has no second clock to tell
+// that by.)
 
 import type { PotStats } from '@learnbitcoin/practice-contract';
-import type { Deps, Origin, OriginAnswer, PotStatsHolder, PotStatsQuestion } from './deps.ts';
+import type { Deps, Fault, Origin, OriginAnswer, PotStatsHolder, PotStatsQuestion } from './deps.ts';
 
 /**
- * How long a good answer is given to everyone, in milliseconds, from the
- * moment it came: half the time between two practice blocks.
+ * How long a good answer is given to every request, in milliseconds, from
+ * the moment it came: half the time between two practice blocks.
  */
 export const POT_STATS_KEEP_MS = 15_000;
 
@@ -150,6 +218,16 @@ export const POT_STATS_KEEP_MS = 15_000;
  * question that is older than this is not coming back.
  */
 export const POT_STATS_WAIT_MS = 10_000;
+
+/**
+ * How long the origin is left alone after a question that brought no
+ * counts, in milliseconds, from the moment that question ended. Until then
+ * every request is told "unavailable" and nobody is asked. Long enough to
+ * space the questions to an origin that fails or is slow, and short enough
+ * that readers have the counts again soon after it is well: a third of the
+ * time that counts are kept.
+ */
+export const POT_STATS_PAUSE_MS = 5_000;
 
 /**
  * How a request that waits looks for the answer: the first time after
@@ -164,19 +242,28 @@ export const POT_STATS_LOOK_MAX_MS = 250;
 /**
  * The counts for one request, or why there are none. `upstream` is the
  * origin's status, and null when the origin was not asked for this request:
- * the counts are the kept ones then.
+ * the counts are the kept ones then, or there are none because a question
+ * failed a moment ago or never came back.
  */
 export type PotStatsAnswer =
   | { ok: true; value: Readonly<PotStats>; upstream: number | null }
   | Extract<OriginAnswer<PotStats>, { ok: false }>;
 
-/** A holder with nothing kept and no question out. Made once, where it outlives a request (deps.ts). */
+/** A holder with nothing kept, no question out and no failure noted. Made once, where it outlives a request (deps.ts). */
 export function makePotStatsHolder(): PotStatsHolder {
-  return { kept: null, asking: null };
+  return { kept: null, asking: null, failed: null };
+}
+
+/**
+ * "Unavailable", for a request the origin was not asked for. The fault is
+ * for the owner's log: why there are no counts to give.
+ */
+function unavailable(fault: Fault | null): PotStatsAnswer {
+  return { ok: false, code: 'unavailable', detail: null, upstream: null, fault };
 }
 
 /** What a request is told when the question it waited for did not come back in time. */
-const NO_ANSWER: PotStatsAnswer = { ok: false, code: 'unavailable', detail: null, upstream: null, fault: 'origin_timeout' };
+const NO_ANSWER: PotStatsAnswer = unavailable('origin_timeout');
 
 /**
  * One question to the origin. The three counts are taken out of its answer
@@ -216,7 +303,9 @@ function waitFor(question: PotStatsQuestion, ms: number): Promise<PotStatsAnswer
 
 /**
  * The pot's counts for one request: the kept ones while they are young
- * enough, or else the origin's, asked for once for everyone who waits.
+ * enough, or else the origin's, asked for once for every request that
+ * waits. For a short time after a question that brought no counts it is
+ * "unavailable", and the origin is not asked.
  *
  * It rejects only when the question itself threw, which is a mistake of
  * ours: the handler answers that as it answers every such mistake.
@@ -227,24 +316,42 @@ export async function potStatsForAll(deps: Pick<Deps, 'origin' | 'potStatsHolder
 
   // From here to the line that notes the new question nothing is waited
   // for, so no other request can come in between: of all the requests that
-  // find nothing kept, exactly one asks.
+  // find no counts to give and no failure to wait out, exactly one asks.
+  //
+  // Each of the three things the holder can hold is good for its own time,
+  // counted from its date. One that is dated later than now (a clock that
+  // was set back) is no better than one that is too old: both are dropped.
 
   if (holder.kept !== null) {
     const age = now - holder.kept.at;
     if (age >= 0 && age < POT_STATS_KEEP_MS) return { ok: true, value: holder.kept.stats, upstream: null };
-    // Too old, or dated later than now (a clock that was set back). It is
-    // thrown away here, so that nothing can make it young again.
+    // Too old, or dated later than now. It is thrown away here, so that
+    // nothing can make it young again.
     holder.kept = null;
   }
 
   const out = holder.asking;
   if (out !== null) {
-    // A question is out: wait for it, as everyone who arrives meanwhile
-    // does. Its age cannot be below zero, whatever the clock says.
-    const left = POT_STATS_WAIT_MS - Math.max(0, now - out.since);
-    if (left > 0) return waitFor(out, left);
-    // It has been out for longer than the origin is given. It is given up
-    // on, and the question asked below takes its place.
+    // A question is out: wait for it, as every request that arrives
+    // meanwhile does, until 10 seconds after it was asked.
+    const age = now - out.since;
+    if (age >= 0 && age < POT_STATS_WAIT_MS) return waitFor(out, POT_STATS_WAIT_MS - age);
+    // It has been out for longer than the origin is given, or it is dated
+    // later than now, which says nothing about how long it has been out.
+    // Either way it is given up on, and the question asked below takes
+    // its place. (Taken for a question just asked, one dated an hour
+    // ahead would be waited for by every request for an hour.)
+  }
+
+  if (holder.failed !== null) {
+    // A question brought no counts a moment ago. The origin is left alone
+    // for 5 seconds from that moment, and this request is told what those
+    // who waited for that question were told: "unavailable", with its fault.
+    const age = now - holder.failed.at;
+    if (age >= 0 && age < POT_STATS_PAUSE_MS) return unavailable(holder.failed.fault);
+    // The pause is over, or the failure is dated later than now. It is
+    // forgotten here, so that nothing can make it recent again.
+    holder.failed = null;
   }
 
   const asking: PotStatsQuestion = { since: now, ended: null };
@@ -259,15 +366,24 @@ export async function potStatsForAll(deps: Pick<Deps, 'origin' | 'potStatsHolder
     question.then(
       (answer) => {
         asking.ended = answer;
-        // A question that was given up on meanwhile keeps nothing: a newer
-        // one is out, and its answer is the one to keep.
+        // A question that was given up on meanwhile keeps nothing and
+        // starts no pause: a newer one is out, and what that one brings is
+        // what counts.
         if (holder.asking !== asking) return;
         holder.asking = null;
+        // Counts are kept. Anything else is a failure: it is never kept as
+        // an answer, and the origin is not asked again until 5 seconds on.
         if (answer.ok) holder.kept = { stats: answer.value, at: deps.now() };
+        else holder.failed = { at: deps.now(), fault: answer.fault };
       },
       () => {
         asking.ended = 'broke';
-        if (holder.asking === asking) holder.asking = null;
+        // The same for a question that broke: only the one that is out is
+        // taken off, and only that one starts a pause. One that was given
+        // up on, and breaks later, leaves the newer question where it is.
+        if (holder.asking !== asking) return;
+        holder.asking = null;
+        holder.failed = { at: deps.now(), fault: 'handler' };
       },
     ),
   );

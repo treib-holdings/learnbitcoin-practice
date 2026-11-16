@@ -15,6 +15,11 @@
 //   - Other tabs share the storage. Everything that writes reads it again
 //     first (keystore.ts does), and when another tab changes the record this
 //     page drops what it knows and starts again from what is stored.
+//   - A browser can refuse the page every look at its storage (its setting
+//     that blocks a site's data does, and deletes nothing). That is not an
+//     empty storage. The status is then "blocked", never "none", so that no
+//     screen says "no wallet" of a browser this page could not look into,
+//     and nothing is made, opened, restored or removed until it can.
 //   - The faucet's bot check is somebody else's code. Before it is let into
 //     the page, a passkey wallet's keys and every typed word are dropped
 //     and a passkey prompt that is still open is ended, and from then on
@@ -388,12 +393,16 @@ export function makeSession(deps: SessionDeps): Session {
     }
   }
 
-  /** What is stored now. Null also when the storage cannot be read at all. */
-  function read(): WalletRecord | null | 'unreadable' | 'newer' {
+  /**
+   * What is stored now. "blocked" when the browser will not let this page
+   * read its storage at all, which is never the same as nothing stored: a
+   * wallet made before may still be there (keystore.ts, loadRecord).
+   */
+  function read(): WalletRecord | null | 'unreadable' | 'newer' | 'blocked' {
     try {
       return loadRecord(local);
     } catch {
-      return null;
+      return 'blocked';
     }
   }
 
@@ -429,12 +438,19 @@ export function makeSession(deps: SessionDeps): Session {
    * and at what is stored right now. And where what is stored cannot be
    * read, nobody can tell whose wallet it is: nothing is hinted, and a
    * setup that was waiting goes on waiting.
+   *
+   * The same where the browser will not let this page look into its storage
+   * at all: a wallet may be stored there, and it may be this passkey's. One
+   * thing the page still knows then is the wallet it holds itself. A
+   * passkey whose wallet that is has nothing left to finish.
    */
   function forgetPasskey(credentialId: string): void {
     const stored = read();
-    if (typeof stored === 'string') return;
-    const itsOwn = record?.credentialId === credentialId || stored?.credentialId === credentialId;
-    if (!itsOwn) {
+    if (stored === 'unreadable' || stored === 'newer') return;
+    const held = record?.credentialId === credentialId;
+    if (stored === 'blocked') {
+      if (!held) return;
+    } else if (!held && stored?.credentialId !== credentialId) {
       try {
         passkeys.signalUnknown(credentialId);
       } catch {
@@ -466,6 +482,9 @@ export function makeSession(deps: SessionDeps): Session {
    * When one wallet is found in another's place, the screens are told
    * ("replaced"): an address on screen is the other wallet's from this moment,
    * and a reader who is looking at it must not be left to find that out.
+   *
+   * A storage that cannot be read gives the status "blocked", never "none":
+   * the page has not seen that no wallet is stored, it has seen nothing.
    */
   function load(): void {
     const before = record?.xpub ?? null;
@@ -481,6 +500,9 @@ export function makeSession(deps: SessionDeps): Session {
     persisted = null;
 
     const stored = read();
+    // A storage that can be read again after it could not: whether it also takes a write is asked again,
+    // so that "this browser stores nothing" is not left standing from the time it was blocked.
+    if (status === 'blocked' && stored !== 'blocked') probeStorage();
     if (stored === null || typeof stored === 'string') {
       record = null;
       shownRecord = null;
@@ -543,6 +565,29 @@ export function makeSession(deps: SessionDeps): Session {
   }
 
   /**
+   * What stands in the way of storing a wallet, from what is stored right
+   * now, or null when nothing is stored:
+   *
+   *   exists      something is stored already: a wallet, or something in its
+   *               place that cannot be read or is a newer version's
+   *   no-storage  the browser will not let this page read its storage, so
+   *               nobody knows what is stored, and nothing is written into
+   *               a storage that cannot be read back
+   *
+   * Either way the page starts again from what it found, so the screens
+   * show that state and not the one from before.
+   */
+  function inTheWay(): 'exists' | 'no-storage' | null {
+    const stored = read();
+    if (stored === null) return null;
+    syncWithStorage();
+    if (stored !== 'blocked') return 'exists';
+    probeStorage();
+    publish();
+    return 'no-storage';
+  }
+
+  /**
    * Why no wallet can be made or brought here right now, or null. The order
    * matters: each reason is checked before anything that costs the reader a
    * prompt, and the storage is read again every time.
@@ -550,10 +595,8 @@ export function makeSession(deps: SessionDeps): Session {
   function cannotStart(): 'broken' | 'reload' | 'exists' | 'no-storage' | null {
     if (status === 'broken') return 'broken';
     if (botCheck) return 'reload';
-    if (read() !== null) {
-      syncWithStorage();
-      return 'exists';
-    }
+    const stopped = inTheWay();
+    if (stopped !== null) return stopped;
     if (!probeStorage()) {
       publish();
       return 'no-storage';
@@ -564,10 +607,8 @@ export function makeSession(deps: SessionDeps): Session {
 
   /** After a save that did not go through: because a wallet is stored already, or because nothing can be? */
   function whyNotSaved(): 'exists' | 'no-storage' {
-    if (read() !== null) {
-      syncWithStorage();
-      return 'exists';
-    }
+    const stopped = inTheWay();
+    if (stopped !== null) return stopped;
     probeStorage();
     publish();
     return 'no-storage';
@@ -650,21 +691,28 @@ export function makeSession(deps: SessionDeps): Session {
         count('Wallet created', 'passkey');
         return { kind: 'created' };
       }
-      case 'unfinished':
+      case 'unfinished': {
         count('Passkey', 'unfinished');
-        if (read() !== null) {
+        const stored = read();
+        if (stored !== null) {
           // Something was stored in this browser while the prompt was open (another tab). If it is a
           // wallet, this passkey cannot get one here now, and there is nothing left to finish: no
           // setup is left waiting beside a wallet. (forgetPasskey knows when nothing may be hinted.)
+          // The same when the browser has stopped letting this page read its storage meanwhile:
+          // nothing can be finished into a storage nobody can look into, and that is what is said.
           forgetPasskey(outcome.credentialId);
           syncWithStorage();
-          return { kind: 'exists' };
+          if (stored !== 'blocked') return { kind: 'exists' };
+          probeStorage();
+          publish();
+          return { kind: 'no-storage' };
         }
         if (unfinished !== null && unfinished.credentialId !== outcome.credentialId) forgetPasskey(unfinished.credentialId);
         unfinished = { credentialId: outcome.credentialId, tag: outcome.tag, prfEnabled: outcome.prfEnabled, name };
         if (setup === null || setup.tag !== outcome.tag) setup = { tag: outcome.tag };
         publish();
         return { kind: 'unfinished' };
+      }
       case 'no-prf':
         count('Passkey', 'no-prf');
         // It answered, and cannot give the secret a wallet is made from: of no use to anyone.
@@ -1095,10 +1143,9 @@ export function makeSession(deps: SessionDeps): Session {
       if (botCheck) return { kind: 'reload' };
       if (!found.ok) return { kind: 'failed', reason: found.reason };
       // A wallet may have arrived here while the scan ran: another tab, or a passkey prompt that was open.
-      if (read() !== null) {
-        syncWithStorage();
-        return { kind: 'exists' };
-      }
+      // Or the browser has stopped letting this page read its storage: then nothing is stored either.
+      const stopped = inTheWay();
+      if (stopped !== null) return { kind: stopped };
       if (!hasHistory(found.state)) {
         restoring = mnemonic;
         publish();

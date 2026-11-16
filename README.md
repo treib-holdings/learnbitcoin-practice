@@ -38,7 +38,7 @@ for a block, write down the 12 words, prove the backup. Nothing here holds value
 | `contract/` | What the app and its Worker agree on: paths, request and answer bodies, error codes, and the closed list of events that may be counted. Plain TypeScript with no imports. |
 | `wallet/` | Keys (from a passkey or from random words), addresses, descriptors, the scan of the chain, payments and history. Pure TypeScript on the audited @scure / @noble libraries; no WebAssembly. |
 | `app/` | The wallet itself: a single-page app (Svelte 5, Vite, Tailwind CSS 4) in English and Spanish. The rules live in plain modules with tests under `src/lib/` (`session.ts` for keys and storage, `chain-sync.ts` for coins, `faucet-flow.ts` for the faucet); `src/screens/` has one file per screen, `src/strings/` every sentence in both languages, and `dev/` a gallery of every screen in every state. |
-| `worker/` | A small Cloudflare Worker for the app's `/api/` and `/p/` paths: the chain's read API, limited to the few shapes the wallet asks for; the faucet, behind a bot check; the address of the pay-it-forward pot, and its three counts, which the Worker asks the practice network for once for all readers and keeps for 15 seconds; and a forwarder for counted events. The built app is served beside it as static files. |
+| `worker/` | A small Cloudflare Worker for the app's `/api/` and `/p/` paths: the chain's read API, limited to the few shapes the wallet asks for; the faucet, behind a bot check; the address of the pay-it-forward pot; the pot's three counts, which are switched off as shipped (see "The pot's counts" below); and a forwarder for counted events. The built app is served beside it as static files. |
 | `e2e/` | The end-to-end tools: a stand-in practice network kept in memory, a local server that runs the Worker's real handler, headless Chrome with virtual passkeys, the smoke command, and the scenarios in `e2e/scenarios/`. |
 | `bots/` | The practice network's scripted counterparties: treasury upkeep, the faucet, the pay-it-forward pot, refills and health alerts, with a small API for the Worker. Every key stays in Bitcoin Core's wallets. See `bots/README.md`. |
 | `ops/` | The practice network itself: Bitcoin Core (regtest), electrs, a mempool explorer, the block producer, backups, and a Cloudflare tunnel. See `ops/README.md`. |
@@ -88,7 +88,7 @@ fails on any console error, any violation of the page's security policy and
 any request to another host. `--wallet` chooses what the browser holds:
 `none`, `empty`, `funded` or `passkey`.
 
-`pnpm e2e` runs 210 scenarios in about three minutes. Each gets a
+`pnpm e2e` runs 220 scenarios in about three minutes. Each gets a
 world of its own: the built app, the Worker's handler, a stand-in network,
 and pages in Chrome. Most files hold the scenarios of one screen. The files
 named `doit-*` hold the "Do it" steps: one file for each step, and one each
@@ -134,6 +134,36 @@ Electrum port at `practice-electrum.learnbitcoin.com:50002`. The origin that
 serves the chain's read API and the bots is reachable by the Worker alone.
 How the network is set up, backed up and checked is in `ops/README.md`; what
 the bots do, and their API, in `bots/README.md`.
+
+### The pot's counts
+
+The Worker can tell the app three counts of the pay-it-forward pot: payments
+passed on to it, coins that wait in it, and coins it has handed to newcomers.
+A done "Pass it on" step shows the first of them in one line.
+
+One setting switches them: `POT_COUNTS` in `worker/wrangler.jsonc`. It is
+`"off"` as this repository ships, and `"on"` switches them on. Only the exact
+word `on` does. No request can switch it.
+
+- **Off.** The Worker does not know `GET /api/pot/stats`. It answers a request
+  for it as it answers any path it does not know, counts nothing at its
+  limiter and asks the practice network nothing. `GET /api/config` tells the
+  app that the counts cannot be had, and the app does not ask for them: the
+  line is left out, and no request for it leaves the page.
+- **On.** Anybody can ask for the counts with a plain GET. The Worker does not
+  ask the practice network once for each such request. Each running copy of
+  the Worker (an isolate, in Cloudflare's word) asks once for all the readers
+  it serves, keeps the answer for 15 seconds, and after a question that failed
+  asks no other for 5 seconds. That is a bound for each isolate, and
+  Cloudflare may run many of them: it is no cap for the Worker as a whole.
+  `worker/src/pot-stats.ts` says what it bounds and what it does not.
+
+It ships off because a look at the counts can cost the practice network a
+reading of every coin that waits in the pot. The note at the setting says when
+it may be switched on. `pnpm dev` and the scenarios run with it off as well,
+unless they say otherwise: `POT_COUNTS=on pnpm dev` switches it on for a local
+run, and a scenario that reads the count line switches it on in its own
+settings.
 
 ## Keys
 

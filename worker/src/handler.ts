@@ -3,8 +3,8 @@
 // The app is static files; this is the only code that runs on the server for
 // it. It does four small jobs: it tells the app its settings, it passes chain
 // questions and signed transactions to the practice network, it guards the
-// faucet (and asks the pot beside it for its address and its counts), and it
-// passes on the few events the app counts.
+// faucet (and asks the pot beside it for its address and, where they are
+// switched on, its counts), and it passes on the few events the app counts.
 //
 // It trusts nothing a request says about itself:
 //
@@ -19,11 +19,18 @@
 // route and never a path, and for a request for chain data no line at all
 // unless something is broken (the end of this file says why).
 //
+// The pot's counts are answered only while the Worker's settings switch
+// them on (config.potCounts, which is POT_COUNTS in wrangler.jsonc). While
+// they are off, their path is one the Worker does not know: it gets the
+// 404 of any other, and nothing behind it is touched.
+//
 // One thing is kept from one request to the next, and it is about no
 // request and no reader: the pot's three counts, which are the same for
-// everybody. The origin is asked for them once for everyone and not once
-// for each request (pot-stats.ts). Every other request that reaches the
-// practice network is asked there for itself.
+// everybody. The origin is not asked for them once for each request. Each
+// isolate that Cloudflare runs the Worker in asks once, for all the
+// requests it answers while it keeps that answer (pot-stats.ts). Every
+// other request that reaches the practice network is asked there for
+// itself.
 //
 // Nothing in this file exists only on Cloudflare. makeHandler() is given
 // everything from outside as a Deps (deps.ts), so the same code answers in
@@ -249,29 +256,44 @@ export function chainReadCost(upstream: string): number {
  * counts (GET /api/pot/stats).
  *
  * The pot has one limiter, and "Pass it on" asks it for the pot's address.
- * The counts are a nicety beside that: one line on a screen. They are read
- * with a GET, which needs no page of ours, so anybody can ask for them as
- * often as they like. Counted under the reader's own key, such asking
- * would use up the budget that "Pass it on" draws on, for that reader and
- * for everyone behind the same address. So they are counted at the same
- * limiter under a second key of the reader's, in a count of their own, as
- * the older pages of a long list are at the chain's limiter (OLDER_PAGES
- * above). Each look counts as one.
+ * The counts are a nicety beside that: one line on a screen. While they
+ * are switched on they are read with a GET, which needs no page of ours,
+ * so anybody can ask for them as often as they like. Counted under the
+ * reader's own key, such asking would use up the budget that "Pass it on"
+ * draws on, for that reader and for everyone behind the same address. So
+ * they are counted at the same limiter under a second key of the reader's,
+ * in a count of their own, as the older pages of a long list are at the
+ * chain's limiter (OLDER_PAGES above). Each look counts as one.
  *
  * This count is a brake on one reader, and that is all it is. It does not
  * keep the looks of many readers away from the practice network: nothing
- * counted for each reader could. What does is that the origin is asked
- * once for everyone (pot-stats.ts). The count comes first all the same: a
- * reader who is over it is refused, whether or not there is an answer to
- * give.
+ * counted for each reader could. What holds them back is that an isolate
+ * of the Worker asks the origin once for all the looks it answers, and
+ * rests after a question that failed (pot-stats.ts). That is a bound for
+ * each isolate, and Cloudflare may run many. So the counts are answered at
+ * all only while the settings switch them on (matchPath below). The count
+ * comes first all the same: a reader who is over it is refused, whether or
+ * not there is an answer to give.
  */
 export const POT_STATS = 'stats';
 
-function matchPath(pathname: string): Match | null {
+/**
+ * The route a path stands for, or null for a path the Worker does not know.
+ *
+ * `potCounts` says whether the pot's counts are switched on (the setting
+ * POT_COUNTS, as config.ts read it). While they are off, their path is not
+ * a path the Worker knows. It is turned away here, where every unknown path
+ * is, and so by the same lines of the handler: the same 404, the same
+ * headers, the same line in the log, whatever the method. Nothing is
+ * counted at a limiter, the origin is not asked, and what is kept of the
+ * counts is neither read nor changed. This is the one place that decides
+ * it, and nothing of the request is looked at for it but the path.
+ */
+function matchPath(pathname: string, potCounts: boolean): Match | null {
   if (pathname === API.config) return { route: 'config' };
   if (pathname === API.faucet) return { route: 'faucet' };
   if (pathname === API.potAddress) return { route: 'pot_address' };
-  if (pathname === API.potStats) return { route: 'pot_stats' };
+  if (pathname === API.potStats) return potCounts ? { route: 'pot_stats' } : null;
   if (pathname === API.event) return { route: 'event' };
   if (pathname === `${API.esplora}/tx`) return { route: 'esplora_broadcast' };
   if (pathname.startsWith(`${API.esplora}/`)) {
@@ -415,10 +437,11 @@ export function makeHandler(deps: Deps): Handler {
     // apart from the pot's address, so that looking can never use up
     // "Pass it on" (POT_STATS).
     if (!(await within(deps.limits.pot, 'pot', request, 1, POT_STATS))) return refuse('limit');
-    // One answer for everyone: the kept counts while they are young enough,
-    // or else the origin's, asked for once for all who wait (pot-stats.ts).
-    // Nothing of this request has a say in which: not its address, not a
-    // header, and a path with a query string never gets here.
+    // One answer for everyone this isolate serves: the kept counts while
+    // they are young enough, or else the origin's, asked for once for all
+    // who wait, or "unavailable" for a moment after a question that failed
+    // (pot-stats.ts). Nothing of this request has a say in which: not its
+    // address, not a header, and a path with a query string never gets here.
     const result = await potStatsForAll(deps);
     if (!result.ok) return refused(result);
     // The answer is written here, for this request, from the three counts
@@ -499,7 +522,8 @@ export function makeHandler(deps: Deps): Handler {
       const url = new URL(request.url);
       underEsplora = url.pathname.startsWith(`${API.esplora}/`);
       // No route takes a query string, so a path that has one is not a path we know.
-      const match = url.search === '' ? matchPath(url.pathname) : null;
+      // (Only `true` switches the pot's counts on: anything else in its place leaves them off.)
+      const match = url.search === '' ? matchPath(url.pathname, deps.config.potCounts === true) : null;
       if (match === null) {
         result = refuse('not_found');
       } else {

@@ -24,8 +24,17 @@
 //      every payment on the chain somebody else's, the line says the count
 //      alone; and a count the Worker has kept is an older figure in a
 //      sentence that is still true
+//   8. with the pot's counts switched off, which is how the Worker ships:
+//      the step is done as ever, the done card has no count line, and the
+//      page never asks for the counts
 //
-// All seven are local only: they pay the wallet from the stand-in, make
+// The Worker ships with the pot's counts switched off (POT_COUNTS in
+// worker/wrangler.jsonc), and a scenario's Worker has the shipped settings
+// unless the scenario says otherwise. Scenarios 1, 2, 3 and 7 read the
+// count line, so they switch the counts on (COUNTS_ON below). The others
+// run as shipped: their pages show no count line and ask for none.
+//
+// All eight are local only: they pay the wallet from the stand-in, make
 // blocks on it, ask the faucet, or take the network down.
 //
 // The other steps' files are named for their step. This one is not named
@@ -34,10 +43,11 @@
 
 import assert from 'node:assert/strict';
 import { deriveAddress, watchOnlyAccount } from '@learnbitcoin/practice-wallet';
-import { POT_STATS_KEEP_MS } from '@learnbitcoin/practice-worker';
+import { API } from '@learnbitcoin/practice-contract';
+import { POT_STATS_KEEP_MS, POT_STATS_PAUSE_MS } from '@learnbitcoin/practice-worker';
 import { fill } from '../../app/src/lib/format.ts';
 import { strings } from '../../app/src/strings/index.ts';
-import { OTHER_WORDS, TEST_WORDS, scenario, testRecord, type Scenario } from './helpers.ts';
+import { OTHER_WORDS, TEST_WORDS, scenario, testRecord, type OpenedPage, type Scenario, type ScenarioOptions } from './helpers.ts';
 import {
   arrivesAt,
   attributeOf,
@@ -98,6 +108,31 @@ const SOMEBODY = testRecord(OTHER_WORDS).firstAddress;
 /** The prepared wallet's receive address number `index`. */
 const receiveAddress = (index: number): string => deriveAddress(watchOnlyAccount(testRecord().xpub), 0, index).address;
 
+/**
+ * The Worker's settings with the pot's counts switched on: for the scenarios that read the count line under a
+ * done "Pass it on". (Off is how the Worker ships, and how every scenario runs that does not say this.)
+ */
+const COUNTS_ON: ScenarioOptions['stack'] = { vars: { POT_COUNTS: 'on' } };
+
+/**
+ * Keeps every request a page sends from now on, in the order the browser sends them and across page loads:
+ * the method, and the path with its query string. Files, the Worker's paths, everything.
+ */
+function watchRequests(page: OpenedPage): () => string[] {
+  const seen: string[] = [];
+  page.page.on('request', (request) => {
+    let asked = request.url();
+    try {
+      const url = new URL(asked);
+      asked = `${url.pathname}${url.search}`;
+    } catch {
+      // An address that is none is kept as it was written.
+    }
+    seen.push(`${request.method()} ${asked}`);
+  });
+  return () => [...seen];
+}
+
 /** The address the pot hands out right now, asked of the bots directly. */
 async function potOnNetwork(s: Scenario): Promise<string> {
   const answer = await fetch(`${s.stack.originUrl}/bots/pot/address`, { headers: { Authorization: `Bearer ${s.standIn.token}` } });
@@ -106,7 +141,7 @@ async function potOnNetwork(s: Scenario): Promise<string> {
 
 scenario(
   'Pass it on, from not started to done: a coin that is not in a block yet cannot be spent, the block that makes it spendable and the block that takes the payment in both come while the step stays open, and the pot counts one payment',
-  { localOnly: true, timeout: 200_000 },
+  { localOnly: true, timeout: 200_000, stack: COUNTS_ON },
   async (s) => {
     const site = s.stack.config.siteUrl;
     const record = testRecord();
@@ -192,7 +227,7 @@ scenario(
 
 scenario(
   'Pass it on with "Send all", after a done "Hold some": both are done, and both are still done once the coins are gone, the wallet is removed and the page is loaded again',
-  { localOnly: true, timeout: 200_000 },
+  { localOnly: true, timeout: 200_000, stack: COUNTS_ON },
   async (s) => {
     const record = testRecord();
     const fundings = [s.standIn.fund(receiveAddress(0), 100_000), s.standIn.fund(receiveAddress(1), 40_000)];
@@ -273,6 +308,11 @@ scenario(
       await reloadStep(page);
       await page.waitFor('step-done');
       assert.ok((await partsOf(page)).every((part) => part === 'ticked'), `${id} after a reload`);
+      // What the card says is what the reader did. It is as true now, with the coins sent on and the wallet
+      // gone from this browser: it says nothing of what the wallet or the pot holds today.
+      const said = await page.text('step-done-text');
+      assert.equal(said, en[`done_${id}`]);
+      assert.doesNotMatch(said, /\byou hold\b|\bholds your coins\b|\bis in a block\b|\bstill\b|\bnow\b/i, id);
       assert.equal(await hrefOf(page, 'step-back'), `${s.stack.config.siteUrl}${id === STEP ? CHAPTER : '/journey/what-bitcoin-actually-is'}#done=${id}`);
       assert.equal(await countOf(page, 'step-need'), 0);
       await page.click('step-list');
@@ -315,7 +355,7 @@ scenario(
 
 scenario(
   'Pass it on with the page loaded again after every part, and the faucet asked between two parts: each tick is still there after each load, and the payment noted before a load is the one the step waits for after it',
-  { localOnly: true, timeout: 200_000 },
+  { localOnly: true, timeout: 200_000, stack: COUNTS_ON },
   async (s) => {
     const record = testRecord();
     const reader = await begin(s, `/do/${STEP}`, { record });
@@ -400,12 +440,23 @@ scenario(
     assert.equal(await countOf(page, 'step-pot-count'), 0);
     assert.deepEqual(await partsOf(page), ['ticked', 'ticked', 'ticked']);
     assert.equal(await page.text('step-done-text'), en['done_pass-it-on']);
-    // The bots are back. The Worker kept nothing of the answer that failed, so the page that is loaded next is
-    // given the count again.
+    // The bots are back. The Worker kept no counts of the answer that failed. What it noted is that a question
+    // failed: for 5 seconds after that it asks nobody, so that bots which are down or slow are left alone. A
+    // page loaded within that time is told "unavailable" without the bots being asked, and shows no line...
     s.standIn.setFaucet('ok');
+    const askedBots = (): number => s.standIn.requests().filter((request) => request.path === '/bots/pot/stats').length;
+    const before = askedBots();
+    await reloadStep(page);
+    await page.waitFor('step-done');
+    await page.settle();
+    assert.equal(await countOf(page, 'step-pot-count'), 0);
+    assert.equal(askedBots(), before, 'the bots were not asked in the pause');
+    // ...and once those 5 seconds are over for the Worker, the page that is loaded next is given the count again.
+    s.stack.advanceClock(POT_STATS_PAUSE_MS);
     await reloadStep(page);
     await page.waitFor('step-pot-count');
     assert.equal(await page.text('step-pot-count'), en.potCountOne);
+    assert.equal(askedBots(), before + 1);
 
     await ends(
       s,
@@ -424,6 +475,7 @@ scenario(
         view('/do/pass-it-on'),
         view('/do/pass-it-on'),
         doIt('/do/pass-it-on', STEP),
+        view('/do/pass-it-on'),
         view('/do/pass-it-on'),
         view('/do/pass-it-on'),
         view('/do/pass-it-on'),
@@ -572,7 +624,7 @@ scenario(
 
 scenario(
   'The count under a done "Pass it on" is the pot\'s own figure and never says whose payments it counts: with the step done on an earlier visit and this wallet having paid nothing on the chain as it is now, the line is left out while the pot counts none, says "One payment" when somebody else has paid, and "3 payments" after two more; a figure the Worker has kept from a moment before is older, and the sentence is still true',
-  { localOnly: true, timeout: 150_000 },
+  { localOnly: true, timeout: 150_000, stack: COUNTS_ON },
   async (s) => {
     const record = testRecord();
     // "Pass it on", done three days ago: as it stands in a browser whose practice chain has been started again
@@ -602,7 +654,10 @@ scenario(
     await page.settle();
     assert.deepEqual(looks(), [1, 1]);
     assert.equal(await countOf(page, 'step-pot-count'), 0);
+    // The card says what happened three days ago. On this chain no block holds the payment and the pot holds
+    // no coin of this wallet's, and the sentence is true all the same: it says nothing of what is so today.
     assert.equal(await page.text('step-done-text'), en['done_pass-it-on']);
+    assert.equal(en['done_pass-it-on'], 'Your payment got into a block, and the pot took your coins to hand on to a learner who comes after you. The fee was what went in less what came out.');
 
     // -- Somebody else passes coins on, and a block takes the payment in. It is the only payment the pot has
     //    seen, and it is not this reader's. --
@@ -625,6 +680,10 @@ scenario(
     assert.equal(fill(en.potCount, { count: '3' }), '3 payments have been passed on to the pot so far.');
     // In Spanish, the same count and no more.
     assert.equal(await potLine(`/es/do/${STEP}`), 'Hasta ahora se han pasado 3 pagos al fondo común.');
+    assert.equal(
+      await page.text('step-done-text'),
+      'Tu pago entró en un bloque, y el fondo común recibió tus monedas para pasarlas a alguien que viene después de ti. La comisión fue lo que entró menos lo que salió.',
+    );
     assert.equal(fill(strings.doit.es.potCount, { count: '3' }), 'Hasta ahora se han pasado 3 pagos al fondo común.');
     for (const line of [en.potCountOne, en.potCount, strings.doit.es.potCountOne, strings.doit.es.potCount]) {
       assert.doesNotMatch(line, /\byours?\b|among them|\btuyo\b|entre ellos/i, line);
@@ -639,6 +698,123 @@ scenario(
       reader,
       [view('/do/pass-it-on'), view('/do/pass-it-on'), view('/do/pass-it-on'), view('/do/pass-it-on'), view('/do/pass-it-on'), view('/es/do/pass-it-on')],
       { records: [record], words: [WORDS], addresses: [record.firstAddress], txids: theirs },
+    );
+  },
+);
+
+scenario(
+  'Pass it on with the pot\'s counts switched off, as the Worker ships: the step is done as ever, the done card has no count line, and the page never asks for the counts, not when the step is done, not when its screen is loaded again, not from the list, not in Spanish; asked for by hand, they are a path the Worker does not know, and the practice network is left alone',
+  { localOnly: true, timeout: 200_000 },
+  async (s) => {
+    // As shipped: nothing in this scenario's settings switches the counts on, and the app is told that they cannot be had.
+    assert.equal(s.stack.config.potCounts, false);
+    const record = testRecord();
+    const funding = s.standIn.fund(record.firstAddress, 100_000);
+    // The watches are in place before the app loads: what the page counts, and every request it sends at all.
+    const page = await standBy(s, { timeout: 30_000, record });
+    const reader: Reader = { page, requests: watchEventRequests(page) };
+    const sent = watchRequests(page);
+    await page.goto(`/do/${STEP}`);
+
+    // -- The step, from its first part to done, with the block coming while the screen stays open --
+    await untilParts(page, ['ticked', 'now', 'later']);
+    await act(page, '/wallet/send');
+    const paid = await pay(page, 'pot', '30,000');
+    assert.equal(await page.waitForStatus(wallet.noticeSent), wallet.noticeSent);
+    await stripBack(page, STEP);
+    await untilParts(page, ['ticked', 'ticked', 'now']);
+    page.forgetStatus();
+    const height = await s.network.nextBlock();
+    await page.waitFor('step-done');
+    assert.equal(await page.waitForStatus(saidDone(STEP)), saidDone(STEP));
+    assert.deepEqual(await partsOf(page), ['ticked', 'ticked', 'ticked']);
+    assert.equal((await onNetwork(s, paid.txid)).status.block_height, height);
+    assert.deepEqual(stepsCounted(s), { 'pass-it-on': 1 });
+
+    /** The done card as it stands once the page has gone quiet: whole, but for the line with the pot's count. */
+    const cardWithoutCount = async (lang: 'en' | 'es', why: string): Promise<void> => {
+      await page.waitFor('step-done');
+      await page.settle();
+      assert.equal(await countOf(page, 'step-pot-count'), 0, why);
+      assert.equal(await page.text('step-done-text'), strings.doit[lang]['done_pass-it-on'], why);
+      assert.equal(await countOf(page, 'step-back'), 1, why);
+      assert.equal(await countOf(page, 'step-next'), 1, why);
+    };
+    await cardWithoutCount('en', 'the moment the step is done');
+    assert.equal(await hrefOf(page, 'step-back'), `${s.stack.config.siteUrl}${CHAPTER}#done=${STEP}`);
+
+    // -- The same card on a page that is loaded on it (its settings arrive after the card is drawn), from the
+    //    list inside the page, and in Spanish --
+    await reloadStep(page);
+    await cardWithoutCount('en', 'after a reload');
+    await page.click('step-list');
+    await arrivesAt(page, '/do');
+    assert.equal(await listState(page, STEP), 'done');
+    await pickStep(page, STEP);
+    await cardWithoutCount('en', 'from the list');
+    await page.goto(`/es/do/${STEP}`);
+    await cardWithoutCount('es', 'in Spanish');
+
+    // -- Every request the page sent, from its first to its last: none for the pot's counts. Of the pot it
+    //    asked for one thing, once: the address that "Pass it on" pays. --
+    const all = sent();
+    assert.ok(all.filter((line) => line === `GET ${API.config}`).length >= 3, 'the page read its settings on every load');
+    assert.ok(all.some((line) => line.startsWith(`GET ${API.esplora}/`)), 'and the chain');
+    assert.deepEqual(
+      all.filter((line) => line.includes(API.potStats)),
+      [],
+      'no request for the pot\'s counts left the page',
+    );
+    assert.deepEqual(
+      all.filter((line) => /\/pot\b|stats/i.test(line)),
+      [`POST ${API.potAddress}`],
+    );
+    // What the Worker wrote down agrees: no line for that route, and none for a path it does not know, which is
+    // what a request for the counts would have left.
+    assert.deepEqual(
+      s.stack.lines.filter((line) => line.route === 'pot_stats' || line.route === 'unknown'),
+      [],
+    );
+    // And so does the practice network: its bots were asked for the pot's address, and never for its counts.
+    const bots = (): string[] => s.standIn.requests().filter((request) => request.path.startsWith('/bots/pot')).map((request) => `${request.method} ${request.path}`);
+    assert.deepEqual(bots(), ['GET /bots/pot/address']);
+
+    // -- Asked for by hand, as anybody can ask: a path the Worker does not know. The answer is the answer to
+    //    any such path, header for header and byte for byte, and the practice network hears nothing of it. --
+    const answerOf = async (path: string, init?: RequestInit): Promise<[status: number, headers: string[], body: string]> => {
+      const response = await fetch(`${s.url}${path}`, init);
+      // (The time of day and the connection are the local server's own, not the Worker's.)
+      const headers = [...response.headers].filter(([name]) => name !== 'date' && name !== 'connection' && name !== 'keep-alive').map(([name, value]) => `${name}: ${value}`);
+      return [response.status, headers, await response.text()];
+    };
+    const unknown = await answerOf('/api/pot/statz');
+    assert.deepEqual([unknown[0], unknown[2]], [404, '{"error":"not_found"}']);
+    assert.deepEqual(await answerOf(API.potStats), unknown);
+    assert.deepEqual(await answerOf(API.potStats, { headers: { Origin: s.url, 'Sec-Fetch-Site': 'same-origin', 'Cache-Control': 'no-cache' } }), unknown);
+    assert.deepEqual(await answerOf(API.potStats, { method: 'POST', headers: { Origin: s.url }, body: '{"potCounts":true}' }), unknown);
+    assert.deepEqual((await answerOf(`${API.potStats}?POT_COUNTS=on`)).slice(0, 1), [404]);
+    assert.deepEqual(bots(), ['GET /bots/pot/address'], 'the bots were not asked');
+    assert.deepEqual(
+      s.stack.lines.filter((line) => line.route === 'pot_stats'),
+      [],
+    );
+    assert.equal(s.stack.lines.filter((line) => line.route === 'unknown' && line.status === 404).length, 5, 'each of the five wrote the line of an unknown path');
+
+    await ends(
+      s,
+      reader,
+      [
+        view('/do/pass-it-on'),
+        view('/wallet/send'),
+        { name: 'Payment', path: '/wallet/send', value: 'sent-to-pot' },
+        view('/do/pass-it-on'),
+        doIt('/do/pass-it-on', STEP),
+        view('/do/pass-it-on'),
+        view('/do'),
+        view('/do/pass-it-on'),
+        view('/es/do/pass-it-on'),
+      ],
+      { records: [record], words: [WORDS], addresses: [record.firstAddress, paid.to], txids: [funding, paid.txid] },
     );
   },
 );

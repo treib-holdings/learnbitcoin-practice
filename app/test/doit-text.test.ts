@@ -19,16 +19,19 @@
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import { test } from 'node:test';
-import { EVENTS, LANGS, STEPS, eventPaths } from '@learnbitcoin/practice-contract';
+import { EVENTS, LANGS, STEPS, eventPaths, type StepId } from '@learnbitcoin/practice-contract';
 import { DEFAULT_CONFIG } from '../src/lib/config.ts';
 import { EXPLAIN_SLOTS, EXPLAIN_TERMS } from '../src/lib/doit/explain.ts';
-import { SIX_BLOCKS, verdictOf, type BlockedReason, type World } from '../src/lib/doit/judge.ts';
-import { applyChange, emptyProgress, parseProgress, type Progress } from '../src/lib/doit/progress.ts';
+import { SIX_BLOCKS, isWalletTrouble, judge, verdictOf, type BlockedReason, type World } from '../src/lib/doit/judge.ts';
+import { PROGRESS_KEY, applyChange, emptyProgress, forgetProgress, parseProgress, readProgress, type Progress } from '../src/lib/doit/progress.ts';
 import { STEP_DEFS, partCount, partKey } from '../src/lib/doit/steps.ts';
 import { slotNames } from '../src/lib/format.ts';
-import { KEPT_KEYS, keptNowLines, noteNow, type KeptNow } from '../src/screens/info/facts.ts';
+import { RECORD_KEY } from '../src/lib/keystore.ts';
+import { doneKey, proofOf } from '../src/screens/doit/view.ts';
+import { KEPT_KEYS, keptNowLines, notKnown, noteNow, type KeptNow } from '../src/screens/info/facts.ts';
 import { strings } from '../src/strings/index.ts';
 import { FP, NOW, OTHER_FP, noWallet, record, txid, world } from './doit-worlds.ts';
+import { MemoryStorage } from './engine-fakes.ts';
 
 type Table = Readonly<Record<string, string>>;
 type Lang = (typeof LANGS)[number];
@@ -82,7 +85,20 @@ function sentences(text: string): string[] {
   return text.split(/(?<=[.?]) (?=[A-ZÁÉÍÓÚÑ¿"])/);
 }
 
-const REASONS: BlockedReason[] = ['no-wallet', 'no-coins', 'not-spendable-yet', 'nothing-sent', 'came-back-with-passkey', 'another-wallet', 'storage', 'trouble'];
+// Written as an object, so that the compiler refuses a reason that is missing here.
+const ALL_REASONS: Record<BlockedReason, true> = {
+  'no-wallet': true,
+  'no-coins': true,
+  'not-spendable-yet': true,
+  'nothing-sent': true,
+  'came-back-with-passkey': true,
+  'another-wallet': true,
+  storage: true,
+  trouble: true,
+  broken: true,
+  unread: true,
+};
+const REASONS = Object.keys(ALL_REASONS) as BlockedReason[];
 
 // -- the table and the code agree on the keys -------------------------------------------
 
@@ -95,10 +111,17 @@ test('every key the code builds from a step, a part or a reason is in the table,
         assert.ok(Object.hasOwn(table, `guide_${id}_${part}`), `guide_${id}_${part}`);
       }
     }
+    assert.equal(REASONS.length, 10);
     for (const reason of REASONS) {
       assert.ok(Object.hasOwn(table, `stripNeed_${reason}`), `stripNeed_${reason}`);
-      // A stored wallet that cannot be used is said by the wallet's own piece, not by a sentence here.
-      assert.equal(Object.hasOwn(table, `need_${reason}`), reason !== 'trouble', `need_${reason}`);
+      // The wallet's own trouble (a stored wallet that cannot be used, a wallet that cannot run in this
+      // browser, a storage the page was not let read) is said by the wallet's own piece, not by a sentence here.
+      assert.equal(Object.hasOwn(table, `need_${reason}`), !isWalletTrouble(reason), `need_${reason}`);
+    }
+    // And the table holds no strip words for a reason that does not exist.
+    for (const key of Object.keys(table)) {
+      const strip = /^stripNeed_(.+)$/.exec(key);
+      if (strip !== null) assert.ok((REASONS as string[]).includes(strip[1] ?? ''), key);
     }
     for (const number of [2, 3, 4]) assert.ok(Object.hasOwn(table, `chapter_${number}`), `chapter_${number}`);
     for (const term of [...EXPLAIN_TERMS, 'wallet', 'address', 'seed', 'explorer', 'height', 'faucet']) assert.ok(Object.hasOwn(table, `term_${term}`), `term_${term}`);
@@ -260,12 +283,12 @@ test('a done drill says what the restore changed, in the past tense: the card is
   assert.equal(en.changedTitle, 'What the restore changed');
   assert.equal(
     en.changed,
-    'When you restored the wallet from its 12 words, this browser began to keep it with those words, not encrypted, and stopped asking for the passkey. The passkey still opens the same wallet. About says what this browser keeps right now. To go back to the passkey for that wallet, remove the wallet that is in this browser, if there is one, and choose "Open with my passkey".',
+    'When you restored the wallet from its 12 words, this browser began to keep it with those words, not encrypted, and stopped asking for the passkey. The restore did not change the passkey: if you still have it, it opens the same wallet, and if it ever fails, the 12 words bring the wallet back. About says what this browser keeps right now. To go back to the passkey for that wallet, remove the wallet that is in this browser, if there is one, and choose "Open with my passkey".',
   );
   assert.equal(es.changedTitle, 'Lo que cambió con la restauración');
   assert.equal(
     es.changed,
-    'Cuando restauraste la billetera desde sus 12 palabras, este navegador empezó a guardarla con esas palabras, sin cifrar, y dejó de pedir la llave de acceso (passkey). La llave de acceso sigue abriendo la misma billetera. La página Acerca de dice qué guarda este navegador ahora mismo. Para volver a la llave de acceso con esa billetera, quita la billetera que haya en este navegador, si hay alguna, y elige "Abrir con mi llave de acceso (passkey)".',
+    'Cuando restauraste la billetera desde sus 12 palabras, este navegador empezó a guardarla con esas palabras, sin cifrar, y dejó de pedir la llave de acceso (passkey). La restauración no cambió la llave de acceso: si todavía la tienes, abre la misma billetera, y si alguna vez falla, las 12 palabras recuperan la billetera. La página Acerca de dice qué guarda este navegador ahora mismo. Para volver a la llave de acceso con esa billetera, quita la billetera que haya en este navegador, si hay alguna, y elige "Abrir con mi llave de acceso (passkey)".',
   );
   // The button is quoted exactly as each language draws it, and About is called by the name its link has.
   assert.equal(strings.wallet.en.openButton, 'Open with my passkey');
@@ -292,13 +315,37 @@ test('a done drill says what the restore changed, in the past tense: the card is
   for (const lang of LANGS) {
     const [restore, passkey, where, way] = sentences(strings.doit[lang].changed);
     assert.equal(sentences(strings.doit[lang].changed).length, 4, lang);
-    // What the restore did, in the past tense; that the passkey still opens the wallet; where the present is told; the way back.
+    // What the restore did, in the past tense; what it did not do to the passkey, and what holds if the reader
+    // still has it; where the present is told; the way back.
     assert.match(restore ?? '', lang === 'en' ? /^When you restored the wallet .* began to keep it .* stopped asking/ : /^Cuando restauraste la billetera .* empezó a guardarla .* dejó de pedir/, lang);
-    assert.match(passkey ?? '', lang === 'en' ? /still opens the same wallet\.$/ : /sigue abriendo la misma billetera\.$/, lang);
+    // Of the passkey the card promises nothing. The passkey lives in the reader's password manager: it can
+    // have been deleted there, be lost with a security key, or fail, and this page cannot know. So: what the
+    // restore did not do (past tense), what holds IF the reader still has it, and what brings the wallet back
+    // if it fails. Never a bare "the passkey still opens the same wallet".
+    assert.match(
+      passkey ?? '',
+      lang === 'en'
+        ? /^The restore did not change the passkey: if you still have it, it opens the same wallet, and if it ever fails, the 12 words bring the wallet back\.$/
+        : /^La restauración no cambió la llave de acceso: si todavía la tienes, abre la misma billetera, y si alguna vez falla, las 12 palabras recuperan la billetera\.$/,
+      lang,
+    );
     assert.match(where ?? '', lang === 'en' ? /^About says/ : /^La página Acerca de dice/, lang);
     // The way back removes whatever wallet is in this browser, and says so: with another wallet here, "the wallet" would be the wrong one.
     assert.match(way ?? '', lang === 'en' ? /remove the wallet that is in this browser, if there is one,/ : /quita la billetera que haya en este navegador, si hay alguna,/, lang);
   }
+
+  // No sentence of the card says, without a condition, what the passkey does or opens now.
+  assert.doesNotMatch(en.changed ?? '', /\bstill opens\b|\bThe passkey (still )?(opens|works|unlocks)\b|\byour passkey (still )?(opens|works|unlocks)\b/i);
+  assert.doesNotMatch(es.changed ?? '', /\bsigue abriendo\b|\bLa llave de acceso (sigue|abre|funciona)\b/i);
+  for (const lang of LANGS) {
+    for (const each of sentences(strings.doit[lang].changed)) {
+      const names = lang === 'en' ? /\bpasskey\b/.test(each) && /\b(opens|open|works|unlocks)\b/.test(each) : /llave de acceso/.test(each) && /\b(abre|funciona|desbloquea)\b/.test(each);
+      // The one sentence that says what the passkey opens says it under "if you still have it".
+      if (names && !/^To go back|^Para volver/.test(each)) assert.match(each, lang === 'en' ? /\bif you still have it\b/ : /\bsi todavía la tienes\b/, `${lang}: ${each}`);
+    }
+  }
+  // What Settings says before a removal is the same promise, and no stronger: the 12 words are the sure way back.
+  assert.match(strings.settings.en.removeBackPasskey, /A passkey can fail, so the 12 words are the sure way back\./);
 
   // What the past tense rests on. The note's `was` is how this browser kept the wallet when the drill's paper
   // check was ticked, and the drill's third part ticks only in a world where that same wallet is here and kept
@@ -356,7 +403,9 @@ test('the pot\'s line says payments, not people, and never whose: the page is gi
   // (For a count of 0 the line is left out: "none so far" under a step done by a payment to the pot would read
   // as a contradiction, and the page cannot tell which of the two is behind.)
   assert.match(done, /if \(passedOn === null \|\| passedOn < 1\) return '';/);
-  assert.match(done, /if \(id === 'pass-it-on'\) \{\s*void busyWhile\(wallet\.potStats\(\)\)/);
+  // Asked under "Pass it on" alone, and only where the Worker's settings say that the counts can be had: the
+  // one question sits behind asksPotCount (doit-view.test.ts holds that function, and this line, to the rule).
+  assert.match(done, /if \(!countsWanted \|\| asked\) return;\s*asked = true;\s*untrack\(\(\) => \{\s*void busyWhile\(wallet\.potStats\(\)\)/);
 });
 
 // -- nothing is said that the page does not do ---------------------------------------------------
@@ -381,8 +430,13 @@ test('what the list says of what is sent agrees with what is counted: the note s
   );
   assert.equal(strings.common.en.linkAbout, 'About');
   assert.equal(strings.common.es.linkAbout, 'Acerca de');
-  // It is drawn above the button, on the list, whenever there is something to forget.
-  assert.match(source('src/screens/Do.svelte'), /\{#if canForget\}\s*<Section title=\{t\.forgetTitle\}>\s*<div bind:this=\{root\} class="[^"]*">\s*<p class="[^"]*">\{t\.forgetWhat\}<\/p>/);
+  // It is drawn above the button, on the list, for a note that was read. For a stored value that is no note
+  // this version can read, the list says that instead (the next test): the sentence above describes a note.
+  assert.match(
+    source('src/screens/Do.svelte'),
+    /\{#if canForget\}\s*<Section title=\{t\.forgetTitle\}>\s*<div bind:this=\{root\} class="[^"]*">\s*\{#if doit\.read === 'unreadable'\}\s*<!--[^>]*-->\s*<p class="[^"]*" data-testid="do-forget-unreadable">\{t\.forgetUnreadable\}<\/p>\s*\{:else\}\s*<p class="[^"]*" data-testid="do-forget-what">\{t\.forgetWhat\}<\/p>\s*\{\/if\}/,
+  );
+  assert.equal(source('src/screens/Do.svelte').match(/\{t\.forgetWhat\}/g)?.length, 1, 'the sentence for a note is drawn in one place');
   // What it names is what a note holds. A note with every field a note can have, by the one write function's rules:
   let whole: Progress = emptyProgress();
   for (const change of [
@@ -434,8 +488,8 @@ test('six confirmations are the payment\'s own block and five on top: no sentenc
   assert.equal(SIX_BLOCKS, 6);
   assert.match(en['lede_waiting-room'] ?? '', /^You send a payment and watch it wait, get into a block, and reach six confirmations\./);
   assert.match(es['lede_waiting-room'] ?? '', /^Envías un pago y lo ves esperar, entrar en un bloque y llegar a seis confirmaciones\./);
-  assert.match(en['done_waiting-room'] ?? '', /^Your payment has six confirmations: its own block and five on top\./);
-  assert.match(es['done_waiting-room'] ?? '', /^Tu pago tiene seis confirmaciones: su propio bloque y cinco encima\./);
+  assert.match(en['done_waiting-room'] ?? '', /^Your payment reached six confirmations: its own block and five on top\./);
+  assert.match(es['done_waiting-room'] ?? '', /^Tu pago llegó a seis confirmaciones: su propio bloque y cinco encima\./);
   for (const key of ['lede_waiting-room', 'done_waiting-room', 'guide_waiting-room_3', 'guide_waiting-room_3_minute', 'guide_waiting-room_3_seconds']) {
     assert.doesNotMatch(en[key] ?? '', /six blocks on top|under six/i, key);
     assert.doesNotMatch(es[key] ?? '', /seis bloques encima|debajo de seis/i, key);
@@ -444,8 +498,10 @@ test('six confirmations are the payment\'s own block and five on top: no sentenc
 
 test('a done step states as fact only what the page checked: the paper is the reader\'s word, and change is not promised', () => {
   // "On paper" rests on the box the reader ticked, and where the words were read from no page can know.
-  assert.match(en['done_the-seed'] ?? '', /^You said your 12 words are on paper, and three of them matched\./);
-  assert.match(es['done_the-seed'] ?? '', /^Dijiste que tus 12 palabras están en papel, y tres de ellas coincidieron\./);
+  assert.match(en['done_the-seed'] ?? '', /^You said you wrote your 12 words on paper, and three of them matched\./);
+  assert.match(es['done_the-seed'] ?? '', /^Dijiste que escribiste tus 12 palabras en papel, y tres de ellas coincidieron\./);
+  // What the reader said is what the box says, in the past tense: where the paper is today nobody knows.
+  assert.equal(en.said, 'I wrote the 12 words on paper, in order.');
   assert.match(en['done_prove-the-backup'] ?? '', /^The wallet came back from its 12 words, with its coins\./);
   assert.match(es['done_prove-the-backup'] ?? '', /^La billetera volvió desde sus 12 palabras, con sus monedas\./);
   assert.doesNotMatch(en['done_prove-the-backup'] ?? '', /on paper/);
@@ -456,6 +512,164 @@ test('a done step states as fact only what the page checked: the paper is the re
   assert.match(en['done_no-balances'] ?? '', /one for the address paid and, when something is left over, one back to you as change\.$/);
   assert.match(es['done_no-balances'] ?? '', /una para la dirección de destino y, cuando sobra algo, otra de vuelta para ti como cambio\.$/);
   assert.match(en.explain_noChange ?? '', /^No change came back\./);
+});
+
+test('a done step says what the reader did and saw, in the past tense: its card is drawn from the note on every later visit, whatever has become of the wallet, the chain and the pot', () => {
+  // The six sentences, word for word, in both languages.
+  const said: Record<StepId, [english: string, spanish: string]> = {
+    'hold-some': [
+      "You got practice coins, and you did not have to take this page's word for it: the explorer showed the same coin in the same block. On Bitcoin it works the same way. Verify, don't trust.",
+      'Recibiste monedas de práctica, y no tuviste que creerle a esta página: el explorador mostró la misma moneda en el mismo bloque. En Bitcoin funciona igual. Verifica, no confíes.',
+    ],
+    'pass-it-on': [
+      'Your payment got into a block, and the pot took your coins to hand on to a learner who comes after you. The fee was what went in less what came out.',
+      'Tu pago entró en un bloque, y el fondo común recibió tus monedas para pasarlas a alguien que viene después de ti. La comisión fue lo que entró menos lo que salió.',
+    ],
+    'no-balances': [
+      'You counted the coins in your wallet, and opened one of its payments to see what it did to them. A wallet keeps no balance: it holds coins, and its total is what they add up to. A payment uses coins up whole and makes new ones: one for the address paid and, when something is left over, one back to you as change.',
+      'Contaste las monedas de tu billetera, y abriste uno de sus pagos para ver qué hizo con ellas. Una billetera no lleva ningún saldo: tiene monedas, y su total es lo que suman. Un pago gasta monedas enteras y crea monedas nuevas: una para la dirección de destino y, cuando sobra algo, otra de vuelta para ti como cambio.',
+    ],
+    'waiting-room': [
+      'Your payment reached six confirmations: its own block and five on top. On Bitcoin, undoing a payment that deep means redoing all six blocks faster than the rest of the network adds new ones. That is why six confirmations is the usual line for "settled".',
+      'Tu pago llegó a seis confirmaciones: su propio bloque y cinco encima. En Bitcoin, deshacer un pago a esa profundidad exige rehacer los seis bloques más rápido de lo que el resto de la red agrega bloques nuevos. Por eso seis confirmaciones son la línea habitual de "liquidado".',
+    ],
+    'the-seed': [
+      'You said you wrote your 12 words on paper, and three of them matched. Three right words do not prove the other nine: "Prove the backup" does that.',
+      'Dijiste que escribiste tus 12 palabras en papel, y tres de ellas coincidieron. Tres palabras correctas no comprueban las otras nueve: eso lo hace "Comprueba el respaldo".',
+    ],
+    'prove-the-backup': [
+      'The wallet came back from its 12 words, with its coins. The chain kept them the whole time, and the words only unlocked them: you own keys, not coins.',
+      'La billetera volvió desde sus 12 palabras, con sus monedas. La cadena las conservó todo el tiempo, y las palabras solo las desbloquearon: tienes claves, no monedas.',
+    ],
+  };
+  for (const id of STEPS) {
+    assert.equal(doneKey(id), `done_${id}`);
+    assert.equal(en[`done_${id}`], said[id][0], id);
+    assert.equal(es[`done_${id}`], said[id][1], id);
+  }
+
+  // The card is drawn from the step's note and from nothing else: for as long as the note says "done", on every
+  // later visit. By then the wallet may be removed or another one, its coins sent on, the practice chain
+  // started again (the payment and its block are gone), and the pot's coins handed to a newcomer.
+  const card = source('src/screens/doit/Done.svelte');
+  assert.match(card, /<p data-testid="step-done-text">\{t\[doneKey\(id\)\]\}<\/p>/);
+  assert.equal(card.match(/doneKey\(id\)/g)?.length, 1, 'one sentence, drawn in one place, under no condition');
+  assert.match(source('src/screens/doit/StepBody.svelte'), /let done = \$derived\(view\.state === 'done'\);/);
+  assert.match(source('src/screens/doit/StepBody.svelte'), /\{#if done\}\s*<Done \{id\} \{now\} \/>\s*\{\/if\}/);
+  for (const id of STEPS) {
+    // Done is what the note says, whatever the wallet is: no wallet, a storage nobody could read, another wallet.
+    const note = { v: 1 as const, following: null, steps: { [id]: { started: true as const, doneAt: NOW - 86_400_000 } } };
+    for (const seen of [noWallet({ note }), world({ note, status: 'unreadable', record: null }), world({ note, record: record('passkey', OTHER_FP) })]) {
+      const view = judge(id, seen);
+      assert.deepEqual([view.state, view.at, view.parts.every((part) => part.state === 'ticked')], ['done', null, true], id);
+    }
+  }
+
+  // So no sentence of it says what is so now: what the wallet or the browser holds, where a payment is, what
+  // the pot holds, what a screen shows. Each of these was in the table once, and each goes stale.
+  const nowEnglish = /\bYou hold\b|\byour wallet (holds|keeps)\b|\bis in a block\b|\bholds your coins\b|\bhas six confirmations\b|\bundo it now\b|\b12 words are on paper\b|\bonly unlock them\b|\bscreen shows\b|\bstill\b|\bnow\b|\btoday\b/i;
+  const nowSpanish = /\bTienes monedas\b|\bTu billetera (tiene|no lleva)\b|\bestá en un bloque\b|\bguarda tus monedas\b|\btiene seis confirmaciones\b|\bdeshacerlo ahora\b|\b12 palabras están en papel\b|\bsolo las desbloquean\b|\bmuestra las cifras\b|\btodavía\b|\bahora\b|\bhoy\b/i;
+  for (const id of STEPS) {
+    assert.doesNotMatch(en[`done_${id}`] ?? '', nowEnglish, id);
+    assert.doesNotMatch(es[`done_${id}`] ?? '', nowSpanish, id);
+  }
+
+  // Each opens with what the reader did or saw, in the past tense ...
+  const opens: Record<StepId, [english: RegExp, spanish: RegExp]> = {
+    'hold-some': [/^You got practice coins, and you did not have to\b/, /^Recibiste monedas de práctica, y no tuviste que\b/],
+    'pass-it-on': [/^Your payment got into a block, and the pot took your coins\b/, /^Tu pago entró en un bloque, y el fondo común recibió tus monedas\b/],
+    'no-balances': [/^You counted the coins in your wallet, and opened one of its payments\b/, /^Contaste las monedas de tu billetera, y abriste uno de sus pagos\b/],
+    'waiting-room': [/^Your payment reached six confirmations\b/, /^Tu pago llegó a seis confirmaciones\b/],
+    'the-seed': [/^You said you wrote your 12 words on paper, and three of them matched\./, /^Dijiste que escribiste tus 12 palabras en papel, y tres de ellas coincidieron\./],
+    'prove-the-backup': [/^The wallet came back from its 12 words, with its coins\. The chain kept them the whole time, and the words only unlocked them\b/, /^La billetera volvió desde sus 12 palabras, con sus monedas\. La cadena las conservó todo el tiempo, y las palabras solo las desbloquearon\b/],
+  };
+  for (const id of STEPS) {
+    assert.match(en[`done_${id}`] ?? '', opens[id][0], id);
+    assert.match(es[`done_${id}`] ?? '', opens[id][1], id);
+  }
+  // ... and rests on what the step's parts were ticked for. A step is done when its last part is ticked, and a
+  // part ticks only when every part before it is: so these facts held on the day the note says.
+  assert.deepEqual(STEP_DEFS['hold-some'].parts.map((part) => part.on), ['wallet-here', 'coins-seen', 'coin-confirmed', 'block-height']);
+  assert.deepEqual(STEP_DEFS['pass-it-on'].parts.map((part) => part.on), ['spendable', 'sent-to-pot', 'payment-confirmed']);
+  assert.deepEqual(STEP_DEFS['no-balances'].parts.map((part) => part.on), ['coins-opened', 'coin-count', 'payment-read']);
+  assert.deepEqual(STEP_DEFS['waiting-room'].parts.map((part) => part.on), ['sent', 'payment-confirmed', 'six-blocks']);
+  assert.deepEqual(STEP_DEFS['the-seed'].parts.map((part) => part.on), ['words-shown', 'written', 'three-words']);
+  assert.deepEqual(STEP_DEFS['prove-the-backup'].parts.map((part) => part.on), ['three-words', 'wallet-removed', 'restored-from-words', 'coins-found']);
+  // The page saw a payment's screen opened, and cannot see whether anything was read there: "opened ... to see".
+  assert.equal(proofOf('no-balances', 3), 'opened');
+  assert.doesNotMatch(en['done_no-balances'] ?? '', /\bread what\b/);
+  // The paper is the reader's word, said by ticking a box: "You said you wrote".
+  assert.equal(proofOf('the-seed', 2), 'said');
+
+  // What is not about the reader's own step is about Bitcoin, or about any wallet, and is true whatever
+  // happens on the practice network: it is said in general, never of "your wallet" or "your payment".
+  assert.match(en['done_hold-some'] ?? '', /On Bitcoin it works the same way\. Verify, don't trust\.$/);
+  assert.match(en['done_no-balances'] ?? '', /\. A wallet keeps no balance: it holds coins, and its total is what they add up to\. A payment uses coins up whole\b/);
+  assert.match(es['done_no-balances'] ?? '', /\. Una billetera no lleva ningún saldo: tiene monedas, y su total es lo que suman\. Un pago gasta monedas enteras\b/);
+  assert.match(en['done_waiting-room'] ?? '', /\. On Bitcoin, undoing a payment that deep means redoing all six blocks faster than the rest of the network adds new ones\./);
+  assert.match(es['done_waiting-room'] ?? '', /\. En Bitcoin, deshacer un pago a esa profundidad exige rehacer los seis bloques\b/);
+  // The pot took the coins "to hand on": it is not said to hold them (the faucet hands the oldest on with the
+  // next newcomer's payment), and the fee "was". No screen is named that a removed wallet no longer has.
+  assert.match(en['done_pass-it-on'] ?? '', /the pot took your coins to hand on to a learner who comes after you\. The fee was what went in less what came out\.$/);
+  assert.match(es['done_pass-it-on'] ?? '', /el fondo común recibió tus monedas para pasarlas a alguien que viene después de ti\. La comisión fue lo que entró menos lo que salió\.$/);
+  for (const lang of LANGS) {
+    for (const id of STEPS) assert.doesNotMatch(strings.doit[lang][`done_${id}`], /\bscreen\b|\bpantalla\b/i, `${lang}.done_${id}`);
+  }
+});
+
+test('"Forget my progress" speaks of this site, not of the whole browser; over a stored value that is no note, the list says what About says of it', () => {
+  // -- What is erased, and what is kept afterwards: said of this site. --
+  assert.equal(en.forgetWarn, 'Every tick and every finished step is erased from what this site keeps in this browser. Your wallet and its coins are not touched, and each step can be done again.');
+  assert.equal(en.forgotten, 'Your "Do it" progress was forgotten. This site keeps none of it now.');
+  assert.equal(es.forgetWarn, 'Cada marca y cada paso terminado se borra de lo que este sitio guarda en este navegador. Tu billetera y sus monedas no se tocan, y cada paso se puede volver a hacer.');
+  assert.equal(es.forgotten, 'Tu progreso de "Hazlo" se olvidó. Este sitio ya no guarda nada de él.');
+  // Never of the browser as a whole. "Forget my progress" deletes one value of this site's own storage. The
+  // link back to a chapter carries "#done=<step>", which is what the main site stamps a step's card on: that
+  // mark is the main site's, in its own storage in the same browser, where this site cannot reach.
+  assert.doesNotMatch(en.forgetWarn ?? '', /erased from this browser\b/);
+  assert.doesNotMatch(en.forgotten ?? '', /This browser keeps none\b/);
+  assert.doesNotMatch(es.forgetWarn ?? '', /se borra de este navegador\b/);
+  assert.doesNotMatch(es.forgotten ?? '', /Este navegador ya no guarda\b/);
+  for (const lang of LANGS) {
+    for (const key of ['forgetWarn', 'forgotten'] as const) assert.match(strings.doit[lang][key], lang === 'en' ? /\bthis site keeps\b/i : /\beste sitio (ya no )?guarda\b/i, `${lang}.${key}`);
+  }
+  const kept = new MemoryStorage();
+  kept.map.set(PROGRESS_KEY, JSON.stringify({ v: 1, following: null, steps: { 'hold-some': { started: true, doneAt: NOW } } }));
+  kept.map.set(RECORD_KEY, 'the wallet');
+  kept.map.set('another-key', 'not ours');
+  assert.equal(forgetProgress(kept as Storage), true);
+  assert.deepEqual([...kept.map.keys()].sort(), [RECORD_KEY, 'another-key'].sort(), 'exactly the note is erased');
+  // The question shows the first, the list and the status region the second.
+  const list = source('src/screens/Do.svelte');
+  assert.match(list, /<p id="\{uid\}-forget-what">\{t\.forgetWarn\}<\/p>/);
+  assert.match(list, /\{#if forgotten\}\s*<Notice kind="info" text=\{t\.forgotten\} data-testid="do-forgotten" \/>\s*\{\/if\}/);
+  assert.match(list, /forgotten = true;\s*announce\(t\.forgotten\);/);
+  // "None of it" is said only while nothing is stored where the note goes: the line goes as soon as the
+  // storage holds something again (a note, or anything else another tab left there), or cannot be read.
+  assert.match(list, /\$effect\(\(\) => \{\s*if \(doit\.read !== 'none'\) forgotten = false;\s*\}\);/);
+
+  // -- A stored value that is no note this version can read. --
+  assert.equal(en.forgetUnreadable, 'Something is stored where the note of your "Do it" progress goes, and this page cannot read it. "Forget my progress" erases it.');
+  assert.equal(es.forgetUnreadable, 'Hay algo guardado donde va la nota de tu progreso de "Hazlo", y esta página no puede leerlo. "Olvidar mi progreso" lo borra.');
+  // In the words About uses of the same browser, and then what the button under it does, quoted as it is drawn.
+  assert.equal(en.forgetUnreadable, `${strings.about.en.noteUnreadableNow} "${en.forget}" erases it.`);
+  assert.equal(es.forgetUnreadable, `${strings.about.es.noteUnreadableNow} "${es.forget}" lo borra.`);
+  // It does: for every stored text that is no note, the button's action removes it, and leaves the rest.
+  for (const text of ['not a note {', '[1]', '7', '""', '{"v":0}', '{}', '{"v":"1","steps":{}}', '']) {
+    const storage = new MemoryStorage();
+    storage.map.set(PROGRESS_KEY, text);
+    storage.map.set(RECORD_KEY, 'the wallet');
+    assert.equal(readProgress(storage as Storage).state, 'unreadable', text);
+    assert.equal(forgetProgress(storage as Storage), true, text);
+    assert.deepEqual([...storage.map.keys()], [RECORD_KEY], text);
+  }
+  // The sentence written for a note names what a note holds ("which steps you have opened and done, which
+  // parts are ticked ..."). Over a value nobody has read it would describe nothing: so it is drawn for a note
+  // that was read, and this one in its place otherwise. "Forget my progress" is offered under both.
+  assert.match(list, /let canForget = \$derived\(stated && \(doit\.read === 'kept' \|\| doit\.read === 'unreadable'\)\);/);
+  assert.match(list, /\{#if doit\.read === 'unreadable'\}\s*<!--[^>]*-->\s*<p class="[^"]*" data-testid="do-forget-unreadable">\{t\.forgetUnreadable\}<\/p>\s*\{:else\}\s*<p class="[^"]*" data-testid="do-forget-what">\{t\.forgetWhat\}<\/p>\s*\{\/if\}/);
+  assert.doesNotMatch(en.forgetUnreadable ?? '', /keeps a note|which steps|ticked|wallet fingerprint|payment/);
+  assert.doesNotMatch(es.forgetUnreadable ?? '', /guarda una nota|qué pasos|marcadas|huella|pago/);
 });
 
 test('the open part draws the way on for a reader with a wallet elsewhere, and for one with no paper copy; the step hides "Start this step again" by its rule', () => {
@@ -658,10 +872,12 @@ test('About, "in this browser right now": never "Nothing" while something is sto
     assert.deepEqual(keptNowLines(kind, 'none'), { text: KEPT_KEYS[kind], also: null }, kind);
   }
   // What counts as which: a note of this version or of a newer one is a note; something that is no note this
-  // version can read is said to be exactly that; nothing stored, and a storage this page may not look into, are "none".
+  // version can read is said to be exactly that; nothing stored is "none". A storage this page was not let
+  // look into is none of these: it is "blocked", and the line then says that the page cannot tell
+  // (test/storage-blocked.test.ts holds that state, in every pair, to its one sentence).
   assert.deepEqual(
     (['none', 'kept', 'unreadable', 'newer', 'blocked'] as const).map((read) => noteNow(read)),
-    ['none', 'kept', 'unreadable', 'kept', 'none'],
+    ['none', 'kept', 'unreadable', 'kept', 'blocked'],
   );
 
   // -- A note --
@@ -709,12 +925,13 @@ test('About, "in this browser right now": never "Nothing" while something is sto
   for (const lang of LANGS) {
     const table: Table = strings.about[lang];
     for (const kind of kinds) {
-      for (const note of ['none', 'kept', 'unreadable'] as const) {
+      for (const note of ['none', 'kept', 'unreadable', 'blocked'] as const) {
         const lines = keptNowLines(kind, note);
         const said = [table[lines.text], lines.also === null ? '' : table[lines.also]].join(' ');
         assert.equal(/\bnothing\b|\bnada\b/i.test(said), kind === 'none' && note === 'none', `${lang}, ${kind}, ${note}: ${said}`);
-        // And whenever something is stored in the note's place, the line names the note.
-        assert.equal(/"Do it"|"Hazlo"/.test(said), note !== 'none', `${lang}, ${kind}, ${note}: ${said}`);
+        // And whenever something is known to be stored in the note's place, the line names the note. (Where
+        // the page was not let read the storage, it names nothing as kept: it says that it cannot tell.)
+        assert.equal(/"Do it"|"Hazlo"/.test(said), note !== 'none' && !notKnown(kind, note), `${lang}, ${kind}, ${note}: ${said}`);
       }
     }
   }

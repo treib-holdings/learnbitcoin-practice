@@ -195,6 +195,10 @@
       </Notice>
     {:else if note === 'broken'}
       <Notice kind="problem" silent text={errors.passkey_broken} data-testid="sparrow-need-wallet" data-state={note} />
+    {:else if note === 'blocked'}
+      <Notice kind="info" text={t.needBlocked} data-testid="sparrow-need-wallet" data-state={note}>
+        <ReloadButton data-testid="sparrow-need-reload" />
+      </Notice>
     {/if}
 
     <div class={PART}>

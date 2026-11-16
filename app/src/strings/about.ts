@@ -112,7 +112,17 @@ export const en = {
     'The note never holds one of the 12 words, a key or an answer you typed. Removing the wallet leaves it in place: "Forget my progress" on the Do it screen erases it.',
   /** The label of the line that says what is stored here at this moment. One of the lines below follows it. */
   keepNowLabel: 'In this browser right now',
+  /** Only of a storage this page has read and found empty (src/lib/keystore.ts, loadRecord: null, never "blocked"). */
   keepNowNone: 'Nothing. This browser has no practice wallet.',
+  /**
+   * In place of every other line, when the browser did not let this page read its storage (site data blocked
+   * after a wallet was made, say: the browser then refuses every look and deletes nothing). The page has not
+   * seen that nothing is kept, it has seen nothing: so it says that it cannot tell, of the wallet and the note
+   * alike, and that what was stored before may still be here. In the past tense, so that it stays true until
+   * the page looks again.
+   */
+  keepNowBlocked:
+    'Not known. This browser did not let this page read what it may have stored here, so the page cannot tell what is kept. A wallet or a note stored here before may still be kept.',
   /** In its place, when no wallet is here and the note of the "Do it" steps is. */
   noteOnlyNow: 'No practice wallet. This browser keeps only the note of your "Do it" progress.',
   /** Under any of the lines below, when the note is stored beside what they name. */
@@ -276,6 +286,8 @@ export const es: Record<keyof typeof en, string> = {
     'La nota nunca contiene ninguna de las 12 palabras, ninguna clave ni ninguna respuesta que hayas escrito. Quitar la billetera la deja en su lugar: la borra "Olvidar mi progreso" en la pantalla Hazlo.',
   keepNowLabel: 'En este navegador, ahora mismo',
   keepNowNone: 'Nada. Este navegador no tiene billetera de práctica.',
+  keepNowBlocked:
+    'No se sabe. Este navegador no dejó que esta página leyera lo que pueda tener guardado aquí, así que la página no puede saber qué hay guardado. Una billetera o una nota guardadas aquí antes pueden seguir guardadas.',
   noteOnlyNow: 'Ninguna billetera de práctica. Este navegador guarda solo la nota de tu progreso de "Hazlo".',
   noteAlsoNow: 'Este navegador también guarda la nota de tu progreso de "Hazlo".',
   noteUnreadableNow: 'Hay algo guardado donde va la nota de tu progreso de "Hazlo", y esta página no puede leerlo.',

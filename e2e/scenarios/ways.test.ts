@@ -24,7 +24,9 @@ import {
   hook,
   noticeOf,
   refuseNextGet,
+  sleep,
   standBy,
+  storedRecord,
   textOf,
   toSection,
   typeWords,
@@ -176,6 +178,157 @@ scenario(
     await second.waitFor('overview-restored');
     assert.equal(await noticeOf(second, 'overview-restored'), wallet.restoredHere);
     assert.equal(await second.waitForStatus(wallet.restoredHere), wallet.restoredHere);
+  },
+);
+
+// -- a page the browser brings back from its memory ---------------------------------------------------------
+
+/** What the page was told each time it was shown, written down by a listener the scenario put there. */
+type Shown = { __shows?: boolean[] };
+
+/**
+ * Marks the document that is showing, and has it note every time it is
+ * shown again and whether the browser brought it back whole from its memory
+ * (pageshow, persisted). A document that is loaded anew has no such mark.
+ */
+const markDocument = (page: OpenedPage): Promise<void> =>
+  page.page.evaluate(() => {
+    const shows: boolean[] = [];
+    (window as unknown as Shown).__shows = shows;
+    window.addEventListener('pageshow', (event) => shows.push(event.persisted));
+  });
+
+/** How often the marked document was brought back from the browser's memory. Null: this is not the marked document. */
+const broughtBack = (page: OpenedPage): Promise<number | null> =>
+  page.page.evaluate(() => {
+    const shows = (window as unknown as Shown).__shows;
+    return shows === undefined ? null : shows.filter((persisted) => persisted).length;
+  });
+
+/**
+ * Presses the browser's Back button until the marked document is on the
+ * screen again, brought back from the browser's memory `times` times in
+ * all. A press that only moves inside the app, and one that loads a page,
+ * each count as one press.
+ */
+async function backToMarked(page: OpenedPage, times: number): Promise<void> {
+  const trail: string[] = [];
+  for (let press = 1; press <= 10; press++) {
+    await page.page.goBack().catch(() => null);
+    await sleep(250);
+    const back = await broughtBack(page).catch(() => null);
+    trail.push(await page.page.evaluate(() => `${location.host}${location.pathname}`).catch(() => '(on its way)'));
+    if (back === times) return;
+  }
+  throw new Error(`the page the reader left did not come back from the browser's memory, so nothing was shown about it: ${trail.join(' <- ')}`);
+}
+
+scenario(
+  'The Overview\'s line after a restore, "This browser now keeps them", is drawn only while it is so: brought back from the browser\'s memory with Back it still stands over the wallet that was restored, and it is gone over that same wallet once it is behind its passkey again, and over another wallet',
+  { timeout: 300_000 },
+  async (s) => {
+    const c = strings.common.en;
+    // Another site, on this machine. The reader leaves the wallet for it in the same tab, as "Back to the
+    // chapter" takes them to the main site, and comes back with the browser's Back button.
+    const otherSite = await s.elsewhere();
+
+    // -- The same wallet, back behind its passkey. --
+    const page = await standBy(s, { passkey: 'prf', allow: [otherSite], timeout: 30_000 });
+    await page.goto('/new');
+    await page.waitFor('create-passkey');
+    const made = await createFrom(page, 'create-passkey');
+    await page.click('words-written');
+    await arrivesAt(page, '/wallet');
+    // The drill of chapter 4: removed, and restored from the 12 words. (The practice network knows no history
+    // of this new wallet, so the reader chooses to keep the words here.)
+    await toSection(page, '/wallet/settings');
+    await page.click('remove-wallet');
+    await page.waitFor('remove-confirm');
+    await untilAnswersCount();
+    await page.click('remove-confirm');
+    await arrivesAt(page, '/');
+    await page.click('home-restore');
+    await arrivesAt(page, '/restore');
+    await typeWords(page, made.words);
+    await page.click('restore-check');
+    await page.click('restore-go');
+    await page.waitFor('restore-keep');
+    await page.click('restore-keep');
+    await arrivesAt(page, '/wallet');
+    await page.waitFor('overview-restored');
+    assert.equal(await noticeOf(page, 'overview-restored'), wallet.restoredHere);
+    assert.equal(wallet.restoredHere, 'This wallet was restored from its 12 words. This browser now keeps them.');
+    assert.deepEqual([(await storedRecord(page))?.kind, (await storedRecord(page))?.fingerprint], ['words', made.record.fingerprint]);
+    await markDocument(page);
+
+    // The reader leaves for another site in this tab, and comes straight back with Back. The browser brings
+    // the page back as it was. Nothing has changed: the line is still true, and it still stands.
+    await page.page.goto(`${otherSite}/chapter`, { waitUntil: 'load' });
+    await backToMarked(page, 1);
+    await page.waitFor('wallet-fingerprint');
+    assert.equal(await page.text('wallet-fingerprint'), made.record.fingerprint);
+    assert.equal(await noticeOf(page, 'overview-restored'), wallet.restoredHere);
+
+    // The reader leaves again, comes back to the wallet by its address (a page of its own), removes the
+    // wallet there and opens it with its passkey: the same wallet, and this browser keeps no words of it now.
+    await page.page.goto(`${otherSite}/chapter`, { waitUntil: 'load' });
+    await page.goto('/wallet/settings');
+    await page.click('remove-wallet');
+    await page.waitFor('remove-confirm');
+    await untilAnswersCount();
+    await page.click('remove-confirm');
+    await arrivesAt(page, '/');
+    await page.page.bringToFront();
+    await page.click('open-passkey');
+    await arrivesAt(page, '/wallet');
+    await page.waitFor('wallet-fingerprint');
+    const behind = await storedRecord(page);
+    assert.deepEqual([behind?.kind, behind?.fingerprint, behind?.mnemonic], ['passkey', made.record.fingerprint, undefined]);
+
+    // Back, until the Overview the reader left is on the screen again: out of the browser's memory, as it was.
+    await backToMarked(page, 2);
+    // The page looks at what is stored when it is shown again, so it shows the wallet as this browser keeps
+    // it now: locked behind its passkey.
+    await until(async () => (await countOf(page, 'lock-state')) === 1, 'the Overview shows the wallet behind its passkey');
+    assert.ok((await page.text('lock-state')).startsWith(c.stateLocked));
+    assert.equal(await page.text('wallet-fingerprint'), made.record.fingerprint);
+    assert.equal((await storedRecord(page))?.kind, 'passkey');
+    // And it does not say that this browser keeps the 12 words: it keeps none.
+    assert.equal(await countOf(page, 'overview-restored'), 0, 'the line outlived the state it was said of');
+    assert.ok(!(await textOf(page, 'main')).includes('This browser now keeps them'));
+
+    // -- Another wallet in its place. --
+    const fresh = freshRecord();
+    const second = await s.open('/restore', { allow: [otherSite], timeout: 30_000 });
+    await typeWords(second, (fresh.mnemonic ?? '').split(' '));
+    await second.click('restore-check');
+    await second.click('restore-go');
+    await second.waitFor('restore-keep');
+    await second.click('restore-keep');
+    await arrivesAt(second, '/wallet');
+    await second.waitFor('overview-restored');
+    assert.equal(await second.text('wallet-fingerprint'), fresh.fingerprint);
+    await markDocument(second);
+    await second.page.goto(`${otherSite}/chapter`, { waitUntil: 'load' });
+    // Back by the wallet's address: removed, and a new wallet made in its place, also kept with its words.
+    await second.goto('/wallet/settings');
+    await second.click('remove-wallet');
+    await second.waitFor('remove-confirm');
+    await untilAnswersCount();
+    await second.click('remove-confirm');
+    await arrivesAt(second, '/');
+    await second.click('home-create');
+    await arrivesAt(second, '/new');
+    await second.waitFor('create-words');
+    const other = await createFrom(second, 'create-words');
+    assert.notEqual(other.record.fingerprint, fresh.fingerprint);
+    await second.click('words-written');
+    await arrivesAt(second, '/wallet');
+
+    await backToMarked(second, 1);
+    await until(async () => (await second.text('wallet-fingerprint')) === other.record.fingerprint, 'the Overview shows the wallet that is in the browser now');
+    // That wallet was made here a moment ago. It was never restored: the line must not stand over it.
+    assert.equal(await countOf(second, 'overview-restored'), 0, 'the line stands over a wallet it was never said of');
   },
 );
 
