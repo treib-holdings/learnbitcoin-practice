@@ -132,7 +132,7 @@ export const en = {
    * button filled in.
    */
   reviewCheck:
-    'Check the whole address, every character of it, before you send. A payment cannot be called back once it is sent, here or on Bitcoin.',
+    'Carefully check the address before you send. A payment cannot be called back once it is sent, here or on Bitcoin.',
   reviewParts: 'What goes in and what comes out',
   send: 'Send it',
   sending: 'Sending...',
