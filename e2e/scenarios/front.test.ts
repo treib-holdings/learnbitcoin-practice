@@ -587,6 +587,23 @@ scenario('create without a passkey: nothing is stored before the tap; then a rec
   assert.equal(await saidAlready(), false);
   // The keys are loaded, so the next screen shows the words with no prompt: no reload happened on the way.
   assert.equal(page.responses.filter((response) => response.type === 'document').length, 1);
+  // "Wallet made": what to do with the words stands above them. Before it in the page comes the warning for
+  // a screen reader, which would speak the words next; that line is not drawn, and takes up a single point.
+  await page.waitFor('word');
+  assert.equal(await page.text('write-down'), strings.backup.en.writeDown);
+  assert.equal(await page.text('spoken-aloud'), strings.backup.en.spokenAloud);
+  assert.deepEqual(
+    await page.page.evaluate(() => {
+      const one = (id: string): Element => document.querySelector(`[data-testid="${id}"]`)!;
+      const spoken = one('spoken-aloud').getBoundingClientRect();
+      return {
+        spokenFirst: (one('spoken-aloud').compareDocumentPosition(one('write-down')) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0,
+        spokenSize: [Math.round(spoken.width), Math.round(spoken.height)],
+        writeAbove: one('write-down').getBoundingClientRect().bottom <= one('word').getBoundingClientRect().top,
+      };
+    }),
+    { spokenFirst: true, spokenSize: [1, 1], writeAbove: true },
+  );
 
   const events = await counted(s, page);
   assert.deepEqual(on(events, '/new'), [

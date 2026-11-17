@@ -17,15 +17,20 @@
 // how often a block comes (from the wallet's settings), how long the faucet
 // leaves a paid address alone and Bitcoin's own block time (named constants
 // in screens/receive/faucet.ts). test/receive-text.test.ts holds the table
-// to that, and to what the screen may say about the bot check: it is
-// Cloudflare's, it loads only when coins are asked for, it examines the
-// browser and it is given the address. Nothing here promises more. A wallet
-// opened with a passkey is told what asking does (it locks the wallet, and
-// the next move loads the page afresh) and how far that goes: the check's
-// code cannot read keys that were loaded before it. It could still ask the
-// passkey itself or open a window, which this page never does after the
-// tap, so the reader is told to cancel a prompt and close a window that
-// comes then. The lines never say that the check is kept away from the keys.
+// to that, and to what the screen may say about the bot check.
+//
+// Above the button the faucet's card says two things in the open: what the
+// faucet sends, and that a quick security check may come before it. What
+// that check is stands under them, behind a folded line that the reader
+// opens: it is Cloudflare's, it loads only when coins are asked for, it
+// examines the browser and it is given the address. Nothing here promises
+// more. Behind the same line a wallet opened with a passkey is told what
+// asking does (it locks the wallet, and the next move loads the page
+// afresh) and how far that goes: the check's code cannot read keys that
+// were loaded before it. It could still ask the passkey itself or open a
+// window, which this page never does after the tap, so the reader is told
+// to cancel a prompt and close a window that comes then. The lines never
+// say that the check is kept away from the keys.
 //
 // The Spanish here is a first draft that no native reviewer has read yet.
 
@@ -68,11 +73,16 @@ export const en = {
   // -- the faucet --
   faucetTitle: 'The faucet',
   /** {amount} carries its unit, as in "100,000 practice sats". */
-  faucetPays: 'The faucet pays {amount} to the address above.',
-  /** What the bot check is, before the reader asks. About says the same and more. */
+  faucetPays:
+    'The faucet sends {amount} to the address above. They work like bitcoin in this exercise, but have no real-world value.',
+  /** Under it while the button is there: what to press, and that a check may come first. {button} is the button's own words. */
+  faucetStart: 'Press "{button}" to get started. You may be asked to complete a quick security check first.',
+  /** The folded line between that and the button. What it opens says what the check is: the three sentences below. */
+  faucetCheckSummary: 'About the security check',
+  /** Behind the folded line. What the bot check is, before the reader asks. About says the same and more. */
   faucetCheck:
     "First a bot check runs in this page. It is Cloudflare's: it loads only when you ask for coins, examines your browser and is given this address.",
-  /** For a wallet this browser opens with a passkey, before the tap: what asking does, and what that is good for. */
+  /** Behind the folded line too, for a wallet this browser opens with a passkey: what asking does, and what that is good for. */
   faucetLocks:
     "Asking for coins locks this wallet, and your next move to another screen loads the page afresh. So the bot check's code cannot read keys that were loaded before it.",
   /** Under it: what the lock does not stop, said as what the reader can do about it. */
@@ -93,7 +103,7 @@ export const en = {
   settingsFailed: 'So this page does not know whether the faucet is open. Reload the page to ask again.',
 
   // -- the state of a request to the faucet, one for every phase --
-  /** Whose check it is and what it is given stands above the button, and stays there while the check runs. */
+  /** Whose check it is and what it is given stands above the button, behind the folded line, and stays there while the check runs. */
   stateChecking: 'Checking that you are not a bot. This takes a moment. If it shows a box below, tick it.',
   /** Said by the status region when the bot check's box has stood on screen for a moment: for a reader who cannot see it. */
   checkBoxShows: 'The bot check is showing a box under the button. Tick it to go on.',
@@ -156,7 +166,11 @@ export const es: Record<keyof typeof en, string> = {
   pathNote: 'El último número dice cuál de las direcciones de recepción de la billetera es, empezando por 0.',
 
   faucetTitle: 'El faucet',
-  faucetPays: 'El faucet le paga {amount} a la dirección de arriba.',
+  faucetPays:
+    'El faucet le envía {amount} a la dirección de arriba. En este ejercicio funcionan como bitcoin, pero no tienen ningún valor en el mundo real.',
+  faucetStart:
+    'Toca "{button}" para empezar. Puede que primero se te pida completar una comprobación de seguridad rápida.',
+  faucetCheckSummary: 'Sobre la comprobación de seguridad',
   faucetCheck:
     'Primero se ejecuta en esta página una comprobación contra bots. Es de Cloudflare: se carga solo cuando pides monedas, examina tu navegador y recibe esta dirección.',
   faucetLocks:

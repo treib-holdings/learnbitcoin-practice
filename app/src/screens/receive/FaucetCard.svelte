@@ -1,15 +1,20 @@
 <script lang="ts">
   // The faucet: "Get practice coins", and what becomes of the request.
   //
-  // Before the tap the card says what the faucet pays and what the bot
-  // check is: Cloudflare's, loaded only when coins are asked for, given the
-  // address. A wallet opened with a passkey is also told that asking locks
-  // it, what that keeps from the check's code, and to cancel a passkey
-  // prompt or close a window that comes after the tap: this page opens
-  // neither then, and the lock cannot stop the check's code from doing so.
-  // The button names those paragraphs as its description, so a reader who
-  // tabs to it hears them too. Nothing of the bot check is in the page until
-  // the tap.
+  // Before the tap the card says, in the open, what the faucet sends, which
+  // button to press, and that a quick security check may come first. The
+  // button names those two paragraphs as its description, so a reader who
+  // tabs to it hears them too.
+  //
+  // What that check is stands between them and the button, behind a folded
+  // line that the reader opens or passes: Cloudflare's, loaded only when
+  // coins are asked for, given the address. Behind the same line a wallet
+  // opened with a passkey is told that asking locks it, what that keeps
+  // from the check's code, and to cancel a passkey prompt or close a window
+  // that comes after the tap: this page opens neither then, and the lock
+  // cannot stop the check's code from doing so. A reader who tabs meets the
+  // folded line before the button, as a reader who looks does. Nothing of
+  // the bot check is in the page until the tap.
   //
   // The tap hands the wallet a token source (bot-check.ts). The wallet runs
   // the request and publishes its phases; this card only draws them
@@ -55,6 +60,7 @@
   import Actions from '../../components/Actions.svelte';
   import Button from '../../components/Button.svelte';
   import Card from '../../components/Card.svelte';
+  import Details from '../../components/Details.svelte';
   import Notice from '../../components/Notice.svelte';
   import { announce, busyWhile } from '../../components/status.svelte.ts';
   import { splitLead } from '../../components/text.ts';
@@ -316,17 +322,25 @@
   {:else}
     <div id={about} class="space-y-3">
       <p class="text-base leading-normal text-ink-800">{fill(t.faucetPays, { amount: pays })}</p>
-      <!-- What the tap sets going. Once the faucet has paid there is no button, and both have happened. -->
+      <!-- While the button is there: which button to press, and that a check may come first. -->
       {#if button !== 'done'}
-        <p class="text-sm text-ink-600">{t.faucetCheck}</p>
-        {#if passkey}
-          <p class="text-sm text-ink-600" data-testid="faucet-locks">{t.faucetLocks}</p>
-          <p class="text-sm text-ink-600" data-testid="faucet-no-prompt">{t.faucetNoPrompt}</p>
-        {/if}
+        <p class="text-sm text-ink-600" data-testid="faucet-start">{fill(t.faucetStart, { button: t.faucetAsk })}</p>
       {/if}
     </div>
 
     {#if button !== 'done'}
+      <!-- What the tap sets going, behind a folded line that stands before the button. Once the faucet
+           has paid there is no button, and both have happened. -->
+      <Details class="mt-4" summary={t.faucetCheckSummary} data-testid="faucet-check">
+        <div class="space-y-2 text-ink-600">
+          <p>{t.faucetCheck}</p>
+          {#if passkey}
+            <p data-testid="faucet-locks">{t.faucetLocks}</p>
+            <p data-testid="faucet-no-prompt">{t.faucetNoPrompt}</p>
+          {/if}
+        </div>
+      </Details>
+
       <Actions class="mt-5">
         <Button
           variant="primary"

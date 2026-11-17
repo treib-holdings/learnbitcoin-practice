@@ -337,6 +337,14 @@ scenario('Backup: the 12 words show only when asked for, are the stored wallet\'
     `${named(strings.backup.en.chapterLink)} ${strings.common.en.opensNewTab}`,
   );
   assert.match(await page.text('spoken-aloud'), /A screen reader will read the 12 words aloud/);
+  // That warning is for a screen reader alone: it is in the page and is not drawn. It takes up a single point.
+  assert.deepEqual(
+    await page.page.$eval(byTestId('spoken-aloud'), (line) => {
+      const box = line.getBoundingClientRect();
+      return [Math.round(box.width), Math.round(box.height)];
+    }),
+    [1, 1],
+  );
   // Tab passes over that warning, so the button carries it as its description: a screen reader says it
   // when the button takes focus.
   assert.match(
@@ -355,6 +363,14 @@ scenario('Backup: the 12 words show only when asked for, are the stored wallet\'
   await page.waitFor('word');
   assert.deepEqual(await page.texts('word'), words);
   assert.deepEqual(await page.texts('word'), (JSON.parse((await page.stored())!) as { mnemonic: string }).mnemonic.split(' '));
+  // What to do with the words stands under "Hide them", and the sentence on the rehearsal straight after it.
+  assert.equal(await page.text('write-down'), strings.backup.en.writeDown);
+  assert.ok(
+    (await page.page.$eval(byTestId('hide-words'), (button) => button.getBoundingClientRect().bottom)) <=
+      (await page.page.$eval(byTestId('write-down'), (line) => line.getBoundingClientRect().top)),
+    'the sentence on what to do with the words stands under the row of "Hide them"',
+  );
+  assert.ok((await seenText(page)).replace(/\s+/g, ' ').includes(`${strings.backup.en.writeDown} ${strings.backup.en.after}`));
   // The step swapped in place: its heading says so and has the focus.
   assert.equal(await heading(page), 'Your 12 words');
   assert.equal(await focused(page), 'H1');

@@ -39,7 +39,10 @@ export const en = {
   /** What the reader should know before the words are on screen. */
   before:
     'These 12 words are the whole wallet. Anyone who sees them can spend its coins from any device. Check that nobody else can see your screen.',
-  /** Said before the words are shown: a screen reader reads out whatever is on the page. */
+  /**
+   * For a screen reader alone, which reads out whatever is on the page: said before the words, and never drawn
+   * on the screen. Before the words are shown it is the description of the button that shows them.
+   */
   spokenAloud: 'A screen reader will read the 12 words aloud. Use headphones, or check that nobody else can hear.',
   show: 'Show the 12 words',
   /** The one line the unlock step shows: what the keys are needed for here. */
@@ -58,8 +61,14 @@ export const en = {
   // -- the words, shown --
   /** The heading while the words are on screen, and of the words at the "Wallet made" step. */
   shownTitle: 'Your 12 words',
-  after:
-    'Write them on paper, in order, as you would for a real wallet. Take no photo and no screenshot, even though these are practice words. This is a rehearsal for the day the words guard real money.',
+  /**
+   * What to do with the words, and what never to do. Above the words at the "Wallet made" step; where the
+   * words are shown at any other time it stands under the row of buttons, before the sentence on the rehearsal.
+   */
+  writeDown:
+    'Write them on paper, in order, as you would for a real wallet. Take no photo and no screenshot, make no digital copy, ever.',
+  /** Under the words, in both places: why practice words are handled like real ones. */
+  after: 'Even though these are practice words, this is a rehearsal for the day the words guard real money.',
   /**
    * The line that keeps practice words from ever being used for a real wallet. It is drawn once wherever the
    * 12 words are on screen. At the "Wallet made" step it stands before any button that ends the step: in the
@@ -159,8 +168,9 @@ export const es: Record<keyof typeof en, string> = {
     'La billetera de este navegador cambió en otra pestaña, así que las 12 palabras se quitaron de la pantalla. Eran de la billetera que estaba aquí antes. Vuelve a pedirlas para ver las palabras de la billetera que está aquí ahora.',
 
   shownTitle: 'Tus 12 palabras',
-  after:
-    'Escríbelas en papel, en orden, como lo harías con una billetera de verdad. No les tomes foto ni captura de pantalla, aunque sean palabras de práctica. Es un ensayo para el día en que las palabras protejan dinero de verdad.',
+  writeDown:
+    'Escríbelas en papel, en orden, como lo harías con una billetera de verdad. No les tomes foto ni captura de pantalla, y no hagas ninguna copia digital, nunca.',
+  after: 'Aunque sean palabras de práctica, este es un ensayo para el día en que las palabras protejan dinero de verdad.',
   neverRealMoney:
     'Nunca pongas dinero de verdad en estas 12 palabras. Las palabras que estuvieron en una página web solo sirven para practicar: una billetera de verdad debe generar las suyas.',
   hide: 'Ocultarlas',

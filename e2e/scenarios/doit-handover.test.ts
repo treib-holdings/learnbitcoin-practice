@@ -2254,7 +2254,7 @@ scenario(
     await page.waitFor('hide-words');
     // (Not counted again: "Words shown" is sent once for a wallet in one page, and "Wallet made" showed them.)
     await nothingNew('Backup, with the words shown');
-    // The sentence on real money is where it was: under "Hide them" and its paragraph, once.
+    // The sentence on real money is where it was: under "Hide them" and the two sentences that follow it, once.
     assert.equal(await standInOrder(page, ['last:word', 'hide-words', 'never-real-money']), true);
     assert.deepEqual([await countOf(page, 'never-real-money'), await saysTimes(backup.neverRealMoney)], [1, 1]);
     // A payment's screen: no line.

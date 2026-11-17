@@ -157,7 +157,8 @@ scenario(
     await toSection(page, '/wallet/receive');
     await page.waitFor('faucet-ask');
     assert.equal(await page.text('lock-state'), UNLOCKED);
-    // What the reader is told before the tap: what asking does, how far that goes, and what to do about the rest.
+    // What the card holds for the reader before the tap, behind its folded line about the check: what asking
+    // does, how far that goes, and what to do about the rest.
     assert.equal(await page.text('faucet-locks'), receive.faucetLocks);
     assert.equal(await page.text('faucet-no-prompt'), receive.faucetNoPrompt);
     const usesBefore = await usesOf(page);
@@ -179,7 +180,7 @@ scenario(
 
     // -- "The lock goes no further than that": its own prompt got the passkey's secret, and with it the wallet's 12 words. --
     // The harness's device approves every prompt by itself. A reader would see a prompt they did not ask
-    // for, on a screen that has just told them it opens none: "cancel it".
+    // for, on a screen whose folded line says that it opens none: "cancel it".
     assert.match(found.prf, /^[0-9a-f]{64}$/, found.prf);
     assert.equal(mnemonicFromEntropy(entropyFromPrf(Uint8Array.from(Buffer.from(found.prf, 'hex')))), made.words.join(' '));
     assert.equal(await usesOf(page), usesBefore + 1, 'the one prompt after the tap was the script\'s own');

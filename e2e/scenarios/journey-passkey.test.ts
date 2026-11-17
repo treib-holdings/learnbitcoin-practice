@@ -39,6 +39,7 @@ import {
   backWithLoad,
   botCheckScripts,
   broadcastsOf,
+  checkFold,
   countOf,
   countedExactly,
   createFrom,
@@ -52,6 +53,7 @@ import {
   hook,
   nothingPrivate,
   onNetwork,
+  openCheckFold,
   pairsOf,
   passkeyRecordOf,
   patternMemory,
@@ -439,7 +441,7 @@ scenario(
     assert.equal(await countOf(page, 'reveal-words'), 1);
     await toSection(page, '/wallet/receive');
 
-    // -- Before the tap: unlocked, the card says what asking will do, and nothing of the bot check is in the page --
+    // -- Before the tap: unlocked, the card holds what asking will do, and nothing of the bot check is in the page --
     await page.waitFor('faucet-ask');
     const address = await page.text('receive-address');
     assert.equal(address, record.firstAddress);
@@ -447,11 +449,21 @@ scenario(
     assert.equal(await page.text('faucet-locks'), receive.faucetLocks);
     // And how far that goes, said as what the reader can do: this screen opens no passkey prompt and no window after the tap.
     assert.equal(await page.text('faucet-no-prompt'), receive.faucetNoPrompt);
-    // The button names the paragraphs above it as its description: a reader who tabs to it hears that it locks the wallet.
+    // Both stand behind the card's folded line about the check, after what the check is. The line comes
+    // before the button, so a reader who tabs meets it first. It is folded until it is opened, and then
+    // the three sentences are on screen.
+    const held = `${receive.faucetCheck} ${receive.faucetLocks} ${receive.faucetNoPrompt}`;
+    assert.deepEqual(await checkFold(page), { open: false, beforeButton: true, drawn: false, says: held });
+    await openCheckFold(page);
+    assert.deepEqual(await checkFold(page), { open: true, beforeButton: true, drawn: true, says: held });
+    // The button names the lines in the open as its description: what the faucet sends, and that a check may come first.
     const described = await page.page.$eval(hook('faucet-ask'), (button) =>
       (document.getElementById(button.getAttribute('aria-describedby') ?? '')?.textContent ?? '').replace(/\s+/g, ' ').trim(),
     );
-    assert.ok(described.endsWith(`${receive.faucetCheck} ${receive.faucetLocks} ${receive.faucetNoPrompt}`), described);
+    assert.equal(
+      described,
+      `${fill(receive.faucetPays, { amount: `${sats(s.stack.config.faucetSats)} ${common.practiceSats}` })} ${fill(receive.faucetStart, { button: receive.faucetAsk })}`,
+    );
     assert.equal(await botCheckScripts(page), 0);
     assert.deepEqual(await looks(), []);
     assert.deepEqual(await page.turnstileCalls(), []);

@@ -95,6 +95,34 @@ export const attributeOf = (page: OpenedPage, id: string, name: string): Promise
 export const heldBy = (page: OpenedPage, id: string): Promise<string> =>
   page.page.$eval(hook(id), (input) => (input as HTMLInputElement).value);
 
+/** The folded line about the bot check on the faucet's card, as the page has it now. */
+export interface CheckFold {
+  open: boolean;
+  /** It stands before the faucet's button in the page, so a reader who tabs meets it first. */
+  beforeButton: boolean;
+  /** What it holds is drawn: false while the line is folded. */
+  drawn: boolean;
+  /** What it holds, drawn or not. */
+  says: string;
+}
+
+export const checkFold = (page: OpenedPage): Promise<CheckFold> =>
+  page.page.$eval(hook('faucet-check'), (fold) => {
+    const button = document.querySelector('[data-testid="faucet-ask"]');
+    const held = fold.querySelector(':scope > div');
+    return {
+      open: (fold as HTMLDetailsElement).open,
+      beforeButton: button !== null && (fold.compareDocumentPosition(button) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0,
+      drawn: held !== null && held.checkVisibility(),
+      says: (held?.textContent ?? '').replace(/\s+/g, ' ').trim(),
+    };
+  });
+
+/** Opens that line as a reader does: a press on the line itself. */
+export async function openCheckFold(page: OpenedPage): Promise<void> {
+  await page.page.locator(`${hook('faucet-check')} summary`).click();
+}
+
 /** What has keyboard focus: its test hook, or else its tag name. */
 export const focusOf = (page: OpenedPage): Promise<string> =>
   page.page.evaluate(() => document.activeElement?.getAttribute('data-testid') ?? document.activeElement?.tagName ?? 'nothing');

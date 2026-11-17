@@ -524,6 +524,7 @@ test('facts are slots, never numbers written into a sentence', () => {
   const slots: Record<string, string[]> = {
     arrived: ['amount'],
     faucetPays: ['amount'],
+    faucetStart: ['button'],
     stateRetryIn: ['time'],
     statePromised: ['amount'],
     stateArrived: ['amount', 'minutes', 'seconds'],
@@ -575,8 +576,33 @@ test('the state line, filled in as the screen fills it', () => {
 
 test('what the screen says of the bot check, and nothing more', () => {
   const { en, es } = strings.receive;
-  // Before the tap: whose it is, and that it is given the address. That paragraph stays above the
-  // button while the check runs, so the line under the button does not say it a second time.
+  // In the open, above the button: what the faucet sends, which button to press, and that a quick
+  // security check may come first. Those lines name nobody and promise nothing.
+  assert.equal(
+    fill(en.faucetPays, { amount: '100,000 practice sats' }),
+    'The faucet sends 100,000 practice sats to the address above. They work like bitcoin in this exercise, but have no real-world value.',
+  );
+  assert.equal(
+    fill(es.faucetPays, { amount: '100,000 sats de práctica' }),
+    'El faucet le envía 100,000 sats de práctica a la dirección de arriba. En este ejercicio funcionan como bitcoin, pero no tienen ningún valor en el mundo real.',
+  );
+  assert.equal(
+    fill(en.faucetStart, { button: en.faucetAsk }),
+    'Press "Get practice coins" to get started. You may be asked to complete a quick security check first.',
+  );
+  assert.equal(
+    fill(es.faucetStart, { button: es.faucetAsk }),
+    'Toca "Pedir monedas de práctica" para empezar. Puede que primero se te pida completar una comprobación de seguridad rápida.',
+  );
+  for (const lang of LANGS) {
+    assert.doesNotMatch(strings.receive[lang].faucetPays, /Cloudflare|bot/i, lang);
+    assert.doesNotMatch(strings.receive[lang].faucetStart, /Cloudflare|bot/i, lang);
+  }
+  // What that check is stands behind a folded line, which is named for what it opens.
+  assert.equal(en.faucetCheckSummary, 'About the security check');
+  assert.equal(es.faucetCheckSummary, 'Sobre la comprobación de seguridad');
+  // Behind it, before the tap: whose it is, and that it is given the address. That paragraph stays above
+  // the button while the check runs, so the line under the button does not say it a second time.
   assert.match(en.faucetCheck, /Cloudflare's/);
   assert.match(en.faucetCheck, /given this address/);
   assert.match(es.faucetCheck, /de Cloudflare/);
@@ -602,12 +628,23 @@ test('what the screen says of the bot check, and nothing more', () => {
   assert.match(en.faucetNoPrompt, /^After you ask, this screen never asks for your passkey and opens no window by itself\./);
   assert.match(en.faucetNoPrompt, /cancel it or close it\.$/);
   assert.match(es.faucetNoPrompt, /cancélala o ciérrala\.$/);
-  // Both lines are for a wallet opened with a passkey, and stay above the button while the request runs.
+  // The lines in the open: what the faucet sends stays once it has paid, and the line that names the
+  // button goes with the button.
   const card = readFileSync(new URL('../src/screens/receive/FaucetCard.svelte', import.meta.url), 'utf8');
   assert.match(
     card,
-    /\{#if button !== 'done'\}\s*<p [^>]*>\{t\.faucetCheck\}<\/p>\s*\{#if passkey\}\s*<p [^>]*data-testid="faucet-locks">\{t\.faucetLocks\}<\/p>\s*<p [^>]*data-testid="faucet-no-prompt">\{t\.faucetNoPrompt\}<\/p>\s*\{\/if\}/,
+    /<div id=\{about\} class="space-y-3">\s*<p [^>]*>\{fill\(t\.faucetPays, \{ amount: pays \}\)\}<\/p>\s*<!--[^>]*-->\s*\{#if button !== 'done'\}\s*<p [^>]*data-testid="faucet-start">\{fill\(t\.faucetStart, \{ button: t\.faucetAsk \}\)\}<\/p>\s*\{\/if\}\s*<\/div>/,
   );
+  // The folded line stands between them and the button, and stays there while the request runs. It holds
+  // what the check is, and for a wallet opened with a passkey the two lines on the lock. Nothing else
+  // on the card says any of the three.
+  assert.match(
+    card,
+    /\{#if button !== 'done'\}\s*<!--[\s\S]*?-->\s*<Details class="mt-4" summary=\{t\.faucetCheckSummary\} data-testid="faucet-check">\s*<div [^>]*>\s*<p>\{t\.faucetCheck\}<\/p>\s*\{#if passkey\}\s*<p data-testid="faucet-locks">\{t\.faucetLocks\}<\/p>\s*<p data-testid="faucet-no-prompt">\{t\.faucetNoPrompt\}<\/p>\s*\{\/if\}\s*<\/div>\s*<\/Details>\s*<Actions class="mt-5">\s*<Button/,
+  );
+  for (const key of ['faucetCheck', 'faucetLocks', 'faucetNoPrompt'] as const) {
+    assert.equal(card.match(new RegExp(`\\{t\\.${key}\\}`, 'g'))?.length, 1, key);
+  }
   // No promise the page cannot keep (notes/06 section 4.2), in any text of the screen.
   for (const lang of LANGS) {
     for (const [key, text] of Object.entries(strings.receive[lang])) {
@@ -694,7 +731,7 @@ test('the pieces keep to the forms the app writes', () => {
     assert.doesNotMatch(text, /\{@const\b/, name);
   }
   const card = screenFiles().find((file) => file.name === 'receive/FaucetCard.svelte')!.text;
-  // What the tap sets going stands above the button, and the button names it as its description.
+  // What the card says in the open stands above the button, and the button names it as its description.
   assert.match(card, /<div id=\{about\}/);
   assert.match(card, /aria-describedby=\{about\}/);
   // The countdown is no part of the alert above it: an alert is read out whole.

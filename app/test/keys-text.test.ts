@@ -139,7 +139,7 @@ test('the exception paragraph, word for word, in both languages', () => {
 
 test('the exception gives one reason, about the words, and never argues that this page can be trusted', () => {
   // A scam page can claim everything a page can claim. It cannot make real words worthless.
-  for (const key of ['exception', 'neverRealMoney', 'before', 'after'] as const) {
+  for (const key of ['exception', 'neverRealMoney', 'before', 'writeDown', 'after'] as const) {
     assert.doesNotMatch(strings.backup.en[key], /\b(safe|secure|trust|encrypted|open source|we never see)\b/i, key);
     assert.doesNotMatch(strings.backup.es[key], /\b(segur[ao]s?|confía|confiar|cifrad[ao]s?|código abierto)\b/i, key);
   }
@@ -193,7 +193,7 @@ test('real money must never go on these words: the companion line, in both langu
   // The words shown at any other time. A reader who follows a "Do it" step has a button in the row under the
   // words that leaves the screen, back to the step: for them the caution stands between the words and that row,
   // so that nobody reaches the button before it, as at "Wallet made". A reader who follows no step has "Hide
-  // them" alone in the row, and the caution under the row and its paragraph, as it was. The two places are
+  // them" alone in the row, and the caution under the row and the two sentences that follow it, as it was. The two places are
   // drawn under the two halves of one condition: once on the screen, whichever reader it is.
   assert.equal(shown.match(/<Notice kind="caution" text=\{t\.neverRealMoney\} data-testid="never-real-money" \/>/g)?.length, 2);
   assert.match(
@@ -202,7 +202,7 @@ test('real money must never go on these words: the companion line, in both langu
   );
   assert.match(
     shown,
-    /<Prose><p>\{t\.after\}<\/p><\/Prose>\s*\{#if followed === null\}\s*<!--[\s\S]*?-->\s*<Notice kind="caution" text=\{t\.neverRealMoney\} data-testid="never-real-money" \/>\s*\{\/if\}\s*$/,
+    /<Prose>\s*<p data-testid="write-down">\{t\.writeDown\}<\/p>\s*<p>\{t\.after\}<\/p>\s*<\/Prose>\s*\{#if followed === null\}\s*<!--[\s\S]*?-->\s*<Notice kind="caution" text=\{t\.neverRealMoney\} data-testid="never-real-money" \/>\s*\{\/if\}\s*$/,
   );
   // With a step followed the line comes before every button of the view; with none, "Hide them" is the one
   // button, and it leaves nothing: it takes the words off the screen.
@@ -214,7 +214,7 @@ test('real money must never go on these words: the companion line, in both langu
   assert.doesNotMatch(ask, /neverRealMoney/);
 });
 
-test('the reveal warns that a screen reader will speak the words aloud, before they are on screen', () => {
+test('a screen reader is warned that it will speak the words aloud, before they are on screen, in a line that is never drawn', () => {
   assert.match(strings.backup.en.spokenAloud, /^A screen reader will read the 12 words aloud\./);
   assert.match(strings.backup.es.spokenAloud, /^Un lector de pantalla va a leer las 12 palabras en voz alta\./);
   // In the screen's markup the warning stands above the button that shows the words, and above the list.
@@ -223,10 +223,44 @@ test('the reveal warns that a screen reader will speak the words aloud, before t
   assert.ok(asks.indexOf('{t.spokenAloud}') < asks.indexOf('data-testid="reveal-words"'));
   const made = backup.slice(backup.indexOf('<Section title={t.shownTitle}>'));
   assert.ok(made.indexOf('{t.spokenAloud}') < made.indexOf('<WordsList'));
+  // It is for a screen reader alone. In both places the paragraph carries the class that takes it off the
+  // screen and leaves it in what a screen reader reads, and it stands in no third place.
+  assert.equal(code(backup).match(/\{t\.spokenAloud\}/g)?.length, 2);
+  assert.match(made, /^<Section title=\{t\.shownTitle\}>\s*<!--[^>]*-->\s*<p class="sr-only" data-testid="spoken-aloud">\{t\.spokenAloud\}<\/p>/);
   // Tab passes over a paragraph. So the button names the warning as its description: a screen reader
   // then says it when the button takes focus.
-  assert.match(backup, /<p id="\{id\}-spoken" data-testid="spoken-aloud">\{t\.spokenAloud\}<\/p>/);
+  assert.match(backup, /<p id="\{id\}-spoken" class="sr-only" data-testid="spoken-aloud">\{t\.spokenAloud\}<\/p>/);
   assert.match(asks, /data-testid="reveal-words"\s+aria-describedby="\{id\}-spoken"/);
+});
+
+test('what to do with the 12 words stands above them at "Wallet made" and under their row of buttons on Backup, and the rehearsal under them', () => {
+  assert.equal(
+    strings.backup.en.writeDown,
+    'Write them on paper, in order, as you would for a real wallet. Take no photo and no screenshot, make no digital copy, ever.',
+  );
+  assert.match(strings.backup.es.writeDown, /^Escríbelas en papel, en orden, como lo harías con una billetera de verdad\./);
+  assert.match(strings.backup.es.writeDown, /y no hagas ninguna copia digital, nunca\.$/);
+  assert.equal(strings.backup.en.after, 'Even though these are practice words, this is a rehearsal for the day the words guard real money.');
+  assert.equal(
+    strings.backup.es.after,
+    'Aunque sean palabras de práctica, este es un ensayo para el día en que las palabras protejan dinero de verdad.',
+  );
+  // Twice in the markup. At the "Wallet made" step the sentence stands above the list of words, and the one
+  // on the rehearsal under the list.
+  const backup = source('Backup.svelte');
+  assert.equal(code(backup).match(/\{t\.writeDown\}/g)?.length, 2);
+  assert.equal(code(backup).match(/\{t\.after\}/g)?.length, 2);
+  const made = backup.slice(backup.indexOf("{:else if view === 'made' && words !== null}"), backup.indexOf("{:else if view === 'shown' && words !== null}"));
+  const write = made.indexOf('<Prose><p data-testid="write-down">{t.writeDown}</p></Prose>');
+  assert.ok(write > 0 && write < made.indexOf('<WordsList'));
+  assert.ok(made.indexOf('<WordsList') < made.indexOf('{t.after}'));
+  // Where the words are shown at any other time, nothing stands between the screen's heading and the words:
+  // the row of buttons under them must stay in a phone's window (e2e/scenarios/doit-handover.test.ts holds
+  // that). There the two sentences stand together under that row, in this order.
+  const shown = backup.slice(backup.indexOf("{:else if view === 'shown' && words !== null}"), backup.indexOf("{:else if view === 'unlock'}"));
+  assert.match(shown, /^\{:else if view === 'shown' && words !== null\}\s*<div class="space-y-4">\s*<div class=\{WORDS_BOX\}>/);
+  assert.ok(shown.indexOf('data-testid="hide-words"') < shown.indexOf('{t.writeDown}'));
+  assert.ok(shown.indexOf('{t.writeDown}') < shown.indexOf('{t.after}'));
 });
 
 // -- the "Wallet made" step ------------------------------------------------------------
@@ -700,15 +734,15 @@ test('Spanish: the first mention of a passkey in a screen\'s own text carries th
   const card = ['cardTitle', 'cardLead', 'cardName', 'cardNoCopies', 'cardNoSharing', 'cardRestores', 'cardPrint'];
   const madePasskey = [
     'madeTitle', 'madeLede', 'madePasskeyTitle', 'madePasskeyName', 'madePasskeyNameIs', 'madePasskeyTag', 'madePasskeyTagIs', 'madePasskeyWhere',
-    'shownTitle', 'spokenAloud', 'after', 'madePasskeyBack', 'writtenStep', 'exception', 'neverRealMoney', 'chapterLink', ...card, 'written',
+    'shownTitle', 'spokenAloud', 'writeDown', 'after', 'madePasskeyBack', 'writtenStep', 'exception', 'neverRealMoney', 'chapterLink', ...card, 'written',
   ];
   const madeWords = [
-    'madeTitle', 'madeLede', 'shownTitle', 'spokenAloud', 'after', 'writtenStep', 'madeKeepsTitle', 'madeKeepsWords', 'madeKeepsWho',
+    'madeTitle', 'madeLede', 'shownTitle', 'spokenAloud', 'writeDown', 'after', 'writtenStep', 'madeKeepsTitle', 'madeKeepsWords', 'madeKeepsWho',
     'madeKeepsCleared', 'madeNotPersisted', 'exception', 'neverRealMoney', 'chapterLink', ...card, 'written',
   ];
   const ask = ['wordsTitle', 'wordsWithdrawn', 'exception', 'chapterLink', 'before', 'spokenAloud', 'revealFailed', 'show', ...card];
   const unlock = ['unlockWhy', ...card];
-  const shown = ['shownTitle', 'hide', 'after', 'neverRealMoney', ...card];
+  const shown = ['shownTitle', 'hide', 'writeDown', 'after', 'neverRealMoney', ...card];
   firstMentionOnly(backup, madePasskey, 'Backup, "Wallet made" with a passkey');
   firstMentionOnly(backup, madeWords, 'Backup, "Wallet made" without a passkey');
   firstMentionOnly(backup, ask, 'Backup, before the words');

@@ -6,7 +6,11 @@
   //
   //   made    Straight after a wallet is created the screen opens as the
   //           "Wallet made" step. The keys are still loaded, so the words
-  //           are on screen at once, with no second prompt. A passkey
+  //           are on screen at once, with no second prompt. Above them
+  //           stands what to do with them: write them on paper, take no
+  //           photo, make no digital copy. Before that a screen reader is
+  //           told, in a line that is never drawn, that it is about to
+  //           read the words aloud. A passkey
   //           wallet is told the name its passkey was saved under (or,
   //           where the wallet does not have it, the tag in that name) and
   //           where the passkey lives, and under the words that they are the way
@@ -27,13 +31,18 @@
   //           reaches a button before it.
   //   ask     At any other time: why this page is the one exception to
   //           the keys chapter's rule, what to know before the words are
-  //           on screen, and "Show the 12 words".
+  //           on screen, and "Show the 12 words". That a screen reader
+  //           will read the words aloud is not drawn here either: it is
+  //           the description of that button, for a screen reader alone.
   //   unlock  A passkey wallet that is locked gets the shared unlock step
   //           first, and then its words. "Back" under the step returns to
   //           the screen's first view: a reader who does not want to
   //           unlock after all must not have to leave the screen to get
   //           the warnings and the button back.
-  //   shown   The words, with "Hide them". A reader who is following a
+  //   shown   The words, with "Hide them". Under that row stand what to
+  //           do with the words and the sentence on the rehearsal: here
+  //           the words come first, so that the row of buttons stays
+  //           where the reader is looking. A reader who is following a
   //           "Do it" step has the way back to it in the same row, by the
   //           step's name: a step sent them here to see the words, and
   //           the strip that leads back is above the window by then. That
@@ -42,8 +51,8 @@
   //           row, as it stands above their button at the "Wallet made"
   //           step: nobody reaches a button that leaves the words before
   //           it. For a reader who follows no step it stands under the
-  //           row and its paragraph, where it always stood. Either way it
-  //           is on the screen once.
+  //           row and the two sentences that follow it, where it always
+  //           stood. Either way it is on the screen once.
   //
   // The words are held here only while they are on screen. They are
   // dropped when the reader hides them, when the wallet is locked, when the
@@ -347,8 +356,10 @@
       {/if}
 
       <Section title={t.shownTitle}>
-        <!-- Above the words: a screen reader reads down the page. -->
-        <p class="text-pretty text-sm leading-relaxed text-ink-500">{t.spokenAloud}</p>
+        <!-- Above the words, for a screen reader alone: it reads down the page, and would speak the words next. Never drawn. -->
+        <p class="sr-only" data-testid="spoken-aloud">{t.spokenAloud}</p>
+        <!-- Above the words, for every reader: what to do with them. -->
+        <Prose><p data-testid="write-down">{t.writeDown}</p></Prose>
         <div class={WORDS_BOX}>
           <!-- The marker beside the words: a picture of this part of the screen still says PRACTICE. -->
           <p class="mb-3"><Badge tone="stamp">{c.markerBadge}</Badge></p>
@@ -437,7 +448,11 @@
           </Button>
         </Actions>
       </div>
-      <Prose><p>{t.after}</p></Prose>
+      <!-- Under the row, so that the row stays in the window on a phone: what to do with the words, then the rehearsal. -->
+      <Prose>
+        <p data-testid="write-down">{t.writeDown}</p>
+        <p>{t.after}</p>
+      </Prose>
       {#if followed === null}
         <!-- No step is followed: the line stands where it always stood. (With one followed it stands above the row of buttons.) -->
         <Notice kind="caution" text={t.neverRealMoney} data-testid="never-real-money" />
@@ -461,8 +476,9 @@
         {@render exception(false)}
         <Prose>
           <p>{t.before}</p>
-          <p id="{id}-spoken" data-testid="spoken-aloud">{t.spokenAloud}</p>
         </Prose>
+        <!-- For a screen reader alone, and never drawn: the button below names it as its description. -->
+        <p id="{id}-spoken" class="sr-only" data-testid="spoken-aloud">{t.spokenAloud}</p>
         {#if failed}
           <Notice kind="problem" text={t.revealFailed} data-testid="reveal-problem">
             <ReloadButton />

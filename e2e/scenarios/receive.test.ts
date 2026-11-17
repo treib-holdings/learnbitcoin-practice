@@ -34,6 +34,7 @@ import { BOX_SAY_MS, FAUCET_ONCE_HOURS } from '../../app/src/screens/receive/fau
 import { strings } from '../../app/src/strings/index.ts';
 import type { StandInCall } from '../src/fake-turnstile.ts';
 import { DUMMY_TOKEN, freshRecord, scenario, testRecord, type OpenedPage, type Scenario } from './helpers.ts';
+import { checkFold, openCheckFold } from './journey-helpers.ts';
 
 const en = strings.receive.en;
 const es = strings.receive.es;
@@ -195,12 +196,18 @@ scenario('the faucet pays a wallet made without a passkey: from the tap to the f
   // A wallet made without a passkey has nothing to lock.
   assert.deepEqual(await page.texts('faucet-locks'), []);
   assert.deepEqual(await page.texts('lock-state'), []);
-  // What the tap sets going stands above the button, and the button names it as its description:
-  // a reader who tabs to the button hears that a bot check of Cloudflare's will load.
+  // What the card says in the open stands above the button, and the button names it as its description:
+  // a reader who tabs to the button hears what the faucet sends and that a check may come first.
   const described = await page.page.$eval('[data-testid="faucet-ask"]', (button) =>
     (document.getElementById(button.getAttribute('aria-describedby') ?? '')?.textContent ?? '').replace(/\s+/g, ' ').trim(),
   );
-  assert.equal(described, `${fill(en.faucetPays, { amount: pays(s) })} ${en.faucetCheck}`);
+  assert.equal(described, `${fill(en.faucetPays, { amount: pays(s) })} ${fill(en.faucetStart, { button: en.faucetAsk })}`);
+  // What that check is stands behind a folded line, between those lines and the button. It is folded until
+  // the reader opens it, and then says that a bot check of Cloudflare's will load and what it is given.
+  // A wallet made without a passkey is told nothing of a lock there.
+  assert.deepEqual(await checkFold(page), { open: false, beforeButton: true, drawn: false, says: en.faucetCheck });
+  await openCheckFold(page);
+  assert.deepEqual(await checkFold(page), { open: true, beforeButton: true, drawn: true, says: en.faucetCheck });
 
   // The tap.
   await watchStates(page);
@@ -484,7 +491,7 @@ scenario('a bot check whose box gets no tick: the box is brought on screen and s
   assert.equal(await page.text('faucet-state'), en.stateChecking);
   await page.page.waitForSelector('[data-testid="bot-check"] [data-stand-in-bot-check]');
   assert.equal(await page.text('faucet-ask'), en.faucetBusy);
-  // Whose check it is and what it is given still stands above the button while it runs.
+  // Whose check it is and what it is given still stands above the button while it runs, behind the folded line.
   assert.ok((await page.text('faucet')).includes(en.faucetCheck));
   // <main> was busy from the tap until the widget was on screen, and no longer: the widget may be waiting for the reader.
   assert.deepEqual(await page.page.evaluate(() => (window as unknown as { __busy: (string | null)[] }).__busy), [null, 'true', null]);
@@ -851,7 +858,14 @@ scenario('the Spanish route: the address, the faucet and the bot check in Spanis
   assert.equal(await page.page.$eval('main h1', (heading) => heading.textContent?.trim()), strings.common.es.section_receive);
   assert.equal(await page.page.title(), 'Práctica: Recibir | LearnBitcoin');
   const screen = await page.page.$eval('main', (main) => (main.textContent ?? '').replace(/\s+/g, ' '));
-  for (const text of [es.lede, es.addressFor, es.faucetCheck, fill(es.faucetPays, { amount: pays(s, 'es') })]) {
+  for (const text of [
+    es.lede,
+    es.addressFor,
+    fill(es.faucetPays, { amount: pays(s, 'es') }),
+    fill(es.faucetStart, { button: es.faucetAsk }),
+    es.faucetCheckSummary,
+    es.faucetCheck,
+  ]) {
     assert.ok(screen.includes(text), text);
   }
   assert.equal(await page.text('faucet-ask'), es.faucetAsk);
