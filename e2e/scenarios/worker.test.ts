@@ -46,7 +46,10 @@ scenario('an unknown /api/ path is the Worker\'s JSON 404, with the Worker\'s ow
     const response = await fetch('/api');
     return { status: response.status, type: response.headers.get('content-type') };
   });
-  assert.deepEqual(shell, { status: 200, type: 'text/html; charset=utf-8' });
+  assert.equal(shell.status, 200);
+  // The page's type is held to its kind. What stands behind the kind is the local server's own, and the
+  // deployed site has been seen to send the kind alone (e2e/src/serve.ts says so at its top).
+  assert.match(shell.type ?? '', /^text\/html(;|$)/);
 });
 
 scenario('/api/config through the page\'s own fetch: the settings of this run, never cached', async (s) => {

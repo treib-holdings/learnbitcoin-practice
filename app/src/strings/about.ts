@@ -1,13 +1,15 @@
 // The text of the About page: what this is, the network facts, what is stored and what our server and others see.
 //
-// THIS FILE IS PUBLISHED AS IT STANDS. The build copies it, byte for byte,
-// into the site as /about.txt (vite.config.ts), and the page's <noscript>
-// lines send a reader who browses without JavaScript there (index.html):
-// the About page is drawn by a script, and this file is where its
-// sentences can be read without one. So every comment below is read by the
-// public beside the sentences, and is held to the same rule as they are:
-// it is true of the code, in every state. Nothing private goes into this
-// file, in a sentence or in a comment.
+// THIS FILE IS PUBLISHED AS IT STANDS. The build copies it into the site
+// as /about.txt (vite.config.ts). The copy starts with a byte order mark,
+// three bytes that tell a browser the file is UTF-8, and behind the mark
+// it is this file, byte for byte. The page's <noscript> lines send a
+// reader who browses without JavaScript there (index.html): the About
+// page is drawn by a script, and this file is where its sentences can be
+// read without one. So every comment below is read by the public beside
+// the sentences, and is held to the same rule as they are: it is true of
+// the code, in every state. Nothing private goes into this file, in a
+// sentence or in a comment.
 //
 // What a reader of /about.txt has in front of them is this table and not
 // the page. Where the page chooses between sentences by what this browser

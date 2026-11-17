@@ -4,25 +4,30 @@
 // script draws it. A reader who browses with scripts off gets the <noscript>
 // lines of index.html instead, and those link a file: the table every
 // sentence of the page is taken from (src/strings/about.ts), copied into the
-// build byte for byte.
+// build byte for byte, behind a byte order mark.
 //
 // So three things are held here:
 //
 //   - the table is fit to be published as it stands: it says so at its top,
-//     it holds both languages, it is plain UTF-8, and nothing private is in
-//     it, in a sentence or in a comment;
+//     it holds both languages, it is plain UTF-8 with no mark of its own,
+//     and nothing private is in it, in a sentence or in a comment;
 //   - the build ships that file and no other copy of it (vite.config.ts),
-//     and the dist guard fails a build that lacks it or holds other bytes;
-//   - where a build is present, dist/about.txt is the table, byte for byte,
-//     as test/headers.test.ts holds dist/_headers to its source.
+//     with the mark in front, and the dist guard fails a build that lacks
+//     the file, lacks the mark, or holds other bytes behind the mark, and
+//     a table that starts with a mark of its own;
+//   - where a build is present, dist/about.txt is the mark and then the
+//     table, byte for byte, as test/headers.test.ts holds dist/_headers to
+//     its source.
 //
-// The type the file is served with is the host's to decide. The scenarios
-// hold their own server to it (e2e/scenarios/page.test.ts) and the live
-// check the deployed site (tools/live-check/live-check.ts).
+// The type the file is served with is the host's to decide, and the deployed
+// site names no charset with it: the mark is what tells a browser that the
+// file is UTF-8. The scenarios open the file in a browser, served that way
+// (e2e/scenarios/page.test.ts), and the live check holds the deployed site's
+// file to the mark (tools/live-check/live-check.ts).
 
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -44,6 +49,9 @@ const NO_BUILD = 'no build here yet (pnpm build makes one)';
 const bytes = readFileSync(SOURCE);
 const text = bytes.toString('utf8');
 
+/** A byte order mark: the three bytes the build puts in front of its copy of the table. */
+const MARK = Buffer.from([0xef, 0xbb, 0xbf]);
+
 test('the About string table says at its top that it is published as it stands, and holds both languages', () => {
   // The header, before the first table: that the file is published, where, and what that asks of its comments.
   const header = text.slice(0, text.indexOf('export const en = {'));
@@ -51,8 +59,11 @@ test('the About string table says at its top that it is published as it stands, 
   assert.match(header, /^\/\/ THIS FILE IS PUBLISHED AS IT STANDS\./m);
   // Its sentences, with the comment's own line breaks taken out.
   const said = header.replace(/\n\/\/ ?/g, ' ');
-  assert.match(said, /The build copies it, byte for byte, into the site as \/about\.txt \(vite\.config\.ts\)/);
-  assert.match(said, /the page's <noscript> lines send a reader who browses without JavaScript there \(index\.html\)/);
+  assert.match(said, /The build copies it into the site as \/about\.txt \(vite\.config\.ts\)\./);
+  // What the copy is, said so that it is true of the copy: the mark the build puts in front, then this file.
+  assert.match(said, /The copy starts with a byte order mark, three bytes that tell a browser the file is UTF-8, and behind the mark it is this file, byte for byte\./);
+  assert.doesNotMatch(said, /copies it, byte for byte/);
+  assert.match(said, /The page's <noscript> lines send a reader who browses without JavaScript there \(index\.html\)/);
   assert.match(said, /So every comment below is read by the public beside the sentences, and is held to the same rule as they are: it is true of the code, in every state\./);
   assert.match(said, /Nothing private goes into this file, in a sentence or in a comment\./);
   // Both tables, one after the other, in one file: the English one, then the Spanish one with the same keys.
@@ -72,13 +83,15 @@ test('the About string table says at its top that it is published as it stands, 
 });
 
 test('the file is plain UTF-8 with no mark in front, and its letters outside ASCII are all in its Spanish half', () => {
-  // Read as UTF-8 and written again, it is the same bytes: nothing in it is broken, and a browser that is told
-  // "charset=utf-8" shows what the file holds.
+  // Read as UTF-8 and written again, it is the same bytes: nothing in it is broken, and a browser that reads
+  // the file as UTF-8 shows what the file holds.
   assert.ok(Buffer.from(text, 'utf8').equals(bytes));
   assert.doesNotMatch(text, /\uFFFD/);
-  // No byte order mark: the copy is the file as it is, and the host says which characters it holds.
-  assert.notDeepEqual([...bytes.subarray(0, 3)], [0xef, 0xbb, 0xbf]);
-  // The English half and every comment above it are ASCII. The Spanish half is why the charset matters.
+  // No byte order mark in the source: the build adds the one mark, in front of its copy (vite.config.ts). A
+  // mark here as well would make two there, and a browser takes only the first for a mark: the second
+  // would be a character of the text.
+  assert.equal(bytes.subarray(0, MARK.length).equals(MARK), false);
+  // The English half and every comment above it are ASCII. The Spanish half is why it matters how a browser reads the file.
   const spanish = text.indexOf('export const es: Record<keyof typeof en, string> = {');
   assert.doesNotMatch(text.slice(0, spanish), /[^\x00-\x7f]/);
   const letters = text.slice(spanish).match(/[^\x00-\x7f]/g) ?? [];
@@ -173,33 +186,57 @@ test('the comment on the step a reader came for says when that field is written,
   assert.deepEqual(applyChange(stray, { kind: 'detour', step: 'hold-some', cameFor: 'pass-it-on' }).steps['hold-some'], { cameFor: 'pass-it-on' });
 });
 
-test('the build ships the table as about.txt, read as bytes and handed on as bytes, and the repository keeps no second copy', () => {
+test('the build ships the table as about.txt behind a byte order mark, read as bytes and handed on as bytes, and the repository keeps no second copy', () => {
   const config = readFileSync(new URL('../vite.config.ts', import.meta.url), 'utf8');
   assert.match(config, /const ABOUT_SOURCE = 'src\/strings\/about\.ts';/);
   assert.match(config, /const ABOUT_FILE = 'about\.txt';/);
-  // A plugin of the build alone adds the file to what the build writes, under that name at the build's root.
+  // The mark, as the three bytes it is.
+  assert.match(config, /const UTF8_MARK = Uint8Array\.of\(0xef, 0xbb, 0xbf\);/);
+  // A plugin of the build alone adds the file to what the build writes, under that name at the build's root:
+  // the mark, and then the table's own bytes.
   assert.match(
     config,
-    /function aboutText\(\): Plugin \{\s*let root = '';\s*return \{\s*name: 'practice-about-text',\s*apply: 'build',\s*configResolved\(config\) \{\s*root = config\.root;\s*\},\s*generateBundle\(\) \{\s*(\/\/[^\n]*\n\s*)*this\.emitFile\(\{ type: 'asset', fileName: ABOUT_FILE, source: readFileSync\(join\(root, ABOUT_SOURCE\)\) \}\);\s*\},\s*\};\s*\}/,
+    /function aboutText\(\): Plugin \{\s*let root = '';\s*return \{\s*name: 'practice-about-text',\s*apply: 'build',\s*configResolved\(config\) \{\s*root = config\.root;\s*\},\s*generateBundle\(\) \{\s*(\/\/[^\n]*\n\s*)*this\.emitFile\(\{ type: 'asset', fileName: ABOUT_FILE, source: Buffer\.concat\(\[UTF8_MARK, readFileSync\(join\(root, ABOUT_SOURCE\)\)\]\) \}\);\s*\},\s*\};\s*\}/,
   );
   assert.match(config, /plugins: \[tailwindcss\(\), svelte\(\), aboutText\(\)\],/);
   // Nothing reads the text on the way: no encoding is named, and nothing is replaced or trimmed.
   const plugin = config.slice(config.indexOf('function aboutText()'), config.indexOf('export default defineConfig'));
   assert.doesNotMatch(plugin, /'utf-?8'|\.toString\(|\.replace\(|\.trim\(|TextDecoder/);
+  // The comment above the plugin says why the mark is there, and says of which file the browsers' misreading
+  // was seen: the file without the mark. Of the file as the plugin makes it, that sentence would not be so.
+  const why = config.slice(config.indexOf('/**\n * Ships the About page'), config.indexOf('function aboutText()')).replace(/\n \* ?/g, ' ');
+  assert.match(why, /Chromium and WebKit have both been seen to read this one, without the mark, as windows-1252, and to show "prÃ¡ctica" where the file says "práctica"\. A browser that finds the mark reads the file as UTF-8 whatever the header says, and does not show the mark\./);
   // It is made at each build and never kept: a copy in the repository would drift from the table.
   assert.equal(existsSync(new URL('../public/about.txt', import.meta.url)), false);
-  // The dist guard holds every build to it.
+  // The dist guard holds every build to it: the file is there, it starts with the mark, and behind the mark
+  // it is the table. Each of the three has a message of its own. So has a table that starts with a mark
+  // of its own: the copy of such a table would be the mark and then the table too, with two marks in front.
   const guard = readFileSync(GUARD, 'utf8');
+  assert.match(guard, /const UTF8_MARK = Buffer\.from\(\[0xef, 0xbb, 0xbf\]\);/);
   assert.match(guard, /const sourceAbout = readFileSync\(join\(appDir, 'src', 'strings', 'about\.ts'\)\);/);
-  assert.match(guard, /if \(!existsSync\(join\(dist, 'about\.txt'\)\)\) \{[\s\S]*?\} else if \(!readFileSync\(join\(dist, 'about\.txt'\)\)\.equals\(sourceAbout\)\) \{/);
+  assert.match(guard, /if \(sourceAbout\.subarray\(0, UTF8_MARK\.length\)\.equals\(UTF8_MARK\)\) \{\s*problems\.push\('src\/strings\/about\.ts starts with a byte order mark of its own: [^\n]*\);\s*\}/);
+  assert.match(
+    guard,
+    /if \(!existsSync\(join\(dist, 'about\.txt'\)\)\) \{\s*problems\.push\('there is no about\.txt: [^\n]*\);\s*\} else \{\s*const builtAbout = readFileSync\(join\(dist, 'about\.txt'\)\);\s*if \(!builtAbout\.subarray\(0, UTF8_MARK\.length\)\.equals\(UTF8_MARK\)\) \{\s*problems\.push\('about\.txt does not start with a byte order mark [^\n]*\);\s*\} else if \(!builtAbout\.subarray\(UTF8_MARK\.length\)\.equals\(sourceAbout\)\) \{\s*problems\.push\('about\.txt differs from src\/strings\/about\.ts behind its byte order mark'\);\s*\}\s*\}/,
+  );
   // And the build runs the guard: a build that lacks the file fails.
   const scripts = (JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { scripts: Record<string, string> }).scripts;
   assert.equal(scripts.build, 'vite build && node scripts/check-dist.mjs');
+  // The repository's README says of the published file what is so: the table behind the mark.
+  const readme = readFileSync(new URL('../../README.md', import.meta.url), 'utf8').replace(/\s*\n\s*/g, ' ');
+  assert.match(readme, /as `\/about\.txt`, byte for byte behind a byte order mark that tells a browser the file is UTF-8, and the page's `<noscript>` lines link it\./);
 });
 
-test('dist/about.txt: the built copy is the table, byte for byte, and the built page links it', { skip: built ? false : NO_BUILD }, () => {
+test('dist/about.txt: the built copy is a byte order mark and then the table, byte for byte, and the built page links it', { skip: built ? false : NO_BUILD }, () => {
   assert.ok(existsSync(BUILT), 'the build holds no about.txt');
-  assert.ok(readFileSync(BUILT).equals(bytes), 'dist/about.txt differs from src/strings/about.ts');
+  const shipped = readFileSync(BUILT);
+  // The mark first: without it a browser that is told no charset may not read the Spanish half as UTF-8.
+  assert.deepEqual([...shipped.subarray(0, 3)], [0xef, 0xbb, 0xbf], 'dist/about.txt does not start with a byte order mark');
+  // Then the table and nothing else: one mark, no second one, and not a byte more or less.
+  assert.ok(shipped.subarray(3).equals(bytes), 'behind its byte order mark, dist/about.txt differs from src/strings/about.ts');
+  assert.ok(shipped.equals(Buffer.concat([MARK, bytes])));
+  // Read as UTF-8 the way a browser reads a file that starts with the mark, it is the table's text: the mark is no part of it.
+  assert.equal(new TextDecoder('utf-8').decode(shipped), text);
   // The built page carries the lines that send a reader without JavaScript there.
   const page = readFileSync(join(DIST, 'index.html'), 'utf8');
   const block = /<noscript>([\s\S]*?)<\/noscript>/.exec(page)?.[1] ?? '';
@@ -208,11 +245,13 @@ test('dist/about.txt: the built copy is the table, byte for byte, and the built 
   assert.equal(existsSync(join(DIST, 'assets', 'about.txt')), false);
 });
 
-test('the dist guard passes the build as it is, fails it without about.txt, and fails it with one byte changed', { skip: built ? false : NO_BUILD }, () => {
+test('the dist guard passes the build as it is, and fails it without about.txt, without the mark in front, with one byte changed behind the mark, and with an empty file', { skip: built ? false : NO_BUILD }, () => {
   const guard = (folder: string): { code: number | null; said: string } => {
     const run = spawnSync(process.execPath, [GUARD, folder], { encoding: 'utf8' });
     return { code: run.status, said: `${run.stdout}${run.stderr}` };
   };
+  const NO_MARK = /about\.txt does not start with a byte order mark \(the bytes EF BB BF\)/;
+  const DIFFERS = /about\.txt differs from src\/strings\/about\.ts behind its byte order mark/;
   const copy = mkdtempSync(join(tmpdir(), 'practice-about-'));
   try {
     cpSync(DIST, copy, { recursive: true });
@@ -220,30 +259,95 @@ test('the dist guard passes the build as it is, fails it without about.txt, and 
     assert.equal(whole.code, 0, whole.said);
     assert.match(whole.said, /^ok: .* passes the dist guard \(1 script file, 1 stylesheet, nothing inline, _headers, licenses\.md, about\.txt\)\s*$/);
 
-    // One byte changed, anywhere: an older copy of the table is not the table.
+    // One byte changed behind the mark, anywhere: an older copy of the table is not the table.
     const changed = Buffer.from(bytes);
     changed[changed.length - 2] = changed[changed.length - 2] === 0x7d ? 0x20 : 0x7d;
-    writeFileSync(join(copy, 'about.txt'), changed);
+    writeFileSync(join(copy, 'about.txt'), Buffer.concat([MARK, changed]));
     const drifted = guard(copy);
     assert.equal(drifted.code, 1, drifted.said);
-    assert.match(drifted.said, /about\.txt differs from src\/strings\/about\.ts/);
-    // A mark in front of the right bytes is other bytes too.
-    writeFileSync(join(copy, 'about.txt'), Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), bytes]));
-    assert.equal(guard(copy).code, 1);
-    // An empty file.
+    assert.match(drifted.said, DIFFERS);
+    assert.doesNotMatch(drifted.said, NO_MARK);
+    // The right bytes without the mark in front: the table itself, which is not what the build ships. Told
+    // no charset, a browser may not read that file as UTF-8. The message is the mark's own.
+    writeFileSync(join(copy, 'about.txt'), bytes);
+    const bare = guard(copy);
+    assert.equal(bare.code, 1, bare.said);
+    assert.match(bare.said, NO_MARK);
+    assert.doesNotMatch(bare.said, DIFFERS);
+    // Two of the mark's three bytes are no mark.
+    writeFileSync(join(copy, 'about.txt'), Buffer.concat([MARK.subarray(0, 2), bytes]));
+    assert.match(guard(copy).said, NO_MARK);
+    // A second mark behind the first is other bytes than the table's, and so is a mark with nothing behind it.
+    writeFileSync(join(copy, 'about.txt'), Buffer.concat([MARK, MARK, bytes]));
+    const twice = guard(copy);
+    assert.equal(twice.code, 1, twice.said);
+    assert.match(twice.said, DIFFERS);
+    writeFileSync(join(copy, 'about.txt'), MARK);
+    const alone = guard(copy);
+    assert.equal(alone.code, 1, alone.said);
+    assert.match(alone.said, DIFFERS);
+    // An empty file starts with no mark.
     writeFileSync(join(copy, 'about.txt'), '');
-    assert.equal(guard(copy).code, 1);
+    const empty = guard(copy);
+    assert.equal(empty.code, 1, empty.said);
+    assert.match(empty.said, NO_MARK);
 
     // No file at all.
     rmSync(join(copy, 'about.txt'));
     const missing = guard(copy);
     assert.equal(missing.code, 1, missing.said);
     assert.match(missing.said, /there is no about\.txt/);
+    assert.doesNotMatch(missing.said, NO_MARK);
 
-    // Put back as it was, the build passes again: nothing else in the copy was the cause.
-    writeFileSync(join(copy, 'about.txt'), bytes);
+    // Put back as the build made it, the build passes again: nothing else in the copy was the cause.
+    writeFileSync(join(copy, 'about.txt'), Buffer.concat([MARK, bytes]));
     assert.equal(guard(copy).code, 0);
   } finally {
     rmSync(copy, { recursive: true, force: true });
+  }
+});
+
+test('the dist guard fails a table that starts with a byte order mark of its own: its copy would be the mark and then the table, with two marks in front', { skip: built ? false : NO_BUILD }, () => {
+  // The guard takes the table from beside its own script. So this runs a copy of the script in a folder
+  // laid out as the app's: the script, the headers file, the build, and a table that the test writes.
+  const app = mkdtempSync(join(tmpdir(), 'practice-about-app-'));
+  const table = join(app, 'src', 'strings', 'about.ts');
+  const guard = (): { code: number | null; said: string } => {
+    const run = spawnSync(process.execPath, [join(app, 'scripts', 'check-dist.mjs')], { encoding: 'utf8' });
+    return { code: run.status, said: `${run.stdout}${run.stderr}` };
+  };
+  const OWN_MARK = /src\/strings\/about\.ts starts with a byte order mark of its own: the build puts the one mark in front of its copy, and about\.txt would start with two/;
+  const OTHER = /about\.txt does not start with a byte order mark|about\.txt differs from src\/strings\/about\.ts/;
+  try {
+    for (const folder of ['scripts', 'public', join('src', 'strings')]) mkdirSync(join(app, folder), { recursive: true });
+    cpSync(GUARD, join(app, 'scripts', 'check-dist.mjs'));
+    cpSync(fileURLToPath(new URL('../public/_headers', import.meta.url)), join(app, 'public', '_headers'));
+    cpSync(DIST, join(app, 'dist'), { recursive: true });
+    // The table as the repository has it: the copy of the script passes the build, as the script itself does.
+    writeFileSync(table, bytes);
+    const clean = guard();
+    assert.equal(clean.code, 0, clean.said);
+
+    // The table with a mark in front, and the build that the plugin makes of such a table: its own mark,
+    // then the table, mark and all. That copy is the mark and then the table, to the byte, so the two
+    // messages about the copy have nothing to say. The table's own message is the one that fails the build.
+    writeFileSync(table, Buffer.concat([MARK, bytes]));
+    writeFileSync(join(app, 'dist', 'about.txt'), Buffer.concat([MARK, MARK, bytes]));
+    const twice = guard();
+    assert.equal(twice.code, 1, twice.said);
+    assert.match(twice.said, OWN_MARK);
+    assert.doesNotMatch(twice.said, OTHER);
+    // The same table beside a build that was made before it had the mark: both are said.
+    writeFileSync(join(app, 'dist', 'about.txt'), Buffer.concat([MARK, bytes]));
+    const older = guard();
+    assert.equal(older.code, 1, older.said);
+    assert.match(older.said, OWN_MARK);
+    assert.match(older.said, /about\.txt differs from src\/strings\/about\.ts behind its byte order mark/);
+
+    // With the table as it was, the build passes again: nothing else in the folder was the cause.
+    writeFileSync(table, bytes);
+    assert.equal(guard().code, 0);
+  } finally {
+    rmSync(app, { recursive: true, force: true });
   }
 });

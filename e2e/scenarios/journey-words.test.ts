@@ -27,6 +27,7 @@ import { OTHER_WORDS, fundTestWallet, scenario, testRecord, type OpenedPage } fr
 import {
   RECORD_KEY,
   arrivesAt,
+  assertSignedAsPlanned,
   attributeOf,
   botCheckScripts,
   countOf,
@@ -211,7 +212,9 @@ scenario(
     await page.waitFor('send-review');
     await headingBecomes(page, es.send.reviewTitle);
     assert.equal(await countOf(page, 'unlock-step'), 0);
-    assert.deepEqual(await figuresOf(page, 'send-review'), plan);
+    // The signed payment is the planned one. The wallet's words are new in every run, so its size may be a
+    // vbyte or two under the plan's (assertSignedAsPlanned).
+    assertSignedAsPlanned(await figuresOf(page, 'send-review'), plan);
     await fits(page, 'the review');
     await page.click('send-broadcast');
     const txid = await sentTxid(page, '/es');

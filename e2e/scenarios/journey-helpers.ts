@@ -32,6 +32,7 @@ import assert from 'node:assert/strict';
 import { EVENTS, eventPaths, isEventBody, type EventBody } from '@learnbitcoin/practice-contract';
 import { accountFromMnemonic, isValidMnemonic } from '@learnbitcoin/practice-wallet';
 import { ANSWER_SETTLE_MS } from '../../app/src/components/taps.ts';
+import { feeRateText } from '../../app/src/components/wallet/tx-text.ts';
 import { RECORD_KEY, makeRecord, type WalletRecord } from '../../app/src/lib/keystore.ts';
 import { strings } from '../../app/src/strings/index.ts';
 import type { OpenOptions, OpenedPage, Scenario } from './helpers.ts';
@@ -411,6 +412,41 @@ export async function figuresOf(page: OpenedPage, step: 'send-plan' | 'send-revi
     total: await rowOf(page, scope, `${own}-total`),
     change: await rowOf(page, scope, `${own}-change`),
   };
+}
+
+/**
+ * Holds the review of a signed payment to its plan, for a wallet whose keys
+ * are new in every run: one made on Create, from 12 words or a passkey that
+ * nobody has seen before.
+ *
+ * Whom it pays, the amount, the fee, the total and the change are the
+ * plan's, to the letter. The size is the plan's, or one or two vbytes less:
+ * the plan counts every signature at its full length, and now and then a
+ * signature comes out a byte shorter (wallet/src/send.ts, above
+ * plannedVsize). Which signature does depends on the key and on what it
+ * signs, so with new keys in every run it is a different payment each
+ * time, and mostly none. The rate is the fee over the size the review
+ * shows, written as the app writes a rate: at the plan's size, the plan's
+ * own.
+ *
+ * A wallet from fixed words signs the same payment the same way in every
+ * run, so a scenario with such a wallet holds the review to the plan
+ * outright.
+ */
+export function assertSignedAsPlanned(review: Figures, plan: Figures): void {
+  for (const figure of ['to', 'amount', 'fee', 'total', 'change'] as const) {
+    assert.equal(review[figure], plan[figure], `the signed payment's "${figure}" is the plan's`);
+  }
+  const planned = satsIn(plan.size);
+  const signed = satsIn(review.size);
+  assert.ok(
+    signed === planned || signed === planned - 1 || signed === planned - 2,
+    `the signed payment's size is the plan's, or one or two vbytes less: the plan says ${plan.size}, the review ${review.size}`,
+  );
+  // The same words around the number: the size as the plan writes a size.
+  assert.equal(review.size, plan.size.replace(sats(planned), sats(signed)));
+  const rate = signed === planned ? plan.rate : plan.rate.replace(/^\S+/, feeRateText(satsIn(plan.fee) / signed));
+  assert.equal(review.rate, rate, `the signed payment's rate is its fee (${plan.fee}) over its size (${review.size})`);
 }
 
 export interface NetworkTx {

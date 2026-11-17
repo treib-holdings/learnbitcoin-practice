@@ -5,7 +5,7 @@
 // Worker's handler behind /api/ and /p/ with nothing added or lost.
 
 import assert from 'node:assert/strict';
-import { mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { Agent, request as httpRequest } from 'node:http';
 import { dirname, join } from 'node:path';
 import { test } from 'node:test';
@@ -380,8 +380,11 @@ test('a path that is no file is the app, with status 200', async () => {
 
 test('content types: what a browser needs under "nosniff", named as Cloudflare names them', async () => {
   const site = await scratchSite(FILES);
-  // Each of these is what Cloudflare's own file server sent for a file of that name, run on this machine.
-  // Its rule: "; charset=utf-8" goes with the text/ types and with no other, so JSON has none.
+  // Each of these but the two .txt files is what Cloudflare's own file server sent for a file of that name,
+  // run on this machine. Its rule: "; charset=utf-8" goes with the text/ types and with no other, so JSON
+  // has none. A .txt file goes out as the deployed site has been seen to send one, "text/plain" with no
+  // charset, so that a scenario meets about.txt the way a reader does (the table of types in src/serve.ts
+  // says more).
   const types: [path: string, type: string | undefined][] = [
     ['/', 'text/html; charset=utf-8'],
     ['/assets/app-abc123.js', 'text/javascript; charset=utf-8'],
@@ -392,9 +395,9 @@ test('content types: what a browser needs under "nosniff", named as Cloudflare n
     ['/logo.svg', 'image/svg+xml'],
     ['/favicon.png', 'image/png'],
     ['/favicon.ico', 'image/vnd.microsoft.icon'],
-    ['/robots.txt', 'text/plain; charset=utf-8'],
+    ['/robots.txt', 'text/plain'],
     ['/licenses.md', 'text/markdown; charset=utf-8'],
-    ['/a%20b.txt', 'text/plain; charset=utf-8'],
+    ['/a%20b.txt', 'text/plain'],
     ['/site.webmanifest', 'application/manifest+json'],
     ['/feed.xml', 'application/xml'],
     ['/table.csv', 'text/csv; charset=utf-8'],
@@ -413,7 +416,52 @@ test('content types: what a browser needs under "nosniff", named as Cloudflare n
   assert.equal((await ask(site.port, '/a%20b.txt')).body, 'a space in the name\n');
   assert.equal((await ask(site.port, '/LICENSE')).body, 'a file with no extension\n');
   assert.equal(contentType('x.JS'), 'text/javascript; charset=utf-8');
+  assert.equal(contentType('about.txt'), 'text/plain');
   assert.equal(contentType('no-extension'), null);
+});
+
+test('no scenario holds an answer to the charset behind a text type: the scenario files name such a type, charset and all, only where they send it themselves', () => {
+  // The table of types sends a page, a script, a stylesheet, a Markdown file and a CSV file with
+  // "; charset=utf-8" behind the type, and the deployed site has been seen to send such types bare
+  // (src/serve.ts says so at its top). A scenario that held an answer to that charset would hold the app
+  // to something that is this server's own. So a scenario looks at the kind alone, as
+  // scenarios/page.test.ts and scenarios/worker.test.ts do with the page's.
+  //
+  // The files of scenarios/ are read for it. A line that names a text type with a charset behind it is
+  // let pass only where it sends that header itself: a small server that stands in for another site
+  // answers with a page of its own, under a type the scenario writes out.
+  const folder = new URL('../scenarios/', import.meta.url);
+  const files = readdirSync(folder).filter((name) => name.endsWith('.ts')).sort();
+  assert.ok(files.length >= 25 && files.includes('worker.test.ts') && files.includes('page.test.ts') && files.includes('helpers.ts'), `${files.length} files`);
+  /** A text type with a charset behind it, written as a text or with the slash of a pattern. */
+  const NAMED = /text\\?\/[a-z]+\s*;\s*charset/i;
+  /** A line that sends the headers of an answer. */
+  const SENDS = /\bresponse\.writeHead\(/;
+  const lines = files.flatMap((name) =>
+    readFileSync(new URL(name, folder), 'utf8')
+      .split('\n')
+      .map((line, at) => ({ where: `scenarios/${name}:${at + 1}`, line: line.trim() }))
+      .filter(({ line }) => NAMED.test(line)),
+  );
+  assert.deepEqual(lines.filter(({ line }) => !SENDS.test(line)), []);
+  // Not an empty look: the site that stands in for another one is found, and it is one that sends.
+  assert.ok(lines.some(({ where }) => where.startsWith('scenarios/helpers.ts:')), 'the stand-in site of scenarios/helpers.ts was not found');
+  // And the look finds what it is there for: an answer held to a text type, charset and all, as a text
+  // and as a pattern.
+  const held = [
+    "assert.deepEqual(shell, { status: 200, type: 'text/html; charset=utf-8' });",
+    "assert.equal(file.headers['content-type'], 'text/markdown;charset=UTF-8');",
+    'assert.match(type, /^text\\/css; charset=utf-8$/);',
+  ];
+  for (const line of held) assert.ok(NAMED.test(line) && !SENDS.test(line), line);
+  // It leaves alone a type held to its kind, a text file's bare type, and the Worker's own JSON type,
+  // which is the Worker's to write and no entry of the table.
+  const free = [
+    "assert.match(shell.type ?? '', /^text\\/html(;|$)/);",
+    "assert.equal(got.headers.get('content-type'), 'text/plain');",
+    "assert.equal(answer.headers['content-type'], 'application/json; charset=utf-8', path);",
+  ];
+  for (const line of free) assert.ok(!NAMED.test(line), line);
 });
 
 test('a file comes with its length, a tag and "ask before using your copy"; an unchanged file is not sent twice', async () => {

@@ -6,6 +6,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { parseHeadersFile } from '../src/serve.ts';
+import { scratchSite } from '../test/scratch-site.ts';
 import { scenario, type OpenedPage } from './helpers.ts';
 
 /** The headers every page must carry: the "/*" block of the app's own _headers file, as written in the source. */
@@ -90,32 +91,65 @@ scenario('a deep path and a path of one part get the app, marked noindex; the ho
   assert.equal(documentOf(home, `${s.url}/`).headers['x-robots-tag'], undefined);
 });
 
-scenario('Without JavaScript the page says where the sentences of About can be read, and that file is the page\'s own string table', async (s) => {
-  /** The About page's string table, as the repository has it: the bytes the build ships as /about.txt. */
+scenario('Without JavaScript the page says where the sentences of About can be read, and that file is the page\'s own string table, which a browser reads as UTF-8 though its type names no charset', async (s) => {
+  /** The About page's string table, as the repository has it: the bytes the build ships as /about.txt, behind a byte order mark. */
   const SOURCE = readFileSync(new URL('../../app/src/strings/about.ts', import.meta.url));
   const TEXT = SOURCE.toString('utf8');
+  /** The mark: three bytes in front of the file, which tell a browser that it is UTF-8. */
+  const MARK = Buffer.from([0xef, 0xbb, 0xbf]);
+  /** A line of the Spanish half, with a letter that is two bytes in UTF-8. */
+  const SPANISH = 'Qué guarda este navegador';
 
-  // -- The file, as any client gets it: there, as plain text said to be UTF-8, under the policy's headers,
-  //    never listed, and the source file to the byte. --
+  // -- The file, as any client gets it: there, as plain text with no charset named (which is how the
+  //    deployed site sends a text file), under the policy's headers, never listed, and the mark followed
+  //    by the source file to the byte. --
   const got = await fetch(`${s.url}/about.txt`);
   assert.equal(got.status, 200);
-  assert.equal(got.headers.get('content-type'), 'text/plain; charset=utf-8');
+  assert.equal(got.headers.get('content-type'), 'text/plain');
   for (const [name, value] of POLICY) assert.equal(got.headers.get(name), value, name);
   assert.equal(got.headers.get('x-robots-tag'), 'noindex');
-  assert.ok(Buffer.from(await got.arrayBuffer()).equals(SOURCE), 'the file is app/src/strings/about.ts, to the byte');
-  // Half of it is Spanish, and its letters outside ASCII are all in that half: the type matters for them.
-  assert.ok(TEXT.includes('Qué guarda este navegador') && TEXT.includes('What this browser keeps'));
+  assert.ok(Buffer.from(await got.arrayBuffer()).equals(Buffer.concat([MARK, SOURCE])), 'the file is a byte order mark and then app/src/strings/about.ts, to the byte');
+  // Half of it is Spanish, and its letters outside ASCII are all in that half: for them it matters how a browser reads the file.
+  assert.ok(TEXT.includes(SPANISH) && TEXT.includes('What this browser keeps'));
 
   // -- A browser shows it as the text it is. The app's router leaves the address alone: the page that
-  //    answers is the file, and its accented letters arrive whole. --
+  //    answers is the file. Its type names no charset, and the browser reads it as UTF-8 all the same:
+  //    the accented letters arrive whole, and the mark is no part of what is shown. --
   const page = await s.open('/about.txt');
   assert.equal(page.status, 200);
   const file = documentOf(page, `${s.url}/about.txt`);
-  assert.equal(file.headers['content-type'], 'text/plain; charset=utf-8');
+  assert.equal(file.headers['content-type'], 'text/plain');
   assert.equal(file.headers['x-robots-tag'], 'noindex');
+  assert.equal(await page.page.evaluate(() => document.characterSet), 'UTF-8');
   const shownText = await page.page.evaluate(() => document.body.innerText);
   assert.equal(shownText.trimEnd(), TEXT.trimEnd());
+  assert.ok(shownText.includes(SPANISH));
   assert.equal(await page.page.evaluate(() => document.querySelector('#app')), null, 'the file, not the app');
+
+  // -- The control: that reading is the mark's doing, and not the browser's guess. A second site sends
+  //    the same bytes without the mark, in the same way: the same server, the same headers, the same
+  //    type. The browser does not read that file as UTF-8. It falls back to a charset of its own
+  //    choosing (Chrome set to English takes windows-1252), and the accented letters come out broken. --
+  const bare = await scratchSite({ 'about.txt': SOURCE });
+  const unmarked = await fetch(`${bare.url}/about.txt`);
+  assert.deepEqual([unmarked.status, unmarked.headers.get('content-type')], [200, 'text/plain']);
+  for (const [name, value] of POLICY) assert.equal(unmarked.headers.get(name), value, name);
+  assert.ok(Buffer.from(await unmarked.arrayBuffer()).equals(SOURCE), 'the same bytes, without the mark');
+  // A page of the app that may also reach the second site, taken there.
+  const other = await s.open('/robots.txt', { allow: [bare.url] });
+  const answer = await other.page.goto(`${bare.url}/about.txt`, { waitUntil: 'load' });
+  assert.deepEqual([answer?.status(), answer?.headers()['content-type']], [200, 'text/plain']);
+  const fallback = await other.page.evaluate(() => document.characterSet);
+  assert.notEqual(fallback, 'UTF-8', 'without the mark the browser does not take the file for UTF-8');
+  // What it shows is the file's bytes read as that other charset: the Spanish line is not among them as
+  // the file has it, and stands there as its bytes misread.
+  const misread = (bytes: Uint8Array): string => new TextDecoder(fallback).decode(bytes);
+  const brokenText = await other.page.evaluate(() => document.body.innerText);
+  assert.equal(brokenText.trimEnd(), misread(SOURCE).trimEnd());
+  assert.notEqual(brokenText.trimEnd(), TEXT.trimEnd());
+  assert.ok(!brokenText.includes(SPANISH), 'the Spanish line is not shown whole');
+  assert.ok(brokenText.includes(misread(Buffer.from(SPANISH, 'utf8'))), 'the Spanish line is shown as its bytes misread');
+  assert.deepEqual(bare.faults, [], 'the second site answered every request');
 
   // -- With scripts switched off the app's one page draws nothing but its <noscript> block: four lines, two
   //    in English and two marked as Spanish, on About's own address in each language. --

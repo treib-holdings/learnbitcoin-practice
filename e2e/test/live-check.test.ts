@@ -5,7 +5,7 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { createServer, type Server } from 'node:http';
+import { createServer, get as httpGet, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { after, before, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -17,8 +17,15 @@ import { APP_HEADERS, PAGE, scratchSite } from './scratch-site.ts';
 
 const SCRIPT = fileURLToPath(new URL('../../tools/live-check/live-check.ts', import.meta.url));
 const ROBOTS = readFileSync(new URL('../../app/public/robots.txt', import.meta.url), 'utf8');
-/** The About page's string table, as the repository has it: what the build ships as /about.txt. */
+/** The About page's string table, as the repository has it: what the build ships as /about.txt, behind a byte order mark. */
 const ABOUT = readFileSync(new URL('../../app/src/strings/about.ts', import.meta.url), 'utf8');
+/**
+ * A byte order mark, as the character it is in a text: written to a file as UTF-8 it is the three bytes
+ * EF BB BF. It is made from its number, since the character itself cannot be seen where it stands in a file.
+ */
+const MARK = String.fromCharCode(0xfeff);
+/** /about.txt as the build ships it: the mark, then the table. */
+const SHIPPED = `${MARK}${ABOUT}`;
 const EXPECT = repositoryExpectations();
 
 /** The pages the check asks for, in the order it asks: a path of two parts, a path of one, the home page. */
@@ -58,7 +65,8 @@ const onPages = (name: string) => PAGES.map((path) => `GET ${path}: ${name}`);
 
 /** The About page's text file. It is a file of the app, under the headers its path is given: a path of one part. */
 const ABOUT_FILE = 'GET /about.txt';
-const ABOUT_TYPE = `${ABOUT_FILE}: 200, as text/plain; charset=utf-8`;
+const ABOUT_TYPE = `${ABOUT_FILE}: 200, as text/plain`;
+const ABOUT_MARK = `${ABOUT_FILE}: starts with a byte order mark`;
 const ABOUT_TEXT = `${ABOUT_FILE}: the text of app/src/strings/about.ts`;
 const ABOUT_UNLISTED = `${ABOUT_FILE} (must not be listed): x-robots-tag`;
 
@@ -81,11 +89,12 @@ after(async () => {
 });
 
 /**
- * A site that holds what the build ships (the app's headers, robots.txt and the About page's text file, and a
- * page), with the Worker's handler behind it. A file given as null is one the site does not have.
+ * A site that holds what the build ships (the app's headers, robots.txt and the About page's text file with its
+ * byte order mark in front, and a page), with the Worker's handler behind it. A file given as null is one the
+ * site does not have.
  */
 const site = (files: Record<string, string | null> = {}, handler: Handler = stack.handler) => {
-  const held = Object.entries({ 'robots.txt': ROBOTS, 'about.txt': ABOUT, ...files }).filter((file): file is [string, string] => file[1] !== null);
+  const held = Object.entries({ 'robots.txt': ROBOTS, 'about.txt': SHIPPED, ...files }).filter((file): file is [string, string] => file[1] !== null);
   return scratchSite(Object.fromEntries(held), handler);
 };
 
@@ -103,9 +112,10 @@ after(async () => {
  * A server that stands in front of a site as a host stands in front of the files it was given: every request is
  * handed on as it came and every answer back as it came, but for the headers of one path, which `change` alters.
  * (The local server takes a file's type from its own table, as Cloudflare does. This is how a test has a host
- * that sends a file under another type.)
+ * that sends a file under another type.) A header named in `lines` goes out for that path as so many header
+ * lines of the one name, in place of what the answer had under it.
  */
-async function inFrontOf(base: string, path: string, change: (headers: Headers) => void): Promise<{ url: string }> {
+async function inFrontOf(base: string, path: string, change: (headers: Headers) => void, lines: Record<string, string[]> = {}): Promise<{ url: string }> {
   const front = createServer((request, response) => {
     const pass = async (): Promise<void> => {
       const headers = new Headers();
@@ -127,9 +137,12 @@ async function inFrontOf(base: string, path: string, change: (headers: Headers) 
       const out = new Headers(answer.headers);
       // The body is handed on as it was read here: whole, and not compressed.
       for (const name of ['content-length', 'content-encoding', 'transfer-encoding', 'connection', 'keep-alive']) out.delete(name);
-      if (new URL(request.url ?? '/', base).pathname === path) change(out);
+      const onPath = new URL(request.url ?? '/', base).pathname === path;
+      if (onPath) change(out);
       response.statusCode = answer.status;
       for (const [name, value] of out) response.setHeader(name, value);
+      // A list of values goes out as that many lines of the one name.
+      if (onPath) for (const [name, values] of Object.entries(lines)) response.setHeader(name, values);
       response.end(body);
     };
     pass().catch(() => response.destroy());
@@ -302,8 +315,10 @@ test('it passes on the local server', async () => {
     'GET /about (the floor, as written in this script): strict-transport-security',
     'GET / (the floor, as written in this script): strict-transport-security',
     'GET /robots.txt: keeps crawlers out of /api/ and /p/',
-    // The About page's text file: there, as plain text said to be UTF-8, the repository's text, and never listed.
+    // The About page's text file: there, as plain text, with the mark in front that says it is UTF-8, the
+    // repository's text, and never listed.
     ABOUT_TYPE,
+    ABOUT_MARK,
     ABOUT_TEXT,
     'GET /about.txt: content-security-policy',
     'GET /about.txt: x-content-type-options',
@@ -542,19 +557,33 @@ test('every expectation, broken one at a time, fails its own check', async () =>
     },
     // -- the About page's text file --
     {
-      // A host answers a path that names no file with the app's page: status 200, and nothing of the text.
+      // A host answers a path that names no file with the app's page: status 200, as HTML, with no mark in
+      // front and nothing of the text.
       what: 'the About page\'s text file is not there (it did not reach the build)',
       files: { 'about.txt': null },
-      fails: [ABOUT_TYPE, ABOUT_TEXT],
+      fails: [ABOUT_TYPE, ABOUT_MARK, ABOUT_TEXT],
+    },
+    {
+      // The table as the repository has it, which is not what the build ships: the right text, and nothing
+      // in front of it to tell a browser that it is UTF-8.
+      what: 'the About page\'s text file has no byte order mark in front',
+      files: { 'about.txt': ABOUT },
+      fails: [ABOUT_MARK],
     },
     {
       what: 'the About page\'s text file is another text by one letter',
-      files: { 'about.txt': ABOUT.replace('Qué guarda este navegador', 'Que guarda este navegador') },
+      files: { 'about.txt': SHIPPED.replace('Qué guarda este navegador', 'Que guarda este navegador') },
       fails: [ABOUT_TEXT],
     },
     {
       what: 'the About page\'s text file is cut short',
-      files: { 'about.txt': ABOUT.slice(0, -1) },
+      files: { 'about.txt': SHIPPED.slice(0, -1) },
+      fails: [ABOUT_TEXT],
+    },
+    {
+      // Only the first mark is a mark. A second one is a character of the text, and the text is then another.
+      what: 'the About page\'s text file has the mark twice',
+      files: { 'about.txt': `${MARK}${SHIPPED}` },
       fails: [ABOUT_TEXT],
     },
     // -- the Worker --
@@ -694,26 +723,48 @@ test('every expectation, broken one at a time, fails its own check', async () =>
   assert.match(ran.out, /^4 of [0-9]+ checks FAILED for http:\/\/localhost:[0-9]+$/m);
 });
 
-test('the About page\'s text file: there, the repository\'s text to the character, and under one type to the letter', async () => {
+test('the About page\'s text file: there, as plain text, with a byte order mark in front, and behind the mark the repository\'s text to the character', async () => {
+  /** What the check says of a file that does not start with the mark: the first of what came in its place. */
+  const noMark = (came: string): string =>
+    `no byte order mark (the bytes EF BB BF) before ${JSON.stringify(came.slice(0, 40))}: without one a browser may not read the file as UTF-8`;
+  /** The answers of a site to a request for the file: its status, its type, the first three bytes, and the text as the check reads it (as UTF-8, with one mark at the start left out). */
+  const fileOf = async (base: string): Promise<{ status: number; type: string | null; starts: number[]; text: string }> => {
+    const answer = await fetch(`${base}/about.txt`);
+    const bytes = Buffer.from(await answer.arrayBuffer());
+    return { status: answer.status, type: answer.headers.get('content-type'), starts: [...bytes.subarray(0, 3)], text: new TextDecoder().decode(bytes) };
+  };
+
+  // -- Why the file is held to the mark, as the script says it at its top. What the two browsers were seen
+  //    to do, they were seen to do with the file without the mark: of the file as the build ships it, that
+  //    sentence would not be so. --
+  const said = readFileSync(SCRIPT, 'utf8').replace(/\n\/\/ ?/g, ' ');
+  assert.match(
+    said,
+    /Told no charset, Chromium and WebKit have both been seen to read this file, without the mark, as windows-1252 and to show its accented letters broken: "prÃ¡ctica" where the file says "práctica"\. A browser that finds the mark reads the file as UTF-8 whatever the header says\./,
+  );
+
   // -- As the build ships it: every check on the file passes, and each was made. --
   const shipped = await site();
   const made = (await liveCheck(shipped.url, EXPECT)).filter((check) => check.name.startsWith(ABOUT_FILE));
   assert.deepEqual(failed(made), []);
   assert.deepEqual(
     made.map((check) => check.name),
-    [ABOUT_TYPE, ABOUT_TEXT, ...POLICY_NAMES.map((name) => `${ABOUT_FILE}: ${name}`), `${ABOUT_FILE}: x-robots-tag`, ABOUT_UNLISTED],
+    [ABOUT_TYPE, ABOUT_MARK, ABOUT_TEXT, ...POLICY_NAMES.map((name) => `${ABOUT_FILE}: ${name}`), `${ABOUT_FILE}: x-robots-tag`, ABOUT_UNLISTED],
   );
-  // What the local server sends for it is what the check asks for: the type of a text file as Cloudflare names it.
-  const sent = await fetch(`${shipped.url}/about.txt`);
-  assert.deepEqual([sent.status, sent.headers.get('content-type'), sent.headers.get('x-robots-tag')], [200, 'text/plain; charset=utf-8', 'noindex']);
-  assert.equal(await sent.text(), ABOUT);
+  // What the local server sends for it is what the deployed site has been seen to send for a text file: the
+  // type with no charset behind it. So this is the very case the mark is there for: the mark in front, the
+  // bare type, and every check passes. Read as a text, the mark is gone and the table is left.
+  assert.deepEqual(await fileOf(shipped.url), { status: 200, type: 'text/plain', starts: [0xef, 0xbb, 0xbf], text: ABOUT });
+  assert.equal((await fetch(`${shipped.url}/about.txt`)).headers.get('x-robots-tag'), 'noindex');
 
   // -- A site without the file. The host answers with the app's page, as it answers every path that names no
-  //    file: status 200, so only the type and the text say that the file is not there. Both fail, and say what came. --
+  //    file: status 200, so only the type, the mark and the text say that the file is not there. All three
+  //    fail, and say what came. --
   const without = await site({ 'about.txt': null });
   const missing = (await liveCheck(without.url, EXPECT)).filter((check) => !check.ok);
   assert.deepEqual(missing, [
     { name: ABOUT_TYPE, ok: false, detail: 'status 200, type "text/html; charset=utf-8"' },
+    { name: ABOUT_MARK, ok: false, detail: noMark(PAGE) },
     {
       name: ABOUT_TEXT,
       ok: false,
@@ -721,54 +772,133 @@ test('the About page\'s text file: there, the repository\'s text to the characte
     },
   ]);
 
+  // -- The file without its mark: the table as the repository has it, sent as the deployed site sends a text
+  //    file. The type is right and the text is right, to the character: fetch reads it as UTF-8 either way.
+  //    A browser that is told no charset may not, and the mark's own check is the one that says so. --
+  const unmarked = await site({ 'about.txt': ABOUT });
+  assert.deepEqual(await fileOf(unmarked.url), { status: 200, type: 'text/plain', starts: [...Buffer.from(ABOUT.slice(0, 3))], text: ABOUT });
+  assert.deepEqual(
+    (await liveCheck(unmarked.url, EXPECT)).filter((check) => !check.ok),
+    [{ name: ABOUT_MARK, ok: false, detail: noMark(ABOUT) }],
+  );
+
   // -- Another text. One letter of the Spanish half lost its accent: the check names the place. --
   const at = ABOUT.indexOf('Qué guarda este navegador') + 2;
   assert.ok(at > 2);
   const plain = `${ABOUT.slice(0, at)}e${ABOUT.slice(at + 1)}`;
-  const other = (await liveCheck((await site({ 'about.txt': plain })).url, EXPECT)).filter((check) => !check.ok);
+  const other = (await liveCheck((await site({ 'about.txt': `${MARK}${plain}` })).url, EXPECT)).filter((check) => !check.ok);
   assert.deepEqual(other, [
     { name: ABOUT_TEXT, ok: false, detail: `${ABOUT.length} characters came, ${ABOUT.length} were expected; they differ from character ${at}: got ${JSON.stringify(plain.slice(at, at + 80))}` },
   ]);
 
-  // -- The right text under another type. The host decides the type, and half of the file is Spanish: a browser
-  //    that is not told the file is UTF-8 may show its accented letters broken. Every other check passes. --
-  const types: [sent: string | null, shown: string][] = [
-    // Plain text, and nothing said about how its letters are written.
-    ['text/plain', '"text/plain"'],
-    ['text/plain; charset=iso-8859-1', '"text/plain; charset=iso-8859-1"'],
-    ['text/plain; charset=utf-8; format=flowed', '"text/plain; charset=utf-8; format=flowed"'],
+  // -- The mark twice. The check leaves one mark out of the text it reads, and no more than one: the second
+  //    is a character of the text, the first of it, and the text is then another by that one character.
+  //    The file does start with a mark, so the mark's own check passes. --
+  const twice = (await liveCheck((await site({ 'about.txt': `${MARK}${SHIPPED}` })).url, EXPECT)).filter((check) => !check.ok);
+  // What came is the second mark, as the character it is, and then the table.
+  assert.equal(SHIPPED.codePointAt(0), 0xfeff);
+  assert.deepEqual(twice, [
+    { name: ABOUT_TEXT, ok: false, detail: `${ABOUT.length + 1} characters came, ${ABOUT.length} were expected; they differ from character 0: got ${JSON.stringify(SHIPPED.slice(0, 80))}` },
+  ]);
+
+  // -- The file behind its mark, written in another charset: each accented letter is one byte, and no UTF-8.
+  //    The check reads an answer's text as UTF-8 and puts a replacement character where the bytes are
+  //    none, which is how fetch itself reads this file. So each of those bytes is a replacement character
+  //    there, the text is another, and the check names the first place. The mark is in front all the
+  //    same, and the mark's check passes. --
+  const latin = await scratchSite({ 'robots.txt': ROBOTS, 'about.txt': Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(ABOUT, 'latin1')]) }, stack.handler);
+  const asFetchReads = await (await fetch(`${latin.url}/about.txt`)).text();
+  const first = ABOUT.search(/[^\x00-\x7f]/);
+  assert.ok(first > 0 && asFetchReads.slice(0, first) === ABOUT.slice(0, first) && asFetchReads[first] === String.fromCharCode(0xfffd));
+  assert.deepEqual(
+    (await liveCheck(latin.url, EXPECT)).filter((check) => !check.ok),
+    [{ name: ABOUT_TEXT, ok: false, detail: `${asFetchReads.length} characters came, ${ABOUT.length} were expected; they differ from character ${first}: got ${JSON.stringify(asFetchReads.slice(first, first + 80))}` }],
+  );
+
+  // -- The type. The host decides it, and the check holds it to the kind of file alone: plain text. A
+  //    charset behind the kind is held to nothing, since a browser that finds the mark reads the file as
+  //    UTF-8 whatever the header says. Any other kind fails, and so does a value that names two types.
+  //    No other check does. --
+  const types: [sent: string | null, passes: boolean, shown: string][] = [
+    // What the deployed site has been seen to send, and what the tool that deploys it hands over.
+    ['text/plain', true, '"text/plain"'],
+    ['text/plain; charset=utf-8', true, '"text/plain; charset=utf-8"'],
+    // The same kind written another way, and with other things behind it.
+    ['Text/Plain;charset=UTF-8', true, '"Text/Plain;charset=UTF-8"'],
+    ['text/plain ; charset=utf-8; format=flowed', true, '"text/plain ; charset=utf-8; format=flowed"'],
+    ['text/plain; charset=iso-8859-1', true, '"text/plain; charset=iso-8859-1"'],
+    // The kind a host sends with the app's page, which is its answer to a path that names no file.
+    ['text/html', false, '"text/html"'],
+    ['text/html; charset=utf-8', false, '"text/html; charset=utf-8"'],
     // What a host sends for a kind of file it does not know, and a file sent as the source it is a copy of.
-    ['application/octet-stream', '"application/octet-stream"'],
-    ['text/typescript; charset=utf-8', '"text/typescript; charset=utf-8"'],
+    ['application/octet-stream', false, '"application/octet-stream"'],
+    ['text/typescript; charset=utf-8', false, '"text/typescript; charset=utf-8"'],
+    // A kind that only begins like plain text, and one with a parameter that names it.
+    ['text/plainer', false, '"text/plainer"'],
+    ['text/markdown; variant=text/plain', false, '"text/markdown; variant=text/plain"'],
+    // Two types in one value, with a comma between them. Such a value names no one kind, whatever stands
+    // behind its first type and whichever the second is: a browser may go by the second.
+    ['text/plain, text/html', false, '"text/plain, text/html"'],
+    ['text/plain; charset=utf-8, text/html', false, '"text/plain; charset=utf-8, text/html"'],
+    ['text/plain;charset=utf-8,application/octet-stream', false, '"text/plain;charset=utf-8,application/octet-stream"'],
+    ['text/html, text/plain; charset=utf-8', false, '"text/html, text/plain; charset=utf-8"'],
+    // A comma in quotes behind the kind is refused with them: stricter than a browser, on purpose.
+    ['text/plain; note="a, b"', false, '"text/plain; note=\\"a, b\\""'],
     // No type at all.
-    [null, 'no such header'],
+    [null, false, 'no such header'],
   ];
-  for (const [type, shown] of types) {
+  for (const [type, passes, shown] of types) {
     const front = await inFrontOf(shipped.url, '/about.txt', (headers) => {
       if (type === null) headers.delete('content-type');
       else headers.set('content-type', type);
     });
     // The file is the same, to the byte, and so is every other answer of the site.
-    const got = await fetch(`${front.url}/about.txt`);
-    assert.deepEqual([got.status, got.headers.get('content-type'), await got.text()], [200, type, ABOUT], String(type));
+    assert.deepEqual(await fileOf(front.url), { status: 200, type, starts: [0xef, 0xbb, 0xbf], text: ABOUT }, String(type));
     assert.deepEqual(
       (await liveCheck(front.url, EXPECT)).filter((check) => !check.ok),
-      [{ name: ABOUT_TYPE, ok: false, detail: `status 200, type ${shown}` }],
+      passes ? [] : [{ name: ABOUT_TYPE, ok: false, detail: `status 200, type ${shown}` }],
       String(type),
     );
   }
+  // Two header lines of that name, sent as two: the first is one that passes by itself, and the second
+  // names the page's kind. fetch hands the two over as one value, joined by a comma, and that value is
+  // what the check reads. It names no one kind, so the type's check fails, and says what came.
+  const twoLines = await inFrontOf(shipped.url, '/about.txt', () => {}, { 'content-type': ['text/plain; charset=utf-8', 'text/html'] });
+  const sentLines = await new Promise<string[]>((resolve, reject) => {
+    httpGet(`${twoLines.url}/about.txt`, (answer) => {
+      answer.resume();
+      // The headers as they came over the wire: a name, its value, the next name, its value.
+      resolve(answer.rawHeaders.filter((_, at) => at % 2 === 1 && answer.rawHeaders[at - 1]!.toLowerCase() === 'content-type'));
+    }).on('error', reject);
+  });
+  assert.deepEqual(sentLines, ['text/plain; charset=utf-8', 'text/html']);
+  assert.deepEqual(await fileOf(twoLines.url), { status: 200, type: 'text/plain; charset=utf-8, text/html', starts: [0xef, 0xbb, 0xbf], text: ABOUT });
+  assert.deepEqual(
+    (await liveCheck(twoLines.url, EXPECT)).filter((check) => !check.ok),
+    [{ name: ABOUT_TYPE, ok: false, detail: 'status 200, type "text/plain; charset=utf-8, text/html"' }],
+  );
   // The server in front changes nothing else: with the type left alone, every check passes through it.
   const untouched = await inFrontOf(shipped.url, '/about.txt', () => {});
   const through = await liveCheck(untouched.url, EXPECT);
   assert.deepEqual(failed(through), []);
   assert.equal(through.length, (await liveCheck(shipped.url, EXPECT)).length);
+  // And a named charset does not stand in for the mark: the file without it fails the mark's check under
+  // "text/plain; charset=utf-8" as it does under the bare type.
+  const named = await inFrontOf(unmarked.url, '/about.txt', (headers) => headers.set('content-type', 'text/plain; charset=utf-8'));
+  assert.deepEqual(failed(await liveCheck(named.url, EXPECT)), [ABOUT_MARK]);
 
-  // -- The script itself, on a site without the file: two lines that say FAIL, and exit code 1. --
+  // -- The script itself, on a site without the file: three lines that say FAIL, and exit code 1. --
   const ran = await run([without.url]);
   assert.equal(ran.code, 1);
-  assert.match(ran.out, /^FAIL {2}GET \/about\.txt: 200, as text\/plain; charset=utf-8: status 200, type "text\/html; charset=utf-8"$/m);
+  assert.match(ran.out, /^FAIL {2}GET \/about\.txt: 200, as text\/plain: status 200, type "text\/html; charset=utf-8"$/m);
+  assert.match(ran.out, /^FAIL {2}GET \/about\.txt: starts with a byte order mark: no byte order mark \(the bytes EF BB BF\) before "<!doctype html>/m);
   assert.match(ran.out, /^FAIL {2}GET \/about\.txt: the text of app\/src\/strings\/about\.ts: [0-9]+ characters came, [0-9]+ were expected; they differ from character 0: got "<!doctype html>/m);
-  assert.match(ran.out, /^2 of [0-9]+ checks FAILED for http:\/\/localhost:[0-9]+$/m);
+  assert.match(ran.out, /^3 of [0-9]+ checks FAILED for http:\/\/localhost:[0-9]+$/m);
+  // And on a site whose file lost its mark: one line, which names the mark.
+  const bare = await run([unmarked.url]);
+  assert.equal(bare.code, 1);
+  assert.match(bare.out, /^FAIL {2}GET \/about\.txt: starts with a byte order mark: no byte order mark \(the bytes EF BB BF\) before "\/\/ The text of the About page: /m);
+  assert.match(bare.out, /^1 of [0-9]+ checks FAILED for http:\/\/localhost:[0-9]+$/m);
 });
 
 test('Strict-Transport-Security: a max-age as long as ours passes, and so does a longer one with more behind it', async () => {

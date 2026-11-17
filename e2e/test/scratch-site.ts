@@ -1,6 +1,7 @@
-// A throwaway site for the harness's own tests: a few files in a temporary
-// folder, served by the local server under the app's real headers.
-// (Not a test file itself: it only exports.)
+// A throwaway site for the harness's own tests, and for a scenario that
+// needs a second site beside the app's (scenarios/page.test.ts): a few
+// files in a temporary folder, served by the local server under the app's
+// real headers. (Not a test file itself: it only exports.)
 
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';

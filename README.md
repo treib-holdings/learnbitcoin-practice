@@ -269,8 +269,9 @@ The 12 words never leave the browser. The rest is said to the reader on the
 app's About screen. A reader who browses without JavaScript cannot open that
 screen, so the build publishes the table its sentences are taken from
 (`app/src/strings/about.ts`, both languages, comments included) as
-`/about.txt`, byte for byte, and the page's `<noscript>` lines link it. What
-the screen says comes to this:
+`/about.txt`, byte for byte behind a byte order mark that tells a browser
+the file is UTF-8, and the page's `<noscript>` lines link it. What the
+screen says comes to this:
 
 - The practice server is asked about each of the wallet's addresses, so it
   sees them, and it sees the reader's IP address. For a read of the chain it

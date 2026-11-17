@@ -67,7 +67,7 @@ test('index.html tells a browser without JavaScript what is missing, in both of 
   assert.doesNotMatch(block, /https?:|\/\/|target=|rel=/);
   // What the sentence promises is what the build ships: the About page's string table, both languages in
   // one file, as it is written. The build's own test (test/about-file.test.ts) and the dist guard hold the
-  // built file to the source, byte for byte.
+  // built file to the source, byte for byte, behind the byte order mark that tells a browser it is UTF-8.
   const table = readFileSync(new URL('../src/strings/about.ts', import.meta.url), 'utf8');
   assert.match(table, /^export const en = \{$/m);
   assert.match(table, /^export const es: Record<keyof typeof en, string> = \{$/m);

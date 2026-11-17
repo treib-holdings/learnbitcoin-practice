@@ -50,12 +50,26 @@
 //
 // One file is held to more than its headers: /about.txt, the About page's
 // string table, which the page's <noscript> lines send a reader without
-// JavaScript to. It must be the text of app/src/strings/about.ts as the
-// repository has it, and it must come as "text/plain; charset=utf-8",
-// exactly. Half of the file is Spanish, and a browser that is not told the
-// file is UTF-8 can show its accented letters broken: the type is the one
-// thing about the file that only the host decides, so this check is the
-// only place that holds the host to it.
+// JavaScript to. It must come as plain text, it must start with a byte
+// order mark (the three bytes EF BB BF), and behind the mark it must be
+// the text of app/src/strings/about.ts as the repository has it.
+//
+// The mark is there because half of the file is Spanish, and the header
+// does not say that the file is UTF-8. The deployed site sends a text
+// file's type with no charset: it has been seen to send "text/plain" for
+// this file and for robots.txt, "text/html" for the page,
+// "text/javascript" for the script, "text/css" for the stylesheet and
+// "text/markdown" for licenses.md. (The tool that deploys the site hands
+// each of them over with "; charset=utf-8" behind its type. The site sends
+// the bare type all the same.) Told no charset, Chromium and WebKit have
+// both been seen to read this file, without the mark, as windows-1252 and
+// to show its accented letters broken: "prÃ¡ctica" where the file says
+// "práctica". A browser that finds the mark reads the file as UTF-8
+// whatever the header says. So the header is held to the kind of file it
+// names, "text/plain", with a charset behind it or with none, and the file
+// is held to the mark. A header that names two types names no one kind,
+// and fails. A host that has no such file answers with the app's page, as
+// "text/html": that fails the kind, the mark and the text.
 
 import { readFileSync } from 'node:fs';
 
@@ -93,8 +107,13 @@ const PAGES = [DEEP_PATH, ONE_PART_PATH, '/'];
 /** The About page's string table as a file of the site: what a reader without JavaScript is sent to (app/index.html). */
 const ABOUT_PATH = '/about.txt';
 
-/** The one content type that file may come with: plain text, said to be UTF-8. */
-const ABOUT_TYPE = 'text/plain; charset=utf-8';
+/**
+ * The kind of file it must come as: plain text. What stands behind the kind
+ * in the header (a charset, or nothing at all) is held to nothing: the byte
+ * order mark at the start of the file is what says that it is UTF-8 (the
+ * top of this file says why).
+ */
+const ABOUT_KIND = 'text/plain';
 
 /**
  * The keys of GET /api/config, and the kind of value each holds (contract/src/index.ts, AppConfig). The list is
@@ -154,7 +173,7 @@ export interface Expectations {
   blocks: HeaderBlock[];
   /** The text of robots.txt. */
   robots: string;
-  /** The text of app/src/strings/about.ts: what /about.txt must be, to the character. */
+  /** The text of app/src/strings/about.ts: what /about.txt must hold behind its byte order mark, to the character. */
   about: string;
 }
 
@@ -321,10 +340,32 @@ export function maxAgeOf(value: string): number | null {
   return seconds;
 }
 
+/**
+ * The kind of file a Content-Type names, without what stands behind it, in
+ * lower case: "text/plain" for "text/plain", for "text/plain; charset=utf-8"
+ * and for "Text/Plain;format=flowed". Null where there is no such header.
+ *
+ * Null as well for a value with a comma in it, which names no one kind.
+ * Two headers of this name arrive as one value, joined by a comma, and a
+ * browser may go by another of the two than the first: read up to its
+ * first semicolon, "text/plain; charset=utf-8, text/html" would pass for
+ * plain text. A comma inside quotes is refused with the rest. That is
+ * stricter than a browser, on purpose, as maxAgeOf is: in this check a
+ * false alarm is better than a false pass.
+ */
+function kindOf(type: string | null): string | null {
+  if (type === null || type.includes(',')) return null;
+  // Only a space and a tab are blanks in a header.
+  return type.split(';')[0]!.replace(/^[ \t]+|[ \t]+$/g, '').toLowerCase();
+}
+
 interface Got {
   status: number;
   headers: Headers;
+  /** The body as text: read as UTF-8, with one byte order mark at its start left out. */
   body: string;
+  /** Whether the body's bytes began with a byte order mark (EF BB BF), which the text no longer shows. */
+  marked: boolean;
 }
 
 const AGENT = 'learnbitcoin-practice-live-check';
@@ -337,7 +378,13 @@ async function ask(base: string, path: string, init: RequestInit = {}): Promise<
     redirect: 'manual',
     signal: AbortSignal.timeout(15_000),
   });
-  return { status: response.status, headers: response.headers, body: await response.text() };
+  // The bytes are read once, so that the mark can be looked for, and the text that every check reads is
+  // made of them here: read as UTF-8, with one byte order mark at the start left out and a replacement
+  // character wherever the bytes are no UTF-8. Only the first mark is left out: a second one behind it
+  // is a character of the text, and stays in it.
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  const marked = bytes.length >= 3 && bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf;
+  return { status: response.status, headers: response.headers, body: new TextDecoder().decode(bytes), marked };
 }
 
 const show = (value: string | null) => (value === null ? 'no such header' : JSON.stringify(value));
@@ -402,12 +449,19 @@ export async function liveCheck(base: string, expect: Expectations): Promise<Che
     check('GET /robots.txt: keeps crawlers out of /api/ and /p/', lines.includes('Disallow: /api/') && lines.includes('Disallow: /p/'), `got ${JSON.stringify(got.body.slice(0, 200))}`);
   });
   // The About page's string table, for a reader without JavaScript. The file itself, not the app's page
-  // (a host that has no such file answers every unknown path with the page): so the type is held to one
-  // exact value, and the body to the repository's file, character for character.
+  // (a host that has no such file answers every unknown path with the page, as "text/html"): so it must
+  // come as plain text, with a charset behind that kind in the header or with none. It must start with
+  // the byte order mark, which is what tells a browser that it is UTF-8. And behind the mark it must be
+  // the repository's file, character for character.
   const aboutLabel = `GET ${ABOUT_PATH}`;
   await on(aboutLabel, ABOUT_PATH, undefined, (got) => {
     const type = got.headers.get('content-type');
-    check(`${aboutLabel}: 200, as ${ABOUT_TYPE}`, got.status === 200 && type === ABOUT_TYPE, `status ${got.status}, type ${show(type)}`);
+    check(`${aboutLabel}: 200, as ${ABOUT_KIND}`, got.status === 200 && kindOf(type) === ABOUT_KIND, `status ${got.status}, type ${show(type)}`);
+    check(
+      `${aboutLabel}: starts with a byte order mark`,
+      got.marked,
+      `no byte order mark (the bytes EF BB BF) before ${JSON.stringify(got.body.slice(0, 40))}: without one a browser may not read the file as UTF-8`,
+    );
     const same = got.body === expect.about;
     // Where the two differ, the first place they do is what helps: a missing file shows as the page's first line.
     let at = 0;

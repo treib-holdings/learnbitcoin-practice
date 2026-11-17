@@ -148,12 +148,30 @@ if (!existsSync(join(dist, 'licenses.md')) || statSync(join(dist, 'licenses.md')
 
 // The About page's string table, as a text file. The page's <noscript> lines send a reader without
 // JavaScript there for what the wallet keeps, sends and counts: so it has to be in the build, and
-// it has to be the table itself, byte for byte, never an older copy of it.
+// behind its first three bytes it has to be the table itself, byte for byte, never an older copy of it.
+//
+// Those three bytes are a byte order mark. The deployed site sends the file as "text/plain" and names
+// no charset, and a browser cannot be counted on to read such a file as UTF-8 unless it starts with
+// that mark: without it the accented letters of the Spanish half can come out broken (vite.config.ts
+// says more).
+const UTF8_MARK = Buffer.from([0xef, 0xbb, 0xbf]);
 const sourceAbout = readFileSync(join(appDir, 'src', 'strings', 'about.ts'));
+// The table itself must not start with a mark of its own. The build puts its mark in front of whatever
+// the table holds, so the copy would start with two marks and still be the mark and then the table:
+// the comparison below would pass it. A browser takes only the first for a mark, and the second would
+// be a character of the text.
+if (sourceAbout.subarray(0, UTF8_MARK.length).equals(UTF8_MARK)) {
+  problems.push('src/strings/about.ts starts with a byte order mark of its own: the build puts the one mark in front of its copy, and about.txt would start with two');
+}
 if (!existsSync(join(dist, 'about.txt'))) {
   problems.push('there is no about.txt: the <noscript> lines of index.html link it (the plugin in vite.config.ts writes it)');
-} else if (!readFileSync(join(dist, 'about.txt')).equals(sourceAbout)) {
-  problems.push('about.txt differs from src/strings/about.ts');
+} else {
+  const builtAbout = readFileSync(join(dist, 'about.txt'));
+  if (!builtAbout.subarray(0, UTF8_MARK.length).equals(UTF8_MARK)) {
+    problems.push('about.txt does not start with a byte order mark (the bytes EF BB BF): without one a browser may not read the file as UTF-8 (the plugin in vite.config.ts writes the mark)');
+  } else if (!builtAbout.subarray(UTF8_MARK.length).equals(sourceAbout)) {
+    problems.push('about.txt differs from src/strings/about.ts behind its byte order mark');
+  }
 }
 
 if (problems.length > 0) fail();

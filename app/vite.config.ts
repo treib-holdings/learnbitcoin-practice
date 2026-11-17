@@ -16,19 +16,38 @@ const ABOUT_SOURCE = 'src/strings/about.ts';
 /** The name it is published under: /about.txt. */
 const ABOUT_FILE = 'about.txt';
 
+/** A byte order mark: three bytes at the very start of a file, which tell whoever reads it that the file is UTF-8. */
+const UTF8_MARK = Uint8Array.of(0xef, 0xbb, 0xbf);
+
 /**
  * Ships the About page's own string table with the build, as about.txt.
  *
  * The About page says what the wallet keeps, sends and counts, and it is
  * drawn by the app's script: a reader who browses with scripts off sees
  * none of it. So the build adds the file every sentence of that page is
- * taken from, byte for byte, and the page's <noscript> lines link it
- * (index.html). It is that file as it is written, both languages and its
- * comments, not a page laid out for reading.
+ * taken from, and the page's <noscript> lines link it (index.html). It is
+ * that file as it is written, both languages and its comments, not a page
+ * laid out for reading: a byte order mark, and behind the mark the file
+ * byte for byte.
+ *
+ * The mark is there for the file's Spanish half. The deployed site sends a
+ * text file's type with no charset: this file comes as "text/plain". A
+ * browser that is told no charset cannot be counted on to read a text file
+ * as UTF-8: Chromium and WebKit have both been seen to read this one,
+ * without the mark, as windows-1252, and to show "prÃ¡ctica" where the
+ * file says "práctica". A browser that finds the mark reads the file as
+ * UTF-8 whatever the header says, and does not show the mark. The type is
+ * not set in public/_headers instead: the live check
+ * (tools/live-check/live-check.ts) holds a path to come without every
+ * header that file names for other paths only, so a Content-Type written
+ * there for this file would have it ask that the app's pages come with
+ * none.
  *
  * The file is made here, at each build, and never kept as a second copy in
  * the repository: a copy would drift from the table. The dist guard
- * (scripts/check-dist.mjs) fails a build without it, or with other bytes.
+ * (scripts/check-dist.mjs) fails a build without it, without the mark, or
+ * with other bytes behind the mark. It also fails a table that starts
+ * with a mark of its own, since the copy would then start with two.
  */
 function aboutText(): Plugin {
   let root = '';
@@ -39,8 +58,8 @@ function aboutText(): Plugin {
       root = config.root;
     },
     generateBundle() {
-      // Read as bytes and handed on as bytes: nothing reads the text or changes a line ending.
-      this.emitFile({ type: 'asset', fileName: ABOUT_FILE, source: readFileSync(join(root, ABOUT_SOURCE)) });
+      // The mark, then the file: read as bytes and handed on as bytes. Nothing reads the text or changes a line ending.
+      this.emitFile({ type: 'asset', fileName: ABOUT_FILE, source: Buffer.concat([UTF8_MARK, readFileSync(join(root, ABOUT_SOURCE))]) });
     },
   };
 }

@@ -34,6 +34,7 @@ import {
   SECTIONS,
   arrivesAt,
   assertNoWordsRemembered,
+  assertSignedAsPlanned,
   attributeOf,
   backWithLoad,
   botCheckScripts,
@@ -222,17 +223,19 @@ scenario(
     assert.equal(await countOf(page, 'unlock-step'), 0);
     assert.deepEqual(await prompts.asked(), { create: 1, get: 0 });
     assert.equal(broadcastsOf(s), 0);
+    // The signed payment is the planned one. This wallet's keys are new in every run, so its size may be
+    // a vbyte or two under the plan's, and its rate then follows from that size (assertSignedAsPlanned).
     const review = await figuresOf(page, 'send-review');
-    assert.deepEqual(review, plan, 'the signed payment is the planned one');
+    assertSignedAsPlanned(review, plan);
     await page.click('send-broadcast');
     const txid = await sentTxid(page);
     await headingBecomes(page, send.sentTitle);
     await page.waitForStatus(wallet.noticeSent);
     assert.equal(await page.text('sent-pot'), send.sentPot);
-    // The transaction's own numbers, from the network itself.
+    // The transaction's own numbers, from the network itself: the fee the plan said, and the size the review showed.
     const tx = await onNetwork(s, txid);
     assert.equal(tx.fee, satsIn(plan.fee));
-    assert.equal(`${Math.ceil(tx.weight / 4)} vB`, plan.size);
+    assert.equal(`${Math.ceil(tx.weight / 4)} vB`, review.size);
     assert.deepEqual(tx.vin.map((input) => [input.prevout.value, input.prevout.scriptpubkey_address]), [[100_000, address]]);
     assert.deepEqual(tx.vout.map((output) => output.value).sort((a, b) => a - b), [satsIn(plan.amount), satsIn(plan.change)]);
     assert.equal(tx.vout.find((output) => output.scriptpubkey_address === pot)?.value, 30_000);
@@ -247,8 +250,9 @@ scenario(
     assert.equal(await page.text('tx-summary'), fill(wallet.txSumSent, { amount: plan.total }));
     assert.equal(await page.text('tx-status'), fill(wallet.txStatusUnconfirmed, { seconds: String(s.stack.config.blockSeconds) }));
     assert.equal(await page.text('tx-fee'), `${wallet.txFee} ${plan.fee}`);
-    assert.equal(await page.text('tx-size'), `${wallet.txSize} ${plan.size}`);
-    assert.equal(await page.text('tx-fee-rate'), `${wallet.txFeeRate} ${plan.rate}`);
+    // The size and the rate of the payment as it was signed: what the review showed.
+    assert.equal(await page.text('tx-size'), `${wallet.txSize} ${review.size}`);
+    assert.equal(await page.text('tx-fee-rate'), `${wallet.txFeeRate} ${review.rate}`);
     assert.equal(await page.text('tx-replace'), `${wallet.txReplace} ${wallet.txReplaceYes}`);
     assert.equal(await page.text('tx-id'), txid);
     const inputs = await page.texts('tx-input');
@@ -354,7 +358,7 @@ scenario(
     assert.equal(await page.waitForStatus(wallet.noticeUnlocked), wallet.noticeUnlocked);
     assert.deepEqual(await prompts.asked(), { create: 1, get: 1 }, 'exactly one prompt');
     assert.equal(await usesOf(page), 1);
-    assert.deepEqual(await figuresOf(page, 'send-review'), next);
+    assertSignedAsPlanned(await figuresOf(page, 'send-review'), next);
     assert.equal(broadcastsOf(s), 1, 'unlocking sent nothing');
     await page.click('send-broadcast');
     const secondTxid = await sentTxid(page);
@@ -566,7 +570,7 @@ scenario(
     await page.waitFor('send-review');
     assert.deepEqual(await prompts.asked(), { create: 1, get: 1 });
     assert.equal(await usesOf(page), 1);
-    assert.deepEqual(await figuresOf(page, 'send-review'), plan);
+    assertSignedAsPlanned(await figuresOf(page, 'send-review'), plan);
     await page.click('send-broadcast');
     const txid = await sentTxid(page);
     assert.equal(await page.text('sent-pot'), send.sentPot);
@@ -711,7 +715,7 @@ scenario(
     await page.click('send-continue');
     await page.waitFor('send-review');
     assert.equal(await countOf(page, 'unlock-step'), 0);
-    assert.deepEqual(await figuresOf(page, 'send-review'), plan);
+    assertSignedAsPlanned(await figuresOf(page, 'send-review'), plan);
     await page.click('send-broadcast');
     const txid = await sentTxid(page);
     assert.deepEqual(await s.network.coins(SOMEBODY), { count: 1, sats: satsIn(plan.amount) });

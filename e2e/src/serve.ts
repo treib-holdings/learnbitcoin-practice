@@ -63,6 +63,13 @@
 //   - Cloudflare knows many more kinds of file than the table below. A file
 //     whose kind the table does not hold goes out with no Content-Type, as
 //     one that Cloudflare itself does not know would.
+//   - The charset behind a text type. A page, a script, a stylesheet and a
+//     Markdown file go out here with "; charset=utf-8" behind their type,
+//     and the deployed site has been seen to send those types bare. Only a
+//     ".txt" file goes out bare here as well (the table below says why).
+//     A scenario must not lean on the charset of the others: one that
+//     looks at such a type holds it to its kind, and a test reads the
+//     scenario files for it (test/serve.test.ts).
 //   - The network's tidying follows Cloudflare's documentation of its
 //     default settings, and has not been compared with a deployed zone.
 //     Wrangler's own local server has no such network in front of it: it
@@ -91,11 +98,26 @@ import type { Handler } from '@learnbitcoin/practice-worker';
 
 /**
  * The type sent for each kind of file a build holds, as Cloudflare names it:
- * the type its list of file kinds gives for the extension, with
- * "; charset=utf-8" added to the text/ types and to no other (so JSON goes
- * out without one). The app's pages are served with
- * "X-Content-Type-Options: nosniff", so a browser refuses a script or a
- * stylesheet that arrives under the wrong type.
+ * the type its list of file kinds gives for the extension. Cloudflare's own
+ * file server, run on this machine, adds "; charset=utf-8" to the text/
+ * types and to no other (so JSON goes out without one). The deployed site
+ * has been seen to send the text types bare: "text/html" for the page,
+ * "text/javascript" for the script, "text/css" for the stylesheet,
+ * "text/markdown" for licenses.md, and "text/plain" for robots.txt and
+ * about.txt.
+ *
+ * A ".txt" file goes out here as the deployed site sends it, with no
+ * charset, so that a scenario meets about.txt the way a reader does: half
+ * of that file is Spanish, and what tells a browser that it is UTF-8 is
+ * not the header but the byte order mark the build puts in front of it
+ * (app/vite.config.ts). The other text types keep the charset. The
+ * harness's own tests, under test/, name those types as this table has
+ * them. A scenario holds one to its kind alone: the top of this file says
+ * why.
+ *
+ * The app's pages are served with "X-Content-Type-Options: nosniff", so a
+ * browser refuses a script or a stylesheet that arrives under the wrong
+ * type.
  */
 const TYPES: Readonly<Record<string, string>> = {
   '.html': 'text/html; charset=utf-8',
@@ -105,7 +127,7 @@ const TYPES: Readonly<Record<string, string>> = {
   '.json': 'application/json',
   '.map': 'application/json',
   '.webmanifest': 'application/manifest+json',
-  '.txt': 'text/plain; charset=utf-8',
+  '.txt': 'text/plain',
   '.md': 'text/markdown; charset=utf-8',
   '.csv': 'text/csv; charset=utf-8',
   '.xml': 'application/xml',
