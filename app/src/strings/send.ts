@@ -126,10 +126,11 @@ export const en = {
   reviewTitle: 'Signed, not sent yet',
   reviewLead: 'This payment is signed with your keys, and it is still on this page only. Nothing has been sent.',
   /**
-   * Above the address on the first review of a signed payment. It asks for the whole address to be checked,
-   * and names no address the reader "was given": it has to hold for an address they typed or pasted, for one
-   * from a payment link, for an address of their own wallet, and for the pot's address that the wallet's own
-   * button filled in.
+   * Above the address on the first review of a signed payment. It asks for the address to be checked with
+   * care, and the whole address stands right under it, never cut short. It names no part of the address to
+   * look at (look-alike addresses share their first and last characters), and no address the reader "was
+   * given": it has to hold for an address they typed or pasted, for one from a payment link, for an address
+   * of their own wallet, and for the pot's address that the wallet's own button filled in.
    */
   reviewCheck:
     'Carefully check the address before you send. A payment cannot be called back once it is sent, here or on Bitcoin.',
@@ -242,7 +243,7 @@ export const es: Record<keyof typeof en, string> = {
   reviewTitle: 'Firmado, aún sin enviar',
   reviewLead: 'Este pago está firmado con tus claves y sigue solo en esta página. No se ha enviado nada.',
   reviewCheck:
-    'Revisa la dirección completa, cada uno de sus caracteres, antes de enviar. Un pago enviado no se puede deshacer, ni aquí ni en Bitcoin.',
+    'Revisa con cuidado la dirección antes de enviar. Un pago enviado no se puede deshacer, ni aquí ni en Bitcoin.',
   reviewParts: 'Lo que entra y lo que sale',
   send: 'Enviarlo',
   sending: 'Enviando...',

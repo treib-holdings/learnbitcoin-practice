@@ -125,16 +125,17 @@ test('send text: sentences that stay true in every state they are shown in', () 
   assert.match(es.potFilled, /fondo común/);
 });
 
-test('send text: the review says to check the whole address', () => {
+test('send text: the review says to check the address with care, and names no part of it to look at', () => {
   // Look-alike addresses are made to share their first and last characters with the one a reader means to
-  // pay. So the check is of the whole address, which stands right under the sentence, never cut short.
+  // pay. So the sentence asks for the address to be checked, never for its first or last characters, and
+  // the whole address stands right under the sentence, never cut short.
   assert.equal(
     strings.send.en.reviewCheck,
-    'Check the whole address, every character of it, before you send. A payment cannot be called back once it is sent, here or on Bitcoin.',
+    'Carefully check the address before you send. A payment cannot be called back once it is sent, here or on Bitcoin.',
   );
   assert.equal(
     strings.send.es.reviewCheck,
-    'Revisa la dirección completa, cada uno de sus caracteres, antes de enviar. Un pago enviado no se puede deshacer, ni aquí ni en Bitcoin.',
+    'Revisa con cuidado la dirección antes de enviar. Un pago enviado no se puede deshacer, ni aquí ni en Bitcoin.',
   );
   // The sentence names no address the reader "was given". The review shows it for every payment: for an
   // address they typed or pasted, for one from a payment link, for an address of their own wallet, and for the
@@ -143,11 +144,12 @@ test('send text: the review says to check the whole address', () => {
   for (const lang of LANGS) {
     assert.doesNotMatch(strings.send[lang].reviewCheck, /\bwere given\b|\bgave you\b|\bthe one you\b|\bte dieron\b|\bque te (dio|pasaron)\b|\bcon la que\b/i, lang);
     assert.doesNotMatch(strings.send[lang].reviewCheck, /\bcompare\b|\bcompara\b/i, lang);
+    assert.doesNotMatch(strings.send[lang].reviewCheck, /\bfirst\b|\blast\b|\bprimer|\búltim/i, lang);
     assert.equal(sentencesOf(strings.send[lang].reviewCheck).length, 2, lang);
     assert.deepEqual(slotNames(strings.send[lang].reviewCheck), [], lang);
   }
-  assert.match(strings.send.en.reviewCheck, /^Check the whole address, every character of it, before you send\. /);
-  assert.match(strings.send.es.reviewCheck, /^Revisa la dirección completa, cada uno de sus caracteres, antes de enviar\. /);
+  assert.match(strings.send.en.reviewCheck, /^Carefully check the address before you send\. /);
+  assert.match(strings.send.es.reviewCheck, /^Revisa con cuidado la dirección antes de enviar\. /);
   assert.deepEqual([strings.send.en.toPot, strings.send.es.toPot], ['This is an address of the pot.', 'Esta es una dirección del fondo común.']);
   const review = readFileSync(new URL('../src/screens/send/Review.svelte', import.meta.url), 'utf8');
   assert.match(review, /<p>\{t\.reviewCheck\}<\/p>/);
