@@ -8,6 +8,7 @@
 // they are: the tests hold their shape, and that a sentence can take them.
 
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { LANGS, STEPS } from '@learnbitcoin/practice-contract';
 import {
@@ -136,11 +137,11 @@ test('the three chapter pages, in both languages, as the main site has them', ()
 
 test('each part: its kind, and the one fact it rests on', () => {
   const table: Record<string, [PartKind, Fact][]> = {
+    // Three states of the wallet and nothing else: nothing is asked, and the step is done when the coin has its block.
     'hold-some': [
       ['state', 'wallet-here'],
       ['state', 'coins-seen'],
       ['state', 'coin-confirmed'],
-      ['ask', 'block-height'],
     ],
     'pass-it-on': [
       ['state', 'spendable'],
@@ -180,8 +181,35 @@ test('each part: its kind, and the one fact it rests on', () => {
     assert.equal(partDef(id, 1.5), undefined);
     assert.equal(partKey(id, 2), `part_${id}_2`);
   }
-  // No step is all states: each has something only the reader can do.
-  for (const id of STEPS) assert.ok(STEP_DEFS[id].parts.some((part) => part.kind !== 'state'), id);
+  // One step is all states, the first: "Hold some" asks nothing and is done by what the wallet sees. Every
+  // other step has something only the reader can do.
+  for (const id of STEPS) assert.equal(STEP_DEFS[id].parts.every((part) => part.kind === 'state'), id === 'hold-some', id);
+  // And no part of any step rests on a block's number that the reader reads somewhere and types back.
+  const facts: string[] = STEPS.flatMap((id) => STEP_DEFS[id].parts.map((part) => part.on));
+  assert.equal(facts.includes('block-height'), false);
+  assert.equal(facts.length, 19);
+});
+
+test('the short table of facts in the file lists every fact of the type once, in the type\'s order, each in the same column', () => {
+  const file = readFileSync(new URL('../src/lib/doit/steps.ts', import.meta.url), 'utf8');
+  // The type, as the file writes it: one fact to a line.
+  const start = file.indexOf('export type Fact =');
+  assert.ok(start > 0);
+  const type = file.slice(start, file.indexOf(';', start));
+  const facts = [...type.matchAll(/^ {2}\| '([a-z-]+)'$/gm)].map((match) => match[1] ?? '');
+  assert.equal(facts.length, 17, 'seventeen facts');
+  assert.equal(new Set(facts).size, facts.length);
+  // Every fact a part rests on is one of them.
+  for (const id of STEPS) for (const part of STEP_DEFS[id].parts) assert.ok(facts.includes(part.on), `${id}: ${part.on}`);
+  // The comment above the type: one row for each fact, in the same order, and no row for a fact that is gone.
+  const comment = file.slice(file.indexOf(' * The one fact a part rests on.'), file.indexOf('export type Fact ='));
+  const rows = [...comment.matchAll(/^ \*   ([a-z-]+)( +)(\S.*)$/gm)].map((match) => ({ fact: match[1] ?? '', gap: (match[2] ?? '').length, says: match[3] ?? '' }));
+  assert.deepEqual(rows.map((row) => row.fact), facts);
+  // One column: what a fact comes to starts at the same place in every row, so the table reads as one.
+  const column = (row: { fact: string; gap: number }): number => row.fact.length + row.gap;
+  const columns = new Set(rows.map(column));
+  assert.deepEqual([...columns], [21], rows.filter((row) => column(row) !== 21).map((row) => row.fact).join(', '));
+  for (const row of rows) assert.ok(row.says.length > 10, row.fact);
 });
 
 test('the next step is offered only inside the same chapter', () => {

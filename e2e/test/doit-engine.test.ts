@@ -40,8 +40,8 @@ import {
 } from '@learnbitcoin/practice-worker';
 import { makeApi } from '../../app/src/lib/api.ts';
 import { advance, answered, counted, rechecked } from '../../app/src/lib/doit/advance.ts';
-import { answerBlock, answerCoins, judge, pickPositions, seedWallet, wordsPassed, type PartView, type Waited, type World } from '../../app/src/lib/doit/judge.ts';
-import { PROGRESS_KEY, chapterLink, fromOfSearch, readProgress, stripStep, writeProgress, type Change } from '../../app/src/lib/doit/progress.ts';
+import { answerCoins, coinInBlock, judge, pickPositions, seedWallet, wordsPassed, type PartView, type Waited, type World } from '../../app/src/lib/doit/judge.ts';
+import { PROGRESS_KEY, chapterLink, doneFollowed, fromOfSearch, readProgress, stripStep, writeProgress, type Change } from '../../app/src/lib/doit/progress.ts';
 import { initEvents, track, trackPage } from '../../app/src/lib/events.ts';
 import { RECORD_KEY } from '../../app/src/lib/keystore.ts';
 import { parsePath, type Route } from '../../app/src/lib/router.ts';
@@ -306,7 +306,7 @@ test('the six steps, from a browser that holds nothing to all six done, on the r
     for (const id of STEPS) assert.deepEqual([doit.view(id).state, doit.view(id).at], ['not-started', null], id);
 
     // ================================================================================
-    // hold-some: a wallet is here, coins arrive, one is confirmed, and the block it is in
+    // hold-some: a wallet is here, coins arrive, a block takes one in
     // ================================================================================
     const holdSome: Route = { name: 'step', id: 'hold-some' };
     assert.deepEqual(parsePath('/do/hold-some'), { lang: 'en', route: holdSome });
@@ -319,8 +319,10 @@ test('the six steps, from a browser that holds nothing to all six done, on the r
       steps: { 'hold-some': { started: true, from: '/journey/what-bitcoin-actually-is' } },
     });
     // No wallet: the first part is the one to do, and it can be done now.
-    assert.deepEqual(doit.view('hold-some'), { id: 'hold-some', state: 'started', parts: [now(), LATER, LATER, LATER], at: 1 });
+    assert.deepEqual(doit.view('hold-some'), { id: 'hold-some', state: 'started', parts: [now(), LATER, LATER], at: 1 });
     assert.equal(chapterLink(SITE, 'hold-some', 'en', doit.world().note), `${SITE}/journey/what-bitcoin-actually-is#do-hold-some`);
+    // And no coin that a done step's card could name a block for.
+    assert.equal(coinInBlock(doit.world()), null);
 
     // The reader makes a wallet, with a passkey. The engine publishes it, and the part ticks in the same task.
     doit.go({ name: 'new' });
@@ -332,9 +334,9 @@ test('the six steps, from a browser that holds nothing to all six done, on the r
     assert.deepEqual(readProgress(page.storage as Storage).progress.steps['hold-some']?.parts, { 1: true });
     // The wallet's first look at its coins is running: the next part is not known yet, and is not "no coins".
     doit.go(holdSome);
-    assert.deepEqual(doit.states('hold-some'), ['ticked', 'unknown: looking', 'later', 'later']);
+    assert.deepEqual(doit.states('hold-some'), ['ticked', 'unknown: looking', 'later']);
     await page.settle();
-    assert.deepEqual(doit.states('hold-some'), ['ticked', 'now', 'later', 'later']);
+    assert.deepEqual(doit.states('hold-some'), ['ticked', 'now', 'later']);
 
     // Coins from the faucet, on Receive. The keys leave the page before the bot check's script comes in.
     doit.go({ name: 'receive' });
@@ -350,14 +352,32 @@ test('the six steps, from a browser that holds nothing to all six done, on the r
     // "must stay not done: hold-some with only an unconfirmed coin". The part waits, and names the coin's transaction.
     assert.deepEqual(doit.view('hold-some').parts[2], now({ txid: coin.txid, waiting: { txid: coin.txid, sentAt: null, lost: false } }));
     await page.advance(60_000);
-    assert.deepEqual(doit.states('hold-some'), ['ticked', 'ticked', 'now', 'later']);
+    assert.deepEqual(doit.states('hold-some'), ['ticked', 'ticked', 'now']);
+    // "must stay not done: hold-some with only an unconfirmed coin". And a coin that is in no block is not one
+    // the card of a done step names a block for.
+    assert.equal(doit.view('hold-some').state, 'started');
+    assert.equal(coinInBlock(doit.world()), null);
 
-    // A block takes the coin in.
+    // A block takes the coin in, while the reader is still on Receive. The step asks nothing after that: the
+    // tick the block brings is its last one, and it is written at the moment the page saw the block.
+    const minedAt = s.clock.ms;
     s.network.mine();
     const coinHeight = s.network.height();
     await page.advance(15_000);
     assert.equal(page.chain.state()?.confirmed, BigInt(FAUCET_SATS));
-    assert.deepEqual(readProgress(page.storage as Storage).progress.steps['hold-some']?.parts, { 1: true, 2: true, 3: true });
+    assert.deepEqual(doit.view('hold-some'), { id: 'hold-some', state: 'done', parts: [TICKED, TICKED, TICKED], at: null });
+    const done = readProgress(page.storage as Storage).progress;
+    const holdNote = done.steps['hold-some'];
+    assert.ok(holdNote?.doneAt !== undefined && holdNote.doneAt > minedAt && holdNote.doneAt <= s.clock.ms, JSON.stringify(holdNote));
+    assert.deepEqual(holdNote, { started: true, doneAt: holdNote.doneAt, from: '/journey/what-bitcoin-actually-is', parts: { 1: true, 2: true, 3: true } });
+    // No part of it is a question, so nothing is left for the reader to answer or to say.
+    assert.equal(answered('hold-some', doit.world()), null);
+    // Done: the way back now ends in what the chapter marks its card on. It names this step, and would name the
+    // other done steps of its chapter after it: there are none.
+    assert.equal(chapterLink(SITE, 'hold-some', 'en', done), `${SITE}/journey/what-bitcoin-actually-is#done=hold-some`);
+    // The step is followed until the reader has seen that. Receive, where they are, says that the step is done
+    // and leads back to it.
+    assert.deepEqual([done.following, stripStep(done, s.clock.ms), doneFollowed(done, s.clock.ms)], ['hold-some', 'hold-some', 'hold-some']);
 
     // Back to the step. With the bot check's script in the page, that is a page load: a new
     // document on the same storage. Nothing the runner knows lived in the old page.
@@ -365,37 +385,22 @@ test('the six steps, from a browser that holds nothing to all six done, on the r
     page = pageOn(s, { storage: first.storage, auth: first.auth });
     doit = follow(s, page);
     doit.go(holdSome);
-    assert.deepEqual(doit.states('hold-some'), ['ticked', 'ticked', 'ticked', 'unknown: looking']);
+    // That the step is done is read from the note, before the wallet has looked at anything.
+    assert.deepEqual(doit.view('hold-some'), { id: 'hold-some', state: 'done', parts: [TICKED, TICKED, TICKED], at: null });
+    assert.equal(readProgress(page.storage as Storage).progress.following, null, 'seen on its own screen: let go');
+    // The block its card names is not: it comes from the wallet's look at its coins, and until that look is
+    // in the card names none.
+    assert.equal(coinInBlock(doit.world()), null);
     await page.settle();
-    // The question is open, about the transaction that brought the first coin.
-    assert.deepEqual(doit.view('hold-some'), { id: 'hold-some', state: 'started', parts: [TICKED, TICKED, TICKED, now({ txid: coin.txid })], at: 4 });
-    // "must stay not done: hold-some with a wrong block number". No answer says what the number is.
-    const noteBefore = page.storage.map.get(PROGRESS_KEY);
-    assert.equal(answerBlock(doit.world(), ''), 'empty');
-    assert.equal(answerBlock(doit.world(), 'block 12'), 'invalid');
-    assert.equal(answerBlock(doit.world(), String(coinHeight + 1)), 'wrong');
-    assert.equal(answerBlock(doit.world(), String(coinHeight - 1)), 'wrong');
-    assert.equal(answered('hold-some', { ...doit.world(), kept: 'no' }), null, 'nothing is ticked where nothing can be kept');
-    assert.equal(page.storage.map.get(PROGRESS_KEY), noteBefore, 'a wrong answer writes nothing');
-    assert.equal(doit.view('hold-some').state, 'started');
-    // The right one: the block the explorer shows for that transaction.
+    // The coin the faucet paid, and the block the stand-in network put it in: what the practice explorer
+    // shows for that transaction, and what the wallet's own list of transactions shows.
+    assert.deepEqual(coinInBlock(doit.world()), { txid: coin.txid, height: coinHeight });
     const listed = page.chain.view().history?.find((tx) => tx.txid === coin.txid);
     assert.deepEqual([listed?.direction, listed?.height], ['received', coinHeight]);
-    assert.equal(answerBlock(doit.world(), String(coinHeight)), 'right');
-    const lastTick = answered('hold-some', doit.world());
-    assert.deepEqual(lastTick, { kind: 'tick', step: 'hold-some', part: 4, at: s.clock.ms });
-    assert.ok(lastTick && doit.write(lastTick));
-    doit.run();
-    assert.deepEqual(doit.view('hold-some'), { id: 'hold-some', state: 'done', parts: [TICKED, TICKED, TICKED, TICKED], at: null });
-    assert.equal(answerBlock(doit.world(), String(coinHeight)), 'not-now', 'a done step asks nothing');
-    const done = readProgress(page.storage as Storage).progress;
-    assert.deepEqual(done.steps['hold-some'], { started: true, doneAt: s.clock.ms, from: '/journey/what-bitcoin-actually-is', parts: { 1: true, 2: true, 3: true, 4: true } });
-    // Done: the way back now ends in what the chapter marks its card on. It names this step, and would name the
-    // other done steps of its chapter after it: there are none. The step is followed until the reader has seen that.
-    assert.equal(chapterLink(SITE, 'hold-some', 'en', done), `${SITE}/journey/what-bitcoin-actually-is#done=hold-some`);
-    assert.deepEqual([done.following, stripStep(done, s.clock.ms)], ['hold-some', 'hold-some']);
-    doit.go(holdSome);
-    assert.equal(readProgress(page.storage as Storage).progress.following, null, 'seen on its own screen: let go');
+    // Neither is kept: the note of the done step is as the block left it.
+    assert.deepEqual(readProgress(page.storage as Storage).progress.steps['hold-some'], holdNote);
+    // The wallet of this new page is locked. Its coins are known all the same: the card needs no key.
+    assert.equal(page.session.view().unlocked, false);
 
     // ================================================================================
     // pass-it-on: a coin that can be spent, a payment to the pot, a block
@@ -654,7 +659,8 @@ test('the six steps, from a browser that holds nothing to all six done, on the r
     assert.deepEqual(
       events.filter((event) => event.name === 'Do it'),
       [
-        { name: 'Do it', path: '/do/hold-some', value: 'hold-some' },
+        // "Hold some" is done by its coin's block, on the screen where the reader waited for it.
+        { name: 'Do it', path: '/wallet/receive', value: 'hold-some' },
         { name: 'Do it', path: '/do/pass-it-on', value: 'pass-it-on' },
         { name: 'Do it', path: '/wallet/tx', value: 'no-balances' },
         { name: 'Do it', path: '/do/waiting-room', value: 'waiting-room' },

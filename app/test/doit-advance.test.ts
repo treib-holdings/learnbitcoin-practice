@@ -11,7 +11,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { STEPS, type StepId } from '@learnbitcoin/practice-contract';
 import { advance, answered, counted, rechecked } from '../src/lib/doit/advance.ts';
-import { answerBlock, answerCoins, judge, type World } from '../src/lib/doit/judge.ts';
+import { answerCoins, judge, type World } from '../src/lib/doit/judge.ts';
 import { applyChange, emptyProgress, readProgress, writeProgress, type Change, type Progress, type StepNote } from '../src/lib/doit/progress.ts';
 import { STEP_DEFS, partCount } from '../src/lib/doit/steps.ts';
 import type { LastSent } from '../src/lib/wallet-api.ts';
@@ -91,7 +91,7 @@ test('while no step is started, no change of the world writes anything', () => {
     for (const now of worlds) assert.deepEqual(advance(before, now), { changes: [], waited: {} });
   }
   // A step that is done, and one whose way back alone is noted, are not started either.
-  const kept = note({ 'hold-some': started(4, { doneAt: NOW }), 'the-seed': { from: '/journey/be-your-own-bank' } }, 'hold-some');
+  const kept = note({ 'hold-some': started(3, { doneAt: NOW }), 'the-seed': { from: '/journey/be-your-own-bank' } }, 'hold-some');
   for (const before of [null, ...worlds]) {
     for (const now of worlds) assert.deepEqual(changes(before === null ? null : { ...before, note: kept }, { ...now, note: kept }), []);
   }
@@ -118,10 +118,21 @@ test('states tick in order, as many as hold, in one go: a step opened on a walle
   // The page's first world: no world before it. States are judged all the same.
   const written = p.see({ chain: FUNDED, history: RECEIVED, route: { name: 'step', id: 'hold-some' } });
   assert.deepEqual(written, [tick('hold-some', 1), tick('hold-some', 2), tick('hold-some', 3)]);
-  assert.deepEqual(p.step('hold-some'), started(3));
-  // The fourth part is a question: it waits for the reader.
+  // The three states are the whole step: the last of them finishes it, at the moment of that look, and the
+  // write that put the moment into the note is the one the step is counted by.
+  assert.deepEqual(p.step('hold-some'), started(3, { doneAt: NOW }));
+  assert.deepEqual(p.counted, ['hold-some']);
+  // Nothing is left for the reader to answer, and a later look writes and counts nothing more.
+  assert.equal(answered('hold-some', p.last()), null);
   assert.deepEqual(p.see({ chain: FUNDED, history: RECEIVED }), []);
-  assert.deepEqual(p.counted, []);
+  assert.deepEqual(p.counted, ['hold-some']);
+  // On another screen, with the list of transactions not read at all, it is the same: no part of the step
+  // rests on the list.
+  const q = page();
+  q.open('hold-some');
+  assert.deepEqual(q.see({ chain: FUNDED, history: null, route: { name: 'receive' } }), [tick('hold-some', 1), tick('hold-some', 2), tick('hold-some', 3)]);
+  assert.deepEqual(q.step('hold-some'), started(3, { doneAt: NOW }));
+  assert.deepEqual(q.counted, ['hold-some']);
 });
 
 test('each state of the wallet ticks at the first change in which it holds, with no move and no reload', () => {
@@ -138,9 +149,12 @@ test('each state of the wallet ticks at the first change in which it holds, with
   for (let round = 0; round < 3; round++) {
     assert.deepEqual(p.see({ ...here, chain: chain(state([{ tx: 'c1', sats: 100_000, height: null }]), { checkedAt: NOW + round }), now: NOW + round }), []);
   }
-  // A block takes it in.
+  assert.deepEqual(p.step('hold-some'), started(2));
+  assert.deepEqual(p.counted, []);
+  // A block takes it in: the third tick, which finishes the step at that moment.
   assert.deepEqual(p.see({ ...here, chain: FUNDED, history: RECEIVED, now: NOW + 30_000 }), [tick('hold-some', 3, NOW + 30_000)]);
-  assert.deepEqual(p.step('hold-some'), started(3));
+  assert.deepEqual(p.step('hold-some'), started(3, { doneAt: NOW + 30_000 }));
+  assert.deepEqual(p.counted, ['hold-some']);
   // Nothing more by itself, and nothing twice.
   assert.deepEqual(p.see({ ...here, chain: FUNDED, history: RECEIVED, now: NOW + 60_000 }), []);
 });
@@ -157,7 +171,9 @@ test('a state ticks on any screen, for every started step, whether or not it is 
   const written = p.see({ route: { name: 'receive' }, chain: FUNDED });
   // In the contract's order of steps, each step's parts in their own order.
   assert.deepEqual(written, [tick('hold-some', 2), tick('hold-some', 3), tick('pass-it-on', 1)]);
-  assert.deepEqual(p.step('hold-some'), started(3));
+  // "Hold some" is done by that, on the Receive screen, while another step is the one followed.
+  assert.deepEqual(p.step('hold-some'), started(3, { doneAt: NOW }));
+  assert.deepEqual(p.counted, ['hold-some']);
   assert.deepEqual(p.step('pass-it-on'), started(1));
   assert.equal(p.note().following, 'the-seed', 'and the followed step is still the followed step');
   // The time it was followed moves only with a tick of the followed step.
@@ -499,7 +515,7 @@ test('the-seed: the words put on screen while the step is followed, the reader\'
 });
 
 test('the words shown count only as a change, only for the followed step, and only with a wallet here', () => {
-  const begun = note({ 'the-seed': started(0), 'hold-some': started(4, { doneAt: NOW }) }, 'the-seed');
+  const begun = note({ 'the-seed': started(0), 'hold-some': started(3, { doneAt: NOW }) }, 'the-seed');
   const before = world({ note: begun, wordsShown: 2 });
   assert.deepEqual(changes(before, change(before, { wordsShown: 3 })), [tick('the-seed', 1)]);
   assert.deepEqual(changes(before, change(before, { wordsShown: 7 })), [tick('the-seed', 1)]);
@@ -626,7 +642,6 @@ test('answered(): the tick of a question or of the reader\'s word, and only whil
   const history = [tx({ tx: 'a1' }), ...RECEIVED];
   // The four parts a reader ticks.
   const asks: [StepId, number, WorldSpec, Change][] = [
-    ['hold-some', 3, { chain: FUNDED, history }, tick('hold-some', 4)],
     ['no-balances', 1, { chain: FUNDED, history }, tick('no-balances', 2)],
     ['the-seed', 1, {}, tick('the-seed', 2)],
     ['the-seed', 2, {}, tick('the-seed', 3, NOW, { wallet: FP })],
@@ -654,17 +669,24 @@ test('answered(): the tick of a question or of the reader\'s word, and only whil
     assert.equal(answered(id, world({ chain: FUNDED, history })), null, id);
   }
   // The question is there, and blocked or unknown: no tick.
-  assert.equal(answered('hold-some', world({ chain: FUNDED, history: null, note: note({ 'hold-some': started(3) }) })), null);
+  assert.equal(answered('no-balances', world({ chain: FUNDED, history: null, note: note({ 'no-balances': started(1) }) })), null);
   assert.equal(answered('no-balances', world({ chain: FUNDED, history: RECEIVED, note: note({ 'no-balances': started(1) }) })), null);
+  // "Hold some" has nothing the reader ticks, at any of its parts or with all of them ticked.
+  for (let done = 0; done <= 3; done++) {
+    assert.equal(answered('hold-some', world({ chain: FUNDED, history, note: note({ 'hold-some': started(done) }, 'hold-some') })), null, `hold-some ${done}`);
+  }
   assert.equal(answered('prove-the-backup', world({ note: note({ 'prove-the-backup': started(0) }) })), null, 'no coins');
   // Another tab got there first: the part is ticked, and the next one is not the reader's to tick.
   const ticked = world({ chain: FUNDED, history, note: note({ 'no-balances': started(2) }) });
   assert.equal(answered('no-balances', ticked), null);
 
-  // What it answers with is what the two questions were judged against in the same world.
-  const block = world({ chain: FUNDED, history, note: note({ 'hold-some': started(3) }) });
-  assert.equal(answerBlock(block, '150'), 'right');
-  assert.equal(after(block.note, answered('hold-some', block) as Change).steps['hold-some']?.doneAt, NOW);
+  // What it answers with is what the question was judged against in the same world.
+  const count = world({ chain: FUNDED, history, note: note({ 'no-balances': started(1) }) });
+  assert.equal(answerCoins(count, '1'), 'right');
+  assert.deepEqual(after(count.note, answered('no-balances', count) as Change).steps['no-balances'], started(2));
+  // And the reader's last tick of a step finishes it at that moment.
+  const words = world({ note: note({ 'the-seed': started(2) }) });
+  assert.equal(after(words.note, answered('the-seed', words) as Change).steps['the-seed']?.doneAt, NOW);
 });
 
 test('rechecked(): a the-seed that is checked, checked again for the wallet that is here now', () => {
@@ -683,7 +705,7 @@ test('rechecked(): a the-seed that is checked, checked again for the wallet that
 // -- what to count ------------------------------------------------------------------------------
 
 test('"Do it" is counted for the write that put the moment a step was done into the note, and for no other', () => {
-  const before = note({ 'the-seed': started(2), 'hold-some': started(4, { doneAt: NOW - 9 }) });
+  const before = note({ 'the-seed': started(2), 'hold-some': started(3, { doneAt: NOW - 9 }) });
   const done = after(before, tick('the-seed', 3, NOW, { wallet: FP }));
   assert.deepEqual(counted(before, done), ['the-seed']);
   // A write that changes something else, or nothing.
@@ -744,6 +766,38 @@ test('a note that has every tick and no moment of being done is finished at the 
   assert.deepEqual(finished.steps, { 'pass-it-on': { started: true, doneAt: NOW, parts: ticks(1, 2, 3) }, 'the-seed': { started: true, doneAt: NOW, wallet: FP, parts: ticks(1, 2, 3) } });
   assert.deepEqual(counted(edited, finished), ['pass-it-on', 'the-seed']);
   assert.deepEqual(changes(null, world({ note: finished })), []);
+
+  // "Hold some" as an earlier version of this page left it in a browser: its three states ticked, and a
+  // question still open that the step no longer has. That is such a note. It is finished at the next change,
+  // whichever comes first: with the wallet here or gone, with its coins read or not, on whatever screen. The
+  // moment is that change's own (the note keeps no time for a tick), the step is counted once, and the time
+  // it was last followed is not renewed.
+  const left: Progress = { ...note({ 'hold-some': started(3) }, 'hold-some'), followedAt: NOW - 3_600_000 };
+  const later = NOW + 500;
+  const meets: World[] = [
+    world({ note: left, chain: FUNDED, history: RECEIVED, now: later, route: { name: 'step', id: 'hold-some' } }),
+    world({ note: left, now: later, route: { name: 'wallet' } }),
+    world({ note: left, chain: chain(null), history: null, now: later, route: { name: 'about' } }),
+    noWallet({ note: left, now: later }),
+    world({ note: left, status: 'unreadable', record: null, now: later, route: { name: 'do' } }),
+  ];
+  for (const seen of meets) {
+    const label = `${seen.wallet.status} ${seen.route.name}`;
+    const first = advance(null, seen);
+    assert.deepEqual(first.changes, [tick('hold-some', 3, later)], label);
+    const done = after(left, ...first.changes);
+    assert.deepEqual(done, { v: 1, following: 'hold-some', followedAt: NOW - 3_600_000, steps: { 'hold-some': { started: true, doneAt: later, parts: ticks(1, 2, 3) } } }, label);
+    assert.deepEqual(counted(left, done), ['hold-some'], label);
+    // Once: the next look has nothing to add, and counts nothing.
+    assert.deepEqual(changes(seen, { ...seen, note: done, now: later + 1 }), [], label);
+    assert.deepEqual(counted(done, done), [], label);
+  }
+  // Two of its ticks are no such note: the step goes on at its third part, and is done when the block comes.
+  const two = note({ 'hold-some': started(2) }, 'hold-some');
+  assert.deepEqual(changes(null, world({ note: two, chain: chain(state([{ tx: 'c1', sats: 100_000, height: null }])) })), []);
+  assert.deepEqual(changes(null, world({ note: two, chain: FUNDED })), [tick('hold-some', 3)]);
+  // Where nothing can be written it stays as it is: not done, and not counted.
+  for (const kept of ['no', 'newer'] as const) assert.deepEqual(changes(null, world({ note: left, chain: FUNDED, kept })), [], kept);
 });
 
 test('advance is pure: it changes neither world, asks no clock, and the same pair gives the same answer', () => {
@@ -770,7 +824,7 @@ test('advance is pure: it changes neither world, asks no clock, and the same pai
   // Applied, the changes leave a note that the next look has nothing to add to.
   const settled = after(begun, ...first.changes);
   assert.deepEqual(changes(now, { ...now, note: settled }), []);
-  assert.deepEqual(counted(begun, settled), ['waiting-room', 'prove-the-backup']);
+  assert.deepEqual(counted(begun, settled), ['hold-some', 'waiting-room', 'prove-the-backup']);
 });
 
 // -- found by breaking advance.ts on purpose, one line at a time ---------------------------------

@@ -146,8 +146,9 @@ export function afterChoose(result: UnlockResult): ChooseOutcome {
  * here). "What just happened" on the transaction screen links the five
  * terms a newcomer meets there: a coin (utxo), change, the fee, a block and
  * the waiting room (mempool). The first "Do it" step, which explains each
- * new thing itself, links five more: a wallet, an address, the 12 words
- * (the seed phrase), a block explorer and a block's height.
+ * new thing itself, links three more: a wallet, an address and the 12
+ * words (the seed phrase). It links a block as well, which is in the map
+ * already.
  */
 const GLOSSARY = {
   utxo: { en: 'utxo-unspent-transaction-output', es: 'utxo' },
@@ -159,8 +160,6 @@ const GLOSSARY = {
   wallet: { en: 'wallet', es: 'billetera' },
   address: { en: 'address', es: 'direccion' },
   seed: { en: 'seed-phrase', es: 'frase-semilla' },
-  explorer: { en: 'block-explorer', es: 'explorador-de-bloques' },
-  height: { en: 'block-height', es: 'altura-de-bloque' },
 } as const;
 
 export type GlossaryTerm = keyof typeof GLOSSARY;

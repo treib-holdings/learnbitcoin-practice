@@ -89,7 +89,7 @@ fails on any console error, any violation of the page's security policy and
 any request to another host. `--wallet` chooses what the browser holds:
 `none`, `empty`, `funded` or `passkey`.
 
-`pnpm e2e` runs 230 scenarios in about three minutes. Each gets a
+`pnpm e2e` runs 237 scenarios in about three minutes. Each gets a
 world of its own: the built app, the Worker's handler, a stand-in network,
 and pages in Chrome. Most files hold the scenarios of one screen. The files
 named `doit-*` hold the "Do it" steps: one file for each step, and one each
@@ -266,7 +266,11 @@ before borrowing from that file.
 ### What leaves the browser
 
 The 12 words never leave the browser. The rest is said to the reader on the
-app's About screen, and comes to this:
+app's About screen. A reader who browses without JavaScript cannot open that
+screen, so the build publishes the table its sentences are taken from
+(`app/src/strings/about.ts`, both languages, comments included) as
+`/about.txt`, byte for byte, and the page's `<noscript>` lines link it. What
+the screen says comes to this:
 
 - The practice server is asked about each of the wallet's addresses, so it
   sees them, and it sees the reader's IP address. For a read of the chain it

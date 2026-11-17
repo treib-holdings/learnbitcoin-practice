@@ -73,8 +73,8 @@ export interface Doit {
   forget(): boolean;
   /**
    * The step's open question was answered right, or its box was ticked.
-   * The screen has judged the answer (answerBlock, answerCoins and
-   * wordsPassed in judge.ts). False when nothing was ticked.
+   * The screen has judged the answer (answerCoins and wordsPassed in
+   * judge.ts). False when nothing was ticked.
    */
   answer(step: StepId): boolean;
   /** "The seed", done: its three words were checked again and passed, for the wallet that is here now. */

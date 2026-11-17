@@ -301,20 +301,6 @@ function ownPayments(history: readonly TxView[]): TxView[] {
   return history.filter((tx) => tx.direction === 'sent' || tx.direction === 'internal');
 }
 
-/**
- * The transaction that brought the wallet its first coin: the oldest
- * confirmed one that the wallet only received. Null when there is none.
- */
-function firstReceived(history: readonly TxView[]): TxView | null {
-  let oldest: TxView | null = null;
-  // Newest first, so among transactions of one block the later entry is the older one.
-  for (const tx of history) {
-    if (tx.direction !== 'received' || !tx.confirmed || tx.height === null) continue;
-    if (oldest === null || oldest.height === null || tx.height <= oldest.height) oldest = tx;
-  }
-  return oldest;
-}
-
 /** What the wallet's coins that a payment may spend now add up to. */
 function spendableSats(seen: Seen): bigint {
   const state = seen.wallet.chain.state;
@@ -405,14 +391,6 @@ function verdictOn(fact: Fact, id: StepId, seen: Seen): Verdict {
       const waiting = coins.find((coin) => !coin.status.confirmed);
       // A coin is here and waits for its block. No coin at all: there is nothing to wait for.
       return waiting === undefined ? blocked('no-coins') : now({ waiting: { txid: waiting.txid, sentAt: null, lost: false } });
-    }
-
-    case 'block-height': {
-      const missing = noList(seen);
-      if (missing !== null) return missing;
-      const first = firstReceived(history ?? []);
-      // The question is about a coin in a block. Without one there is nothing to ask.
-      return first === null ? blocked('no-coins') : now({ txid: first.txid });
     }
 
     case 'spendable':
@@ -590,12 +568,12 @@ export function judge(id: StepId, seen: Seen): StepView {
 // -- the questions ----------------------------------------------------------------
 
 /**
- * How an answer to one of the two number questions is judged.
+ * How an answer to the one question whose answer is a number is judged.
  *
  *   right    it is the number: the part can be ticked (advance.ts, answered)
  *   wrong    it is not
- *   total    no-balances only: the answer is what the wallet's coins add up
- *            to, in sats. The question was how many coins hold it
+ *   total    the answer is what the wallet's coins add up to, in sats. The
+ *            question was how many coins hold it
  *   empty, period, invalid   what was typed is no whole number (digits and
  *            commas; a period is refused, as on the Send screen)
  *   not-now  the question is not open: its part is not the one that is "now"
@@ -609,21 +587,6 @@ function openPart(id: StepId, fact: Fact, seen: Seen): number | null {
   const view = judge(id, seen);
   if (view.at === null || partDef(id, view.at)?.on !== fact) return null;
   return view.parts[view.at - 1]?.state === 'now' ? view.at : null;
-}
-
-/**
- * hold-some, "See it from outside": the number of the block that took the
- * wallet's first coin in, as the practice explorer shows it. Right when it
- * equals the block height of the wallet's oldest confirmed received
- * transaction.
- */
-export function answerBlock(seen: Seen, typed: string): Answer {
-  if (openPart('hold-some', 'block-height', seen) === null) return 'not-now';
-  const height = firstReceived(seen.wallet.history ?? [])?.height;
-  if (height === null || height === undefined) return 'not-now';
-  const number = parseSats(typed);
-  if (typeof number === 'string') return number;
-  return number === BigInt(height) ? 'right' : 'wrong';
 }
 
 /**
@@ -685,4 +648,43 @@ export function seedWallet(seen: Seen): 'same' | 'other' | 'none' {
   const { status, record } = seen.wallet;
   if (checked === undefined || status !== 'ready' || record === null) return 'none';
   return record.fingerprint === checked ? 'same' : 'other';
+}
+
+/**
+ * For the card of a done "Hold some": a coin that was paid to the wallet in
+ * this browser and is in a block, with the number of that block. Null when
+ * the wallet's latest look at its coins shows none.
+ *
+ * It is read from that look alone (`chain.state`), never from the note: the
+ * note of "Hold some" names no wallet, no coin and no block. So the answer
+ * is about the wallet that is here now, whichever wallet the step was done
+ * with, and it is the same whatever the note holds.
+ *
+ * Only a coin on the receive chain counts (`coin.chain` is 0): one that
+ * somebody paid to an address the wallet showed. The change of a payment
+ * the wallet made itself is passed over, in whichever block it is: the card
+ * speaks of coins the reader got, and change is what was left of a payment
+ * they sent. Of the coins that count, the one in the lowest block is given
+ * and, among several in that block, the first in the wallet's list. A coin
+ * that is said to be in a block whose number was not read is passed over
+ * too: there is no number to show for it.
+ *
+ * A look that failed after an earlier one had worked leaves the earlier
+ * reading in place (`chain.error` beside `chain.state`), and the answer is
+ * then made from that reading: what a block did stays so. Before the first
+ * look has ended, and after a first look that failed, there is no reading
+ * and the answer is null.
+ */
+export function coinInBlock(seen: Seen): { txid: string; height: number } | null {
+  const { status, record, chain } = seen.wallet;
+  if (status !== 'ready' || record === null || chain.state === null) return null;
+  let found: { txid: string; height: number } | null = null;
+  for (const coin of chain.state.coins) {
+    if (coin.chain !== 0 || coin.status.confirmed !== true) continue;
+    const height = coin.status.block_height;
+    if (height === undefined || !Number.isSafeInteger(height) || height < 0) continue;
+    // The lowest block. A later coin of the same block does not take the first one's place.
+    if (found === null || height < found.height) found = { txid: coin.txid, height };
+  }
+  return found;
 }

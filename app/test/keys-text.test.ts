@@ -158,6 +158,60 @@ test('real money must never go on these words: the companion line, in both langu
   );
   // The practice sheet carries the short form, which is the shared one.
   assert.match(source('keys/PracticeCard.svelte'), /\{w\.wordsException\}/);
+
+  // Where the 12 words are on screen the line is drawn once, in each state of the screen, and at the "Wallet
+  // made" step no reader reaches a button that ends the step before it.
+  const backup = source('Backup.svelte');
+  assert.equal(
+    code(backup).match(/t\.neverRealMoney\b/g)?.length,
+    4,
+    'the exception paragraph, "Wallet made" with a step followed, and the words shown: above the row of buttons with a step followed, under it with none',
+  );
+  // In the exception paragraph, when the paragraph is asked for it.
+  assert.match(
+    backup,
+    /\{#snippet exception\(strict: boolean\)\}[\s\S]*?\{#if strict\}\s*<p class="font-semibold text-ink-800" data-testid="never-real-money">\{t\.neverRealMoney\}<\/p>\s*\{\/if\}/,
+  );
+  const made = backup.slice(backup.indexOf("{:else if view === 'made' && words !== null}"), backup.indexOf("{:else if view === 'shown' && words !== null}"));
+  const shown = backup.slice(backup.indexOf("{:else if view === 'shown' && words !== null}"), backup.indexOf("{:else if view === 'unlock'}"));
+  const ask = backup.slice(backup.indexOf('<Section title={t.wordsTitle}>'), backup.indexOf('{#if !made}'));
+  // "Wallet made", a reader who follows a "Do it" step: as the caution it is where the words are shown, under
+  // the words and straight above the button that leads back to the step. The exception paragraph further down
+  // is then drawn without it. A reader who follows no step: in the paragraph, as it always was, and the
+  // screen's one button comes after it. Either way once, and before any button of the step.
+  assert.match(
+    made,
+    /\{#if followed !== null\}\s*<!--[\s\S]*?-->\s*<Notice kind="caution" text=\{t\.neverRealMoney\} data-testid="never-real-money" \/>\s*<Actions>\s*<Button\s+variant="primary"\s+class="w-full sm:w-auto"\s+data-testid="words-written-step"/,
+  );
+  assert.match(made, /\{@render exception\(followed === null\)\}/);
+  assert.equal(made.match(/\{@render exception\(/g)?.length, 1);
+  assert.equal(made.match(/t\.neverRealMoney\b/g)?.length, 1, 'beside the paragraph, the step draws it in one place, under the one condition the paragraph leaves it out for');
+  const buttons = [...made.matchAll(/data-testid="(words-written-step|words-written|print-card)"/g)].map((match) => match[1]);
+  assert.deepEqual(buttons, ['words-written-step', 'words-written']);
+  assert.ok(made.indexOf('text={t.neverRealMoney}') < made.indexOf('data-testid="words-written-step"'));
+  assert.ok(made.indexOf('{@render exception(followed === null)}') < made.indexOf('data-testid="words-written"'));
+  // The words shown at any other time. A reader who follows a "Do it" step has a button in the row under the
+  // words that leaves the screen, back to the step: for them the caution stands between the words and that row,
+  // so that nobody reaches the button before it, as at "Wallet made". A reader who follows no step has "Hide
+  // them" alone in the row, and the caution under the row and its paragraph, as it was. The two places are
+  // drawn under the two halves of one condition: once on the screen, whichever reader it is.
+  assert.equal(shown.match(/<Notice kind="caution" text=\{t\.neverRealMoney\} data-testid="never-real-money" \/>/g)?.length, 2);
+  assert.match(
+    shown,
+    /<WordsList \{words\} \/>\s*<\/div>\s*\{#if followed !== null\}\s*<!--[\s\S]*?-->\s*<Notice kind="caution" text=\{t\.neverRealMoney\} data-testid="never-real-money" \/>\s*\{\/if\}\s*<Actions>\s*(<!--[^>]*-->\s*)?\{#if followed !== null\}\s*<BackToStep step=\{followed\} data-testid="backup-step" \/>/,
+  );
+  assert.match(
+    shown,
+    /<Prose><p>\{t\.after\}<\/p><\/Prose>\s*\{#if followed === null\}\s*<!--[\s\S]*?-->\s*<Notice kind="caution" text=\{t\.neverRealMoney\} data-testid="never-real-money" \/>\s*\{\/if\}\s*$/,
+  );
+  // With a step followed the line comes before every button of the view; with none, "Hide them" is the one
+  // button, and it leaves nothing: it takes the words off the screen.
+  const first = shown.indexOf('text={t.neverRealMoney}');
+  assert.ok(first > 0 && first < shown.indexOf('data-testid="backup-step"') && first < shown.indexOf('data-testid="hide-words"'));
+  assert.equal(shown.match(/\{#if followed (!|=)== null\}/g)?.length, 3, 'the line above the row, the button in the row, the line under the row');
+  assert.doesNotMatch(shown, /\{@render exception\(/);
+  assert.match(ask, /\{@render exception\(false\)\}/);
+  assert.doesNotMatch(ask, /neverRealMoney/);
 });
 
 test('the reveal warns that a screen reader will speak the words aloud, before they are on screen', () => {
@@ -200,10 +254,15 @@ test('"Wallet made" with a passkey: where the passkey lives, and the words as th
   assert.ok(step.indexOf('data-testid="passkey-tag"') < step.indexOf('<WordsList'));
   assert.ok(step.indexOf('<WordsList') < step.indexOf('{t.madePasskeyBack}'));
   assert.ok(step.indexOf('<WordsList') < step.indexOf('{t.madeKeepsWords}'));
-  assert.ok(step.indexOf('{t.madeKeepsWords}') < step.indexOf('{@render exception(true)}'));
-  // The sheet to write the words on is offered before the button that says they are written down,
-  // which takes them off the screen. On the other steps the sheet closes the screen.
-  assert.ok(step.indexOf('{@render exception(true)}') < step.indexOf('<PracticeCard {site} />'));
+  assert.ok(step.indexOf('{t.madeKeepsWords}') < step.indexOf('{@render exception(followed === null)}'));
+  // A reader who follows a "Do it" step has a button straight under the words and the lines that go with them,
+  // before what this browser now keeps: where they are looking when the words are written down.
+  assert.ok(step.indexOf('{t.madePasskeyBack}') < step.indexOf('data-testid="words-written-step"'));
+  assert.ok(step.indexOf('data-testid="words-written-step"') < step.indexOf('{t.madeKeepsWords}'));
+  assert.ok(step.indexOf('data-testid="words-written-step"') < step.indexOf('</Section>', step.indexOf('<Section title={t.shownTitle}>')), 'inside the section "Your 12 words"');
+  // The sheet to write the words on is offered before the screen's own button that says they are written
+  // down, which takes them off the screen. On the other steps the sheet closes the screen.
+  assert.ok(step.indexOf('{@render exception(followed === null)}') < step.indexOf('<PracticeCard {site} />'));
   assert.ok(step.indexOf('<PracticeCard {site} />') < step.indexOf('data-testid="words-written"'));
   assert.equal(backup.match(/<PracticeCard \{site\} \/>/g)?.length, 2);
   assert.equal(backup.match(/<PracticeCard\b/g)?.length, 2);
@@ -641,10 +700,10 @@ test('Spanish: the first mention of a passkey in a screen\'s own text carries th
   const card = ['cardTitle', 'cardLead', 'cardName', 'cardNoCopies', 'cardNoSharing', 'cardRestores', 'cardPrint'];
   const madePasskey = [
     'madeTitle', 'madeLede', 'madePasskeyTitle', 'madePasskeyName', 'madePasskeyNameIs', 'madePasskeyTag', 'madePasskeyTagIs', 'madePasskeyWhere',
-    'shownTitle', 'spokenAloud', 'after', 'madePasskeyBack', 'exception', 'neverRealMoney', 'chapterLink', ...card, 'written',
+    'shownTitle', 'spokenAloud', 'after', 'madePasskeyBack', 'writtenStep', 'exception', 'neverRealMoney', 'chapterLink', ...card, 'written',
   ];
   const madeWords = [
-    'madeTitle', 'madeLede', 'shownTitle', 'spokenAloud', 'after', 'madeKeepsTitle', 'madeKeepsWords', 'madeKeepsWho',
+    'madeTitle', 'madeLede', 'shownTitle', 'spokenAloud', 'after', 'writtenStep', 'madeKeepsTitle', 'madeKeepsWords', 'madeKeepsWho',
     'madeKeepsCleared', 'madeNotPersisted', 'exception', 'neverRealMoney', 'chapterLink', ...card, 'written',
   ];
   const ask = ['wordsTitle', 'wordsWithdrawn', 'exception', 'chapterLink', 'before', 'spokenAloud', 'revealFailed', 'show', ...card];
@@ -785,12 +844,34 @@ test('"Wallet made" is acknowledged by its button, and by leaving the screen any
     backup,
     /function written\(\): void \{\s*drop\(\);\s*wallet\.ackCreated\(\);\s*navigate\(router\.link\(afterWritten\(stripStep\(doit\.progress, Date\.now\(\)\)\)\)\);\s*\}/,
   );
-  assert.match(backup, /<Button variant="primary" data-testid="words-written" onclick=\{written\}>\{t\.written\}<\/Button>/);
-  // It is the one place of the screen that moves the reader on, and the one place that asks the steps anything.
+  // Two buttons have that one action. The screen's own stands at its end, after the sheet, as it always did:
+  // it is the main button, and a second one for a reader who follows a "Do it" step.
+  assert.match(backup, /<Button variant=\{followed === null \? 'primary' : 'secondary'\} data-testid="words-written" onclick=\{written\}>\{t\.written\}<\/Button>/);
+  // That reader's main button stands under the words, and names the step the press leads back to.
+  assert.match(
+    backup,
+    /<Button\s+variant="primary"\s+class="w-full sm:w-auto"\s+data-testid="words-written-step"\s+onclick=\{\(event\) => \{\s*if \(!isRepeatTap\(event\)\) written\(\);\s*\}\}\s*>\s*\{fill\(t\.writtenStep, \{ step: stepTitle\(followed, lang\) \}\)\}\s*<\/Button>/,
+  );
+  assert.equal(code(backup).match(/\bwritten\(\)/g)?.length, 2, 'the function, and the new button; the old one is handed the function itself');
+  assert.equal(code(backup).match(/onclick=\{written\}/g)?.length, 1);
+  // It is the one place of the screen that moves the reader on.
   assert.equal(code(backup).match(/\bnavigate\(/g)?.length, 1);
-  assert.equal(code(backup).match(/\bdoit\./g)?.length, 1);
-  // Its words are as they were.
+  // The screen asks the steps one thing, in two places: which step the reader follows. Once whenever the note
+  // changes, for the words on its buttons (the step the strip shows; no clock is kept for it), and once more
+  // at the press, so that the press leads where the reader is following at that moment.
+  assert.equal(code(backup).match(/\bdoit\./g)?.length, 2);
+  assert.match(backup, /let followed = \$derived\(stripStep\(doit\.progress, Date\.now\(\)\)\);/);
+  assert.equal(code(backup).match(/stripStep\(doit\.progress, Date\.now\(\)\)/g)?.length, 2);
+  assert.doesNotMatch(code(backup), /setInterval\(/);
+  // The words: the screen's own are as they were, and the new button's say where it leads.
   assert.deepEqual([strings.backup.en.written, strings.backup.es.written], ['I have written them down', 'Ya las escribí']);
+  assert.deepEqual([strings.backup.en.writtenStep, strings.backup.es.writtenStep], ['I have written them down: back to "{step}"', 'Ya las escribí: volver a "{step}"']);
+  for (const lang of LANGS) {
+    assert.deepEqual(slotNames(strings.backup[lang].writtenStep), ['step'], lang);
+    // It opens with the screen's own words for the same press, and ends as the way back to a step is named everywhere.
+    assert.ok(strings.backup[lang].writtenStep.startsWith(`${strings.backup[lang].written}: `), lang);
+    assert.ok(strings.backup[lang].writtenStep.toLowerCase().endsWith(strings.doit[lang].backTo.toLowerCase()), lang);
+  }
   assert.match(backup, /onDestroy\(\(\) => \{\s*left = true;\s*drop\(\);\s*if \(wallet\.created !== null\) wallet\.ackCreated\(\);/);
 });
 
@@ -825,6 +906,11 @@ test('double taps: the second click neither hides nor shows the words, and print
   const backup = code(source('Backup.svelte'));
   assert.match(backup, /data-testid="hide-words"\s+onclick=\{\(event\) => \{\s*if \(!isRepeatTap\(event\)\) void hide\(\);/);
   assert.match(backup, /data-testid="reveal-words"\s+aria-describedby="\{id\}-spoken"\s+onclick=\{\(event\) => \{\s*if \(!isRepeatTap\(event\)\) void show\(\);/);
+  // The button under the 12 words of "Wallet made" takes them off the screen: the second click of a double tap
+  // (whose first may have been the press that made the wallet, on the screen before) does not.
+  assert.match(backup, /data-testid="words-written-step"\s+onclick=\{\(event\) => \{\s*if \(!isRepeatTap\(event\)\) written\(\);/);
+  // The way back beside "Hide them" is a link, and the router drops the second click of a double tap on any link.
+  assert.match(readFileSync(new URL('../src/components/doit/BackToStep.svelte', import.meta.url), 'utf8'), /<Button \{\.\.\.rest\} variant="primary" class="w-full sm:w-auto" href=\{router\.link\(\{ name: 'step', id: step \}\)\}>/);
   const card = code(source('keys/PracticeCard.svelte'));
   assert.match(card, /data-testid="print-card"\s+onclick=\{\(event\) => \{\s*if \(!isRepeatTap\(event\)\) window\.print\(\);/);
 });

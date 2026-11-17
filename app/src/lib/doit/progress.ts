@@ -85,16 +85,23 @@ export interface StepNote {
   from?: string;
   /**
    * The step the reader came for: the step whose need sent them to this
-   * one ("Pass it on" needs coins, and sends a reader who has none to "Hold
-   * some"). One of the six step IDs, never this step's own, and nothing
-   * else. This step leads back to it when it is done, and until then its
-   * "Back to the chapter" leads to the chapter the reader left (ledBackTo,
-   * roadStart). It is written only for a reader who came from a chapter
-   * (the change "detour"), and it counts only while the step it names is
-   * not done: the write that finishes that step takes it out. A later road
-   * to this step takes it out as well: the step's own card (the change
-   * "open"), and a need of a step that did not come from a chapter (the
-   * change "detour").
+   * one ("There are no balances" needs a payment the wallet has sent, and
+   * sends a reader who has sent none to "Pass it on"). One of the six step
+   * IDs, never this step's own, and nothing else. This step leads back to
+   * it when it is done, and until then its "Back to the chapter" leads to
+   * the chapter the reader left (ledBackTo, roadStart). It is written only
+   * for a reader who came from a chapter (the change "detour"), and it
+   * counts only while the step it names is not done: the write that
+   * finishes that step takes it out. A later road to this step takes it
+   * out as well: the step's own card (the change "open"), and a need of a
+   * step that did not come from a chapter (the change "detour").
+   *
+   * A step that came from a chapter has a link to another step in two
+   * cases, each inside one chapter: "There are no balances" to "Pass it
+   * on", and "Prove the backup" to "The seed". An earlier version of this
+   * page also sent such a step to "Hold some" for a wallet or for coins,
+   * and wrote this field into the note of "Hold some": a note it left is
+   * read like any other, and "Hold some" then leads back as that note says.
    */
   cameFor?: StepId;
   /** A wallet fingerprint: the wallet whose words were checked (the-seed), or the one to remove and restore (prove-the-backup). */
@@ -740,10 +747,12 @@ export function doneWith(progress: Progress, id: StepId): StepId[] {
  *                       chapter (doneWith).
  *
  * A step that is done and belongs to another chapter than the one the link
- * leads to ("Hold some", when a need of a step of the payment chapter or of
- * the keys chapter sent the reader to it) keeps the first ending until the
- * detour is over: that page holds no card for it, so a done ending would
- * mark nothing there and open the page at its top.
+ * leads to keeps the first ending until the detour is over: that page holds
+ * no card for it, so a done ending would mark nothing there and open the
+ * page at its top. Only a note that an earlier version of this page wrote
+ * holds such a road: "Hold some", when a need of a step of the payment
+ * chapter or of the keys chapter had sent the reader to it. (This version
+ * sends a reader from a chapter to another step only inside one chapter.)
  *
  * That is all the address holds: the main site's own address, one of a
  * chapter's two paths, and the ending. The ending names one step and says
@@ -821,4 +830,21 @@ export function paidStep(progress: Progress, now: number): StepId | null {
   if (step === null) return null;
   const send = sendPart(step);
   return send !== null && progress.steps[step]?.parts?.[send] === true ? step : null;
+}
+
+/**
+ * The step that a wallet screen says is done at `now`, or null: the step
+ * the strip shows, once its note holds the moment it was done. A step is
+ * often finished on a wallet screen (a block comes while the reader waits
+ * on Receive, a payment's screen is opened), and the strip that says so is
+ * above the window on a phone by then. So the faucet's result and a
+ * payment's screen say it where the reader is looking, above the button
+ * that leads back to the step. Like the strip, they go on saying it until
+ * the step's own screen is opened, the strip is closed, or 24 hours have
+ * passed since the step was last followed. Null for a followed step that
+ * is under way, and when no step is followed.
+ */
+export function doneFollowed(progress: Progress, now: number): StepId | null {
+  const step = stripStep(progress, now);
+  return step !== null && progress.steps[step]?.doneAt !== undefined ? step : null;
 }

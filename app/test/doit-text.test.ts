@@ -10,6 +10,9 @@
 //   - About lists the note field by field, and the note still has exactly
 //     those fields;
 //   - every test hook of the spec is in the markup, on a piece of these screens;
+//   - a done step's card is drawn from its note, and the one piece of a done
+//     "Hold some" that is not names a block only from the wallet, in words
+//     that stay true;
 //   - the three word fields are fields for seed words, and nothing in these
 //     screens reads the browser's storage or the network by itself.
 //
@@ -23,15 +26,15 @@ import { EVENTS, LANGS, STEPS, eventPaths, type StepId } from '@learnbitcoin/pra
 import { DEFAULT_CONFIG } from '../src/lib/config.ts';
 import { answered, rechecked } from '../src/lib/doit/advance.ts';
 import { EXPLAIN_SLOTS, EXPLAIN_TERMS } from '../src/lib/doit/explain.ts';
-import { SIX_BLOCKS, answerBlock, isWalletTrouble, judge, seedWallet, verdictOf, type BlockedReason, type World } from '../src/lib/doit/judge.ts';
+import { SIX_BLOCKS, coinInBlock, isWalletTrouble, judge, seedWallet, verdictOf, type BlockedReason, type World } from '../src/lib/doit/judge.ts';
 import { PROGRESS_KEY, applyChange, emptyProgress, forgetProgress, parseProgress, readProgress, type Progress } from '../src/lib/doit/progress.ts';
 import { STEP_DEFS, partCount, partKey } from '../src/lib/doit/steps.ts';
-import { slotNames } from '../src/lib/format.ts';
+import { fill, formatSats, slotNames } from '../src/lib/format.ts';
 import { RECORD_KEY } from '../src/lib/keystore.ts';
 import { doneKey, proofOf } from '../src/screens/doit/view.ts';
 import { KEPT_KEYS, keptNowLines, notKnown, noteNow, type KeptNow } from '../src/screens/info/facts.ts';
 import { strings } from '../src/strings/index.ts';
-import { FP, NOW, OTHER_FP, chain, noWallet, record, state, tx, txid, world } from './doit-worlds.ts';
+import { FP, NOW, OTHER_FP, chain, noWallet, record, state, txid, world } from './doit-worlds.ts';
 import { MemoryStorage } from './engine-fakes.ts';
 
 type Table = Readonly<Record<string, string>>;
@@ -80,8 +83,10 @@ function doitSources(): { name: string; text: string }[] {
 
 /**
  * The screens outside the steps' own folders that ask the steps something. Four gained a sentence or a line
- * about the note that is kept. Three lead a reader who is following a step back to it: "Wallet made" by its
- * button, the faucet's card by its result, and Send's sent view.
+ * about the note that is kept (Home, the Overview, Settings and Remove's question). Five put the next move of
+ * a reader who is following a step where that reader is looking: Backup by its buttons ("Wallet made", and
+ * the 12 words shown at any other time), the faucet's card by its result, Send's sent view, a payment's
+ * screen once the followed step is done, and Home, which puts the restore first in the middle of the drill.
  */
 const GAINED = [
   'src/screens/Home.svelte',
@@ -91,7 +96,17 @@ const GAINED = [
   'src/screens/Backup.svelte',
   'src/screens/receive/FaucetCard.svelte',
   'src/screens/send/Sent.svelte',
+  'src/screens/Tx.svelte',
+  'src/components/wallet/NoWallet.svelte',
 ];
+
+/**
+ * What a sentence that is drawn from a done step's note, or stays on a page that is left open, must not say:
+ * what is so now. What the wallet or the browser holds, where a payment is, what the pot holds, what a screen
+ * shows. Each of these was in the table once, and each goes stale.
+ */
+const NOW_ENGLISH = /\bYou hold\b|\byour wallet (holds|keeps)\b|\bis in a block\b|\bholds your coins\b|\bhas six confirmations\b|\bundo it now\b|\b12 words are on paper\b|\bonly unlock them\b|\bscreen shows\b|\bstill\b|\bnow\b|\btoday\b/i;
+const NOW_SPANISH = /\bTienes monedas\b|\bTu billetera (tiene|no lleva)\b|\bestá en un bloque\b|\bguarda tus monedas\b|\btiene seis confirmaciones\b|\bdeshacerlo ahora\b|\b12 palabras están en papel\b|\bsolo las desbloquean\b|\bmuestra las cifras\b|\btodavía\b|\bahora\b|\bhoy\b/i;
 
 /** The sentences of a text, split after a full stop that a capital, an opening mark or a quote follows. */
 function sentences(text: string): string[] {
@@ -138,7 +153,17 @@ test('every key the code builds from a step, a part or a reason is in the table,
     }
     // A chapter's title is in the table of chapters (lib/doit/steps.ts), not here: no key holds one.
     for (const key of Object.keys(table)) assert.ok(!key.startsWith('chapter_'), key);
-    for (const term of [...EXPLAIN_TERMS, 'wallet', 'address', 'seed', 'explorer', 'height', 'faucet']) assert.ok(Object.hasOwn(table, `term_${term}`), `term_${term}`);
+    for (const term of [...EXPLAIN_TERMS, 'wallet', 'address', 'seed', 'faucet']) assert.ok(Object.hasOwn(table, `term_${term}`), `term_${term}`);
+    // And no words for an entry that nothing links: a block explorer and a block's height left with the part
+    // of "Hold some" that sent the reader to the explorer.
+    assert.deepEqual(
+      Object.keys(table)
+        .filter((key) => key.startsWith('term_'))
+        .sort(),
+      [...EXPLAIN_TERMS, 'wallet', 'address', 'seed', 'faucet'].map((term) => `term_${term}`).sort(),
+    );
+    // "Hold some" has three parts: no name and no guidance for a fourth.
+    for (const gone of ['part_hold-some_4', 'guide_hold-some_4']) assert.equal(Object.hasOwn(table, gone), false, gone);
   }
   // No part, lede or done sentence for a step or a part that does not exist.
   for (const key of Object.keys(en)) {
@@ -262,6 +287,28 @@ test('the waiting display, and the line a part keeps once its block has come', (
   }
   assert.match(strings.doit.en.waitLost, /^The practice network does not know this payment\./);
   assert.match(strings.doit.en.waitLost, /Send another payment/);
+
+  // The display links the payment on the practice explorer, in a new tab, unless it is handed `explorer` as
+  // false. Left out, the link is drawn.
+  const display = source('src/screens/doit/WaitingBlock.svelte');
+  assert.match(display, /\/\*\*[^*]*\*\/\s*explorer\?: boolean;/);
+  assert.match(display, /let \{ waiting, now, explorer = true, onagain \}: Props = \$props\(\);/);
+  assert.match(
+    display,
+    /\{#if explorer && waiting\.txid !== null\}\s*<p class="text-sm">\s*<OutLink href=\{explorerTxUrl\(wallet\.config\.explorerUrl, waiting\.txid\)\} text=\{t\.waitExplorer\} data-testid="step-waiting-explorer" \/>\s*<\/p>\s*\{\/if\}/,
+  );
+  assert.equal(display.match(/data-testid="step-waiting-explorer"/g)?.length, 1);
+  // One part hands false: the one that waits for the block of a coin the wallet holds, which is the third part
+  // of "Hold some" and no other. It is the first step's one idle moment, and the link's words say nothing of
+  // who runs the explorer. The two steps that wait for a payment of the wallet's own keep the link.
+  const open = source('src/screens/doit/OpenPart.svelte');
+  assert.match(open, /<WaitingBlock waiting=\{waits\} \{now\} explorer=\{fact !== 'coin-confirmed'\} onagain=\{sendAnother\} \/>/);
+  assert.equal(open.match(/<WaitingBlock\b/g)?.length, 1);
+  assert.match(open, /let fact = \$derived\(partDef\(id, part\)\?\.on\);/);
+  const waiters = STEPS.flatMap((id) => STEP_DEFS[id].parts.map((part, at) => `${id} ${at + 1} ${part.on}`)).filter((each) => /coin-confirmed|payment-confirmed|six-blocks/.test(each));
+  assert.deepEqual(waiters, ['hold-some 3 coin-confirmed', 'pass-it-on 3 payment-confirmed', 'waiting-room 2 payment-confirmed', 'waiting-room 3 six-blocks']);
+  // And the open part itself holds no link to the explorer any more: the question that had one is gone.
+  assert.doesNotMatch(code(open), /explorerTxUrl|OutLink|step-explorer/);
 });
 
 test('the lede of "The waiting room" says why the fee rate does not matter here, and that it does on Bitcoin', () => {
@@ -280,7 +327,7 @@ test('the lede of "The waiting room" says why the fee rate does not matter here,
 
 test('"Hold some" says one plain sentence for each new thing, and what is coming', () => {
   // "Hold some" explains each new thing itself.
-  const [wallet, coins, confirm, outside] = [1, 2, 3, 4].map((part) => en[`guide_hold-some_${part}`] ?? '');
+  const [wallet, coins, confirm] = [1, 2, 3].map((part) => en[`guide_hold-some_${part}`] ?? '');
   assert.match(wallet ?? '', /^A wallet is software that keeps the keys to your coins\./);
   // What is coming: a choice, either way fine for practice, and 12 words that the keys chapter explains.
   assert.match(wallet ?? '', /with a passkey or without, and either is fine for practice/);
@@ -289,8 +336,18 @@ test('"Hold some" says one plain sentence for each new thing, and what is coming
   assert.match(coins ?? '', /^An address is where coins are sent/);
   assert.match(coins ?? '', /The faucet hands practice coins to anyone who asks/);
   assert.match(confirm ?? '', /On Bitcoin a block comes about every 10 minutes; here, about every \{seconds\} seconds\.$/);
-  assert.match(outside ?? '', /^A block explorer is a website that shows a chain to anyone who asks/);
+  // The third part is the last, and says what finishes the step: a block takes the coins in.
+  assert.match(confirm ?? '', /A block takes them in, and that is their first confirmation\./);
+  assert.match(es['guide_hold-some_3'] ?? '', /Un bloque las incluye, y esa es su primera confirmación\./);
   assert.match(es['guide_hold-some_3'] ?? '', /En Bitcoin llega un bloque más o menos cada 10 minutos; aquí, más o menos cada \{seconds\} segundos\.$/);
+  // Three parts, three sentences of guidance: none sends the reader to an explorer, and no part of the step names one.
+  for (const lang of LANGS) {
+    const t: Table = strings.doit[lang];
+    assert.deepEqual(Object.keys(t).filter((key) => key.startsWith('guide_hold-some_')), ['guide_hold-some_1', 'guide_hold-some_2', 'guide_hold-some_3'], lang);
+    assert.deepEqual(Object.keys(t).filter((key) => key.startsWith('part_hold-some_')), ['part_hold-some_1', 'part_hold-some_2', 'part_hold-some_3'], lang);
+    for (const key of Object.keys(t).filter((each) => /^(part|guide|lede)_hold-some/.test(each))) assert.doesNotMatch(t[key] ?? '', /explorer|explorador/i, `${lang}.${key}`);
+  }
+  assert.deepEqual([en['part_hold-some_3'], es['part_hold-some_3']], ['See them confirm', 'Míralas confirmarse']);
   // The Spanish names a passkey the way the app does on first mention.
   assert.match(es['guide_hold-some_1'] ?? '', /con llave de acceso \(passkey\) o sin ella/);
 });
@@ -582,8 +639,8 @@ test('a done step says what the reader did and saw, in the past tense: its card 
   // The six sentences, word for word, in both languages.
   const said: Record<StepId, [english: string, spanish: string]> = {
     'hold-some': [
-      "You got practice coins, and you named the block that took the first of them in. A block explorer shows a chain to anyone who asks, with no wallet at all, so nobody has to take a wallet's word for what is on it. On Bitcoin it works the same way: verify, don't trust.",
-      'Recibiste monedas de práctica, y dijiste qué bloque incluyó la primera de ellas. Un explorador de bloques le muestra una cadena a quien pregunte, sin ninguna billetera, así que nadie tiene que creerle a una billetera lo que hay en la cadena. En Bitcoin funciona igual: verifica, no confíes.',
+      'You got practice coins, and a block took them in: that was their first confirmation. Coins are never inside a wallet: the chain keeps the record of them, and a wallet keeps the keys that can spend them.',
+      'Recibiste monedas de práctica, y un bloque las incluyó: esa fue su primera confirmación. Las monedas nunca están dentro de una billetera: la cadena lleva el registro de ellas, y una billetera guarda las claves que pueden gastarlas.',
     ],
     'pass-it-on': [
       'Your payment got into a block, and the pot took your coins to hand on to a learner who comes after you. The fee was what went in less what came out.',
@@ -612,9 +669,10 @@ test('a done step says what the reader did and saw, in the past tense: its card 
     assert.equal(es[`done_${id}`], said[id][1], id);
   }
 
-  // The card is drawn from the step's note and from nothing else: for as long as the note says "done", on every
-  // later visit. By then the wallet may be removed or another one, its coins sent on, the practice chain
-  // started again (the payment and its block are gone), and the pot's coins handed to a newcomer.
+  // The card's sentences are drawn from the step's note and from nothing else: for as long as the note says
+  // "done", on every later visit. By then the wallet may be removed or another one, its coins sent on, the
+  // practice chain started again (the payment and its block are gone), and the pot's coins handed to a newcomer.
+  // (One piece of the card of "Hold some" is not from the note, and stands under its buttons: the next test.)
   const card = source('src/screens/doit/Done.svelte');
   assert.match(card, /<p data-testid="step-done-text">\{t\[doneKey\(id\)\]\}<\/p>/);
   assert.equal(card.match(/doneKey\(id\)/g)?.length, 1, 'one sentence, drawn in one place, under no condition');
@@ -631,16 +689,14 @@ test('a done step says what the reader did and saw, in the past tense: its card 
 
   // So no sentence of it says what is so now: what the wallet or the browser holds, where a payment is, what
   // the pot holds, what a screen shows. Each of these was in the table once, and each goes stale.
-  const nowEnglish = /\bYou hold\b|\byour wallet (holds|keeps)\b|\bis in a block\b|\bholds your coins\b|\bhas six confirmations\b|\bundo it now\b|\b12 words are on paper\b|\bonly unlock them\b|\bscreen shows\b|\bstill\b|\bnow\b|\btoday\b/i;
-  const nowSpanish = /\bTienes monedas\b|\bTu billetera (tiene|no lleva)\b|\bestá en un bloque\b|\bguarda tus monedas\b|\btiene seis confirmaciones\b|\bdeshacerlo ahora\b|\b12 palabras están en papel\b|\bsolo las desbloquean\b|\bmuestra las cifras\b|\btodavía\b|\bahora\b|\bhoy\b/i;
   for (const id of STEPS) {
-    assert.doesNotMatch(en[`done_${id}`] ?? '', nowEnglish, id);
-    assert.doesNotMatch(es[`done_${id}`] ?? '', nowSpanish, id);
+    assert.doesNotMatch(en[`done_${id}`] ?? '', NOW_ENGLISH, id);
+    assert.doesNotMatch(es[`done_${id}`] ?? '', NOW_SPANISH, id);
   }
 
   // Each opens with what the reader did or saw, in the past tense ...
   const opens: Record<StepId, [english: RegExp, spanish: RegExp]> = {
-    'hold-some': [/^You got practice coins, and you named the block that took the first of them in\./, /^Recibiste monedas de práctica, y dijiste qué bloque incluyó la primera de ellas\./],
+    'hold-some': [/^You got practice coins, and a block took them in: that was their first confirmation\./, /^Recibiste monedas de práctica, y un bloque las incluyó: esa fue su primera confirmación\./],
     'pass-it-on': [/^Your payment got into a block, and the pot took your coins\b/, /^Tu pago entró en un bloque, y el fondo común recibió tus monedas\b/],
     'no-balances': [/^You counted the coins in your wallet, and opened one of its payments\b/, /^Contaste las monedas de tu billetera, y abriste uno de sus pagos\b/],
     'waiting-room': [/^Your payment reached six confirmations\b/, /^Tu pago llegó a seis confirmaciones\b/],
@@ -653,7 +709,7 @@ test('a done step says what the reader did and saw, in the past tense: its card 
   }
   // ... and rests on what the step's parts were ticked for. A step is done when its last part is ticked, and a
   // part ticks only when every part before it is: so these facts held on the day the note says.
-  assert.deepEqual(STEP_DEFS['hold-some'].parts.map((part) => part.on), ['wallet-here', 'coins-seen', 'coin-confirmed', 'block-height']);
+  assert.deepEqual(STEP_DEFS['hold-some'].parts.map((part) => part.on), ['wallet-here', 'coins-seen', 'coin-confirmed']);
   assert.deepEqual(STEP_DEFS['pass-it-on'].parts.map((part) => part.on), ['spendable', 'sent-to-pot', 'payment-confirmed']);
   assert.deepEqual(STEP_DEFS['no-balances'].parts.map((part) => part.on), ['coins-opened', 'coin-count', 'payment-read']);
   assert.deepEqual(STEP_DEFS['waiting-room'].parts.map((part) => part.on), ['sent', 'payment-confirmed', 'six-blocks']);
@@ -665,29 +721,22 @@ test('a done step says what the reader did and saw, in the past tense: its card 
   // The paper is the reader's word, said by ticking a box: "You said you wrote".
   assert.equal(proofOf('the-seed', 2), 'said');
 
-  // "Hold some": the page checked one thing in the last part, a number. It is the block of the oldest
-  // transaction the wallet received, whichever blocks took later coins in, and the page cannot know where the
-  // reader read it: the wallet's own transaction screen shows that number too ("Confirmed in block ..."). So
-  // the card says "you named the block that took the first of them in", and never that the explorer showed
-  // the reader anything, or that they did not have to take the page's word.
-  assert.equal(STEP_DEFS['hold-some'].parts[3]?.kind, 'ask');
-  const coins = chain(state([{ tx: 'c1', sats: 100_000, height: 150 }]));
-  const blocks = [tx({ tx: 'r3', direction: 'received', height: 160 }), tx({ tx: 'r1', direction: 'received', height: 150 }), tx({ tx: 'r2', direction: 'received', height: 155 })];
-  const asked = world({ chain: coins, history: blocks, note: { v: 1, following: 'hold-some', followedAt: NOW, steps: { 'hold-some': { started: true, parts: { 1: true, 2: true, 3: true } } } } });
-  assert.deepEqual(['150', '155', '160'].map((typed) => answerBlock(asked, typed)), ['right', 'wrong', 'wrong'], 'the block of the first coin, and no other');
-  assert.match(strings.wallet.en.txStatusBlock, /^Confirmed in block \{height\}\.$/);
-  assert.doesNotMatch(en['done_hold-some'] ?? '', /explorer showed|did not have to|you (saw|looked|read|checked)\b/i);
-  assert.doesNotMatch(es['done_hold-some'] ?? '', /explorador mostró|no tuviste que|\b(viste|miraste|leíste|comprobaste)\b/i);
-  // Nor what an explorer shows of that block today: once the practice chain is started again, the block is gone.
-  assert.doesNotMatch(en['done_hold-some'] ?? '', /\b(shows|holds|has) that block\b|\bthat block is\b/i);
-  assert.doesNotMatch(es['done_hold-some'] ?? '', /\b(muestra|tiene) ese bloque\b|\bese bloque está\b/i);
+  // "Hold some": every part is a state of the wallet, and the step is done when the wallet holds a coin in a
+  // block. The card says that much: coins came, and a block took them in. The note of the step names no
+  // wallet, no coin and no block, so the sentences name none and have no slot. And they say nothing of an
+  // explorer, of looking anything up, of checking, or of trust: the reader was asked for none of it.
+  assert.deepEqual(STEP_DEFS['hold-some'].parts.map((part) => part.kind), ['state', 'state', 'state']);
+  for (const lang of LANGS) assert.deepEqual(slotNames(strings.doit[lang]['done_hold-some']), [], lang);
+  assert.doesNotMatch(en['done_hold-some'] ?? '', /explorer|look(ed)? (it |them )?up|you (saw|looked|read|checked|named)\b|verify|trust|\bblock [0-9{]|\bwhich block\b/i);
+  assert.doesNotMatch(es['done_hold-some'] ?? '', /explorador|buscaste|\b(viste|miraste|leíste|comprobaste|dijiste)\b|verifica|conf[ií]es|\bbloque [0-9{]|\bqué bloque\b/i);
+  // It has three parts, as the step has: what the reader got, what a block did, and what that was.
+  const [got, taken, first] = (sentences(en['done_hold-some'] ?? '')[0] ?? '').split(/, and |: /);
+  assert.deepEqual([got, taken, first], ['You got practice coins', 'a block took them in', 'that was their first confirmation.']);
 
   // What is not about the reader's own step is about Bitcoin, or about any wallet, and is true whatever
   // happens on the practice network: it is said in general, never of "your wallet" or "your payment".
-  assert.match(en['done_hold-some'] ?? '', /\. A block explorer shows a chain to anyone who asks, with no wallet at all, so nobody has to take a wallet's word for what is on it\. On Bitcoin it works the same way: verify, don't trust\.$/);
-  assert.match(es['done_hold-some'] ?? '', /\. Un explorador de bloques le muestra una cadena a quien pregunte, sin ninguna billetera, así que nadie tiene que creerle a una billetera lo que hay en la cadena\. En Bitcoin funciona igual: verifica, no confíes\.$/);
-  // In the words the step's own guidance taught an explorer with.
-  assert.match(en['guide_hold-some_4'] ?? '', /^A block explorer is a website that shows a chain to anyone who asks, with no wallet at all\./);
+  assert.match(en['done_hold-some'] ?? '', /\. Coins are never inside a wallet: the chain keeps the record of them, and a wallet keeps the keys that can spend them\.$/);
+  assert.match(es['done_hold-some'] ?? '', /\. Las monedas nunca están dentro de una billetera: la cadena lleva el registro de ellas, y una billetera guarda las claves que pueden gastarlas\.$/);
   assert.match(en['done_no-balances'] ?? '', /\. A wallet keeps no balance: it holds coins, and its total is what they add up to\. A payment uses coins up whole\b/);
   assert.match(es['done_no-balances'] ?? '', /\. Una billetera no lleva ningún saldo: tiene monedas, y su total es lo que suman\. Un pago gasta monedas enteras\b/);
   assert.match(en['done_waiting-room'] ?? '', /\. On Bitcoin, undoing a payment that deep means redoing all six blocks faster than the rest of the network adds new ones\./);
@@ -699,6 +748,167 @@ test('a done step says what the reader did and saw, in the past tense: its card 
   for (const lang of LANGS) {
     for (const id of STEPS) assert.doesNotMatch(strings.doit[lang][`done_${id}`], /\bscreen\b|\bpantalla\b/i, `${lang}.done_${id}`);
   }
+});
+
+test('the done card of "Hold some" names a block only from the wallet, under its buttons, in the past tense, and the explorer only beside who runs it', () => {
+  // -- The words, in both languages. --
+  assert.equal(en.coinBlock, 'Block {height} of the practice chain took in a coin that came to this wallet.');
+  assert.equal(es.coinBlock, 'El bloque {height} de la cadena de práctica incluyó una moneda que llegó a esta billetera.');
+  assert.equal(
+    en.coinCheck,
+    'You can look the same coin up on the practice block explorer, a website that shows the chain to anyone who asks, with no wallet at all. We run that explorer too, as we run this wallet and its network, so a look there shows how such a check is done and proves nothing by itself.',
+  );
+  assert.equal(
+    es.coinCheck,
+    'Puedes buscar la misma moneda en el explorador de bloques de práctica, un sitio web que le muestra la cadena a quien pregunte, sin ninguna billetera. Ese explorador también lo mantenemos nosotros, igual que esta billetera y su red, así que mirar ahí muestra cómo se hace esa comprobación y no demuestra nada por sí solo.',
+  );
+  assert.deepEqual([en.coinExplorer, es.coinExplorer], ['This coin on the practice explorer', 'Esta moneda en el explorador de práctica']);
+  for (const lang of LANGS) {
+    assert.deepEqual(slotNames(strings.doit[lang].coinBlock), ['height'], lang);
+    assert.deepEqual(slotNames(strings.doit[lang].coinCheck), [], lang);
+    assert.deepEqual(slotNames(strings.doit[lang].coinExplorer), [], lang);
+  }
+
+  // -- Where the piece is drawn: for "Hold some" alone, and only when the wallet's latest look at its coins shows
+  //    a coin that was paid to it and is in a block. Nothing is asked of the practice network for it. --
+  const card = source('src/screens/doit/Done.svelte');
+  assert.match(card, /let coin = \$derived\(id === 'hold-some' \? coinInBlock\(doit\.seen\(now\)\) : null\);/);
+  assert.equal(code(card).match(/coinInBlock\(/g)?.length, 1);
+  assert.equal(card.match(/\{#if coin !== null\}/g)?.length, 1);
+  assert.doesNotMatch(code(card), /lookupTx|\.refresh\(|wallet\.watch|wallet\.history|\bfetch\(/);
+  // After the group of buttons, as the last thing in the card: after a page load it arrives when the wallet's
+  // first look ends, and nothing above it may move then. Everything else of the card stands before it.
+  const buttons = card.lastIndexOf('<div class="flex flex-col gap-3');
+  const piece = card.indexOf('{#if coin !== null}');
+  assert.ok(buttons > 0 && piece > card.indexOf('</div>', card.indexOf('data-testid="step-list"')), 'the piece comes after the group of buttons has closed');
+  assert.ok(piece > buttons);
+  for (const hook of ['step-done-on', 'step-done-text', 'step-pot-count', 'step-seed-wallet', 'step-changed', 'step-sparrow', 'step-led', 'step-back', 'step-next', 'step-list']) {
+    const at = card.indexOf(`data-testid="${hook}"`);
+    assert.ok(at > 0 && at < piece, `${hook} stands before the piece`);
+  }
+  // Two sentences in an element of their own, under the card's rule line; then, outside that element, a line
+  // that holds the link alone. And with that the card ends.
+  assert.match(
+    card.slice(piece),
+    /^\{#if coin !== null\}\s*<!--[\s\S]*?-->\s*<div class="space-y-3 border-t border-ink-200 pt-4 text-pretty text-base leading-relaxed text-ink-700" data-testid="step-coin-block">\s*<p>\{fill\(t\.coinBlock, \{ height: formatSats\(coin\.height\) \}\)\}<\/p>\s*<p>\{t\.coinCheck\}<\/p>\s*<\/div>\s*<p class="text-sm">\s*<OutLink class=\{ALONE\} href=\{explorerTxUrl\(wallet\.config\.explorerUrl, coin\.txid\)\} text=\{t\.coinExplorer\} data-testid="step-explorer" \/>\s*<\/p>\s*\{\/if\}\s*<\/div>\s*<\/Card>\s*$/,
+  );
+  // The link is the app's one piece for a link that leaves it: a new tab, no referrer, an arrow and the hidden
+  // words that say so. On a line of its own it has a tap area 44 px tall. Nobody has to follow it.
+  assert.match(card, /const ALONE = `inline-block \$\{TAP\}`;/);
+  assert.equal(card.match(/<OutLink\b/g)?.length, 1);
+  assert.match(source('src/components/OutLink.svelte'), /<a \{\.\.\.rest\} \{href\} \{\.\.\.OUTSIDE\}/);
+  assert.match(source('src/components/styles.ts'), /export const OUTSIDE = \{ target: '_blank', rel: 'noopener noreferrer' \} as const;/);
+  assert.match(source('src/screens/read/read.ts'), /export function explorerTxUrl\(explorerUrl: string, txid: string\): string \{\s*return `\$\{explorerUrl\}\/tx\/\$\{txid\}`;\s*\}/);
+  // The card's own sentence is still drawn in one place and under no condition, and its buttons are what they were.
+  assert.match(card, /<p data-testid="step-done-text">\{t\[doneKey\(id\)\]\}<\/p>/);
+  assert.match(card, /let ways = \$derived\(waysOn\(id, doit\.progress\)\);/);
+
+  // -- What the piece shows is what coinInBlock gives (test/doit-judge.test.ts holds its rule): the block of a
+  //    coin that was paid to the wallet, never of its own change, and nothing while there is none. --
+  const paid = chain(state([{ tx: 'a1', sats: 29_718, change: true, height: 5_890 }, { tx: 'c1', sats: 100_000, height: 5_900 }]));
+  const done: Progress = { v: 1, following: null, steps: { 'hold-some': { started: true, doneAt: NOW - 86_400_000, parts: { 1: true, 2: true, 3: true } } } };
+  assert.deepEqual(coinInBlock(world({ chain: paid, note: done })), { txid: txid('c1'), height: 5_900 });
+  // {height} is written as every number of the app is.
+  assert.equal(fill(en.coinBlock ?? '', { height: formatSats(5_900) }), 'Block 5,900 of the practice chain took in a coin that came to this wallet.');
+  assert.equal(fill(es.coinBlock ?? '', { height: formatSats(5_900) }), 'El bloque 5,900 de la cadena de práctica incluyó una moneda que llegó a esta billetera.');
+  // No piece: the coins sent on, only change left, no wallet, a storage nobody could read. The card itself
+  // stands in each of them, since the step is done by its note.
+  const without: World[] = [
+    world({ chain: chain(state([], 1)), note: done }),
+    world({ chain: chain(state([{ tx: 'a1', sats: 29_718, change: true, height: 5_890 }])), note: done }),
+    noWallet({ note: done }),
+    world({ status: 'blocked', record: null, note: done }),
+    world({ chain: chain(null), history: null, note: done }),
+  ];
+  for (const seen of without) {
+    assert.equal(coinInBlock(seen), null, seen.wallet.status);
+    assert.equal(judge('hold-some', seen).state, 'done', seen.wallet.status);
+  }
+
+  // -- The two sentences are held to the rule of a done step's sentences: nothing of what is so now. The piece
+  //    stays as it was drawn on a page that is left open, where the coin may have been sent on since. --
+  for (const key of ['coinBlock', 'coinCheck'] as const) {
+    assert.doesNotMatch(strings.doit.en[key], NOW_ENGLISH, key);
+    assert.doesNotMatch(strings.doit.es[key], NOW_SPANISH, key);
+  }
+  // What a block did, in the past tense, and no word for holding: "a coin that this wallet holds" would go stale.
+  assert.match(en.coinBlock ?? '', /^Block \{height\} of the practice chain took in a coin that came to this wallet\.$/);
+  assert.doesNotMatch(en.coinBlock ?? '', /\bholds?\b|\bheld\b|\bhas\b|\bhave\b|\bkeeps?\b|\bis in\b|\bare in\b/i);
+  assert.doesNotMatch(es.coinBlock ?? '', /\btiene\b|\bguarda\b|\bconserva\b|\bestá en\b|\bestán en\b/i);
+  assert.match(es.coinBlock ?? '', /\bincluyó una moneda que llegó a esta billetera\.$/);
+  // The note names no wallet and no coin, so the card cannot know that the wallet here is the one the step was
+  // done with, nor that the coin is one of the step's: "a coin", "this wallet", never "your first coins".
+  for (const lang of LANGS) {
+    for (const key of ['coinBlock', 'coinCheck', 'coinExplorer'] as const) {
+      assert.doesNotMatch(strings.doit[lang][key], /\byour\b|\byou got\b|\bfirst\b|\btu\b|\btus\b|\brecibiste\b|\bprimer[ao]s?\b/i, `${lang}.${key}`);
+    }
+  }
+
+  // -- The explorer is offered as something to look at, never as proof: the people who run it run this wallet
+  //    and the practice network. The sentence beside the link says so, in both languages. --
+  assert.match(en.coinCheck ?? '', /\. We run that explorer too, as we run this wallet and its network, so a look there shows how such a check is done and proves nothing by itself\.$/);
+  assert.match(es.coinCheck ?? '', /\. Ese explorador también lo mantenemos nosotros, igual que esta billetera y su red, así que mirar ahí muestra cómo se hace esa comprobación y no demuestra nada por sí solo\.$/);
+  // The card's own sentence names no explorer at all: the explorer is named only where who runs it is said.
+  assert.doesNotMatch(en['done_hold-some'] ?? '', /explorer/i);
+  assert.doesNotMatch(es['done_hold-some'] ?? '', /explorador/i);
+  // And no text of the table teaches "verify, don't trust" with it, or says that a look there spares anybody
+  // from taking the wallet's word.
+  for (const { where, text } of everyText()) {
+    assert.doesNotMatch(text, /verify, don'?t trust|verifica, no conf[ií]es/i, where);
+    assert.doesNotMatch(text, /take a wallet's word|creerle a una billetera/i, where);
+  }
+});
+
+test('what the comments say of a done "Hold some" and of its wait is what the code does: the piece is about the wallet that is here, three pieces of a done card rest on more than the note, and the step waits for any coin of the wallet', () => {
+  /** A comment's lines as one line of text. */
+  const flat = (text: string): string => text.replace(/\n\s*(\/\/|\*) ?/g, ' ').replace(/\s+/g, ' ');
+  const card = flat(source('src/screens/doit/Done.svelte'));
+  const table = flat(source('src/strings/doit.ts'));
+  const display = flat(source('src/screens/doit/WaitingBlock.svelte'));
+  const done: Progress = { v: 1, following: null, steps: { 'hold-some': { started: true, doneAt: NOW - 86_400_000, parts: { 1: true, 2: true, 3: true } } } };
+
+  // -- With another wallet in the browser the piece is drawn, for a coin of that wallet: the note of "Hold some"
+  //    names no wallet, so coinInBlock answers for whichever wallet is here. The card's header said "another
+  //    wallet" among the cases with no piece. --
+  const others = chain(state([{ tx: 'e7', sats: 40_000, height: 102 }]));
+  assert.deepEqual(coinInBlock(world({ record: record('words', OTHER_FP), chain: others, note: done })), { txid: txid('e7'), height: 102 });
+  assert.deepEqual(coinInBlock(world({ record: record('words', OTHER_FP), chain: others })), { txid: txid('e7'), height: 102 }, 'the same with no note at all');
+  assert.doesNotMatch(card, /no wallet, another wallet, the coins sent on/);
+  assert.match(card, /The piece is about the wallet that is here, whichever wallet the step was done with: with another wallet in this browser it names a coin of that wallet, if it holds one of the kind\./);
+  assert.match(card, /With no such coin \(no wallet here, the coins sent on, only change left\) there is no piece\./);
+
+  // -- Three pieces of a done card rest on more than the note, not one: the block under "Hold some", the pot's
+  //    count under "Pass it on", and the lines on the wallet that is here under "The seed". --
+  assert.doesNotMatch(card, /One piece is not from the note/);
+  assert.match(card, /Three pieces rest on more than the note, and each is drawn only while what it rests on is there/);
+  assert.doesNotMatch(table, /One piece of a done card is not from the note/);
+  assert.match(table, /Two more pieces of a done card rest on more than the note/);
+  const markup = source('src/screens/doit/Done.svelte');
+  // The pot's count comes from the Worker, and the two lines of "The seed" from the wallet that is here.
+  assert.match(markup, /void busyWhile\(wallet\.potStats\(\)\)\.then\(/);
+  assert.match(markup, /let seed = \$derived\(id === 'the-seed' \? seedWallet\(doit\.seen\(now\)\) : 'none'\);/);
+  assert.match(markup, /\{#if id === 'the-seed' && rechecked && seed === 'same'\}/);
+  assert.match(markup, /\{:else if id === 'the-seed' && seed === 'other'\}/);
+  // The card of a done drill is from the note alone, as the header says of it.
+  assert.match(markup, /\{#if note\?\.was === 'passkey'\}/);
+
+  // -- The block the piece names need not be the block that finished the step: it is the lowest block of a coin
+  //    paid to the wallet that is here. A step finished by the block of a later coin still names the earlier. --
+  const earlier = chain(state([{ tx: 'c1', sats: 50_000, height: 90 }, { tx: 'c2', sats: 100_000, height: 150, index: 1 }]));
+  assert.deepEqual(coinInBlock(world({ chain: earlier, note: done })), { txid: txid('c1'), height: 90 });
+  assert.doesNotMatch(table, /Which block it was is said under the card's buttons/);
+  assert.match(table, /A block is named under the card's buttons, and only from the latest look of the wallet that is here at its coins: the block of a coin that was paid to that wallet, which need not be the block that finished the step, nor a coin of the wallet the step was done with \(coinBlock, below\)\./);
+
+  // -- "Hold some" waits for the block of any coin the wallet holds, the change of its own payment included. --
+  const twoTicks: Progress = { v: 1, following: 'hold-some', followedAt: NOW, steps: { 'hold-some': { started: true, parts: { 1: true, 2: true } } } };
+  const changeWaits = world({ chain: chain(state([{ tx: 'a1', sats: 29_718, change: true, height: null }])), note: twoTicks });
+  const verdict = verdictOf('hold-some', 3, changeWaits);
+  assert.equal(verdict.is, 'now');
+  assert.equal(verdict.is === 'now' ? verdict.waiting?.txid : null, txid('a1'), 'it waits for the change');
+  const changeIn = world({ chain: chain(state([{ tx: 'a1', sats: 29_718, change: true, height: 160 }])), note: twoTicks });
+  assert.equal(verdictOf('hold-some', 3, changeIn).is, 'met', 'and the block of the change finishes the step');
+  assert.doesNotMatch(display, /"Hold some" waits for the block of a coin that was paid to the wallet, and does not/);
+  assert.match(display, /"Hold some" waits for the block of a coin the wallet holds \(one that was paid to it or, for a wallet that has paid already, the change of a payment of its own\), and does not:/);
 });
 
 test('a done "The seed" beside another wallet says what the step\'s note knows: that it has no note of a check for that wallet, never that its paper was not checked', () => {
@@ -823,9 +1033,79 @@ test('"Forget my progress" speaks of this site, not of the whole browser; over a
   assert.deepEqual([...kept.map.keys()].sort(), [RECORD_KEY, 'another-key'].sort(), 'exactly the note is erased');
   // The question shows the first, the list and the status region the second.
   const list = source('src/screens/Do.svelte');
-  assert.match(list, /<p id="\{uid\}-forget-what">\{t\.forgetWarn\}<\/p>/);
-  assert.match(list, /\{#if forgotten\}\s*<Notice kind="info" text=\{t\.forgotten\} data-testid="do-forgotten" \/>\s*\{\/if\}/);
+  assert.match(list, /<div id="\{uid\}-forget-what" class="space-y-3">\s*<p>\{t\.forgetWarn\}<\/p>/);
+  assert.match(list, /\{#if forgotten\}\s*(<!--[^>]*-->\s*)?<Notice kind="info" text=\{t\.forgotten\} data-testid="do-forgotten">/);
   assert.match(list, /forgotten = true;\s*announce\(t\.forgotten\);/);
+
+  // -- The second record of a done step: the mark a chapter of the main site keeps for its card. "Forget my
+  //    progress" cannot reach it, and the reader is told so where they forget. --
+  assert.equal(
+    en.forgetMarks,
+    "If a chapter of the Journey shows a step as done, that mark is kept by the chapter's page, in the browser that shows it. The chapter's page belongs to the main LearnBitcoin site, not to this one, so forgetting your progress here leaves the mark as it is.",
+  );
+  assert.equal(
+    es.forgetMarks,
+    'Si un capítulo del Recorrido muestra un paso como hecho, esa marca la guarda la página del capítulo, en el navegador que la muestra. La página del capítulo es del sitio principal de LearnBitcoin, no de este, así que olvidar tu progreso aquí deja la marca como está.',
+  );
+  // It names both sites: "this one" is the wallet's, "this site" of the two sentences it stands beside, and the
+  // other is "the main LearnBitcoin site". No address: a host name is a fact, and facts are slots.
+  assert.match(en.forgetMarks ?? '', /\bThe chapter's page belongs to the main LearnBitcoin site, not to this one, /);
+  assert.match(es.forgetMarks ?? '', /\bLa página del capítulo es del sitio principal de LearnBitcoin, no de este, /);
+  // It says where the mark is kept: in the browser that shows the chapter. The main site keeps a mark in that
+  // browser's own storage and sends it nowhere (its privacy page says the same of its reading progress). Said
+  // of the main site alone, "kept on the main site", the sentence can be read as a record on a server, and
+  // in Spanish that is its first reading ("la guarda ... en el sitio principal").
+  assert.match(en.forgetMarks ?? '', /, that mark is kept by the chapter's page, in the browser that shows it\. /);
+  assert.match(es.forgetMarks ?? '', /, esa marca la guarda la página del capítulo, en el navegador que la muestra\. /);
+  assert.doesNotMatch(en.forgetMarks ?? '', /\bkept\b[^.]*\bon the main LearnBitcoin site\b/);
+  assert.doesNotMatch(es.forgetMarks ?? '', /\bguarda\b[^.]*\ben el sitio principal\b/);
+  // "The browser that shows it", never "this browser": a mark made in another browser is kept in that one, and
+  // the two sentences beside this one use "this browser" for what the wallet's own site keeps here.
+  assert.doesNotMatch(en.forgetMarks ?? '', /\bthis browser\b/i);
+  assert.doesNotMatch(es.forgetMarks ?? '', /\beste navegador\b/i);
+  for (const lang of LANGS) {
+    assert.deepEqual(slotNames(strings.doit[lang].forgetMarks), [], lang);
+    assert.equal(sentences(strings.doit[lang].forgetMarks).length, 2, lang);
+    assert.doesNotMatch(strings.doit[lang].forgetMarks, /https?:|www\.|\.com\b/i, lang);
+  }
+  // It is true while no chapter marks anything, and after the cards are live: it speaks of a chapter that shows
+  // a step as done, if one does, and says of the mark who keeps it and where, and that forgetting here leaves it.
+  assert.match(en.forgetMarks ?? '', /^If a chapter of the Journey shows a step as done, /);
+  assert.match(es.forgetMarks ?? '', /^Si un capítulo del Recorrido muestra un paso como hecho, /);
+  assert.match(en.forgetMarks ?? '', /, so forgetting your progress here leaves the mark as it is\.$/);
+  assert.match(es.forgetMarks ?? '', /, así que olvidar tu progreso aquí deja la marca como está\.$/);
+  // It says nothing of how the mark is cleared. The main site has no control for that which every reader can
+  // reach, and the browser's site data is erased for both sites together: so no text of any table sends the
+  // reader anywhere to clear it.
+  let read = 0;
+  for (const [area, tables] of Object.entries(strings)) {
+    for (const lang of LANGS) {
+      for (const [key, text] of Object.entries(tables[lang] as Table)) {
+        read += 1;
+        assert.doesNotMatch(text, /cleared there|clear (it|them|the marks?) there|se borran? all[ií]|b[oó]rral[ao]s? all[ií]/i, `${area}.${lang}.${key}`);
+        assert.doesNotMatch(text, /site data to (clear|remove|erase) the mark|datos del sitio para (borrar|quitar) la marca/i, `${area}.${lang}.${key}`);
+      }
+    }
+  }
+  assert.ok(read > 1000, `${read} texts were read`);
+  assert.doesNotMatch(en.forgetMarks ?? '', /\bclear|\berase|\bremove|\bdelete|site data|browser's/i);
+  assert.doesNotMatch(es.forgetMarks ?? '', /\bborr|\bquit|\belimin|datos del sitio|del navegador/i);
+  // The list draws it in two places. In the question, as a second paragraph inside the element that the answer
+  // "Forget it" names as its description ...
+  assert.match(
+    list,
+    /<div id="\{uid\}-forget-what" class="space-y-3">\s*<p>\{t\.forgetWarn\}<\/p>\s*<p data-testid="do-forget-marks">\{t\.forgetMarks\}<\/p>\s*<\/div>/,
+  );
+  assert.match(list, /data-testid="do-forget-confirm"\s+class="w-full sm:w-auto"\s+aria-describedby="\{uid\}-forget-what"/);
+  assert.equal(list.match(/\{uid\}-forget-what/g)?.length, 2, 'one element carries the id, and one button names it');
+  // ... and under the line that says the note is gone, in the same notice.
+  assert.match(list, /<Notice kind="info" text=\{t\.forgotten\} data-testid="do-forgotten">\s*<p>\{t\.forgetMarks\}<\/p>\s*<\/Notice>/);
+  assert.equal(code(list).match(/t\.forgetMarks\b/g)?.length, 2);
+  // Both are drawn whatever was stored, a note or something unreadable in its place: under no condition of their own.
+  assert.doesNotMatch(code(list), /\{#if[^}]*\}\s*<p[^>]*>\{t\.forgetMarks\}/);
+  // The status region is told the first line alone: an outcome, said once.
+  assert.equal(code(list).match(/announce\(/g)?.length, 1);
+  assert.doesNotMatch(code(list), /announce\([^)]*forgetMarks/);
   // "None of it" is said only while nothing is stored where the note goes: the line goes as soon as the
   // storage holds something again (a note, or anything else another tab left there), or cannot be read.
   assert.match(list, /\$effect\(\(\) => \{\s*if \(doit\.read !== 'none'\) forgotten = false;\s*\}\);/);
@@ -1276,13 +1556,14 @@ test('every test hook of the spec is in the markup of the piece that draws it', 
     'step-waited': 'src/screens/doit/StepBody.svelte',
     'step-send-another': 'src/screens/doit/WaitingBlock.svelte',
     'step-done': 'src/screens/doit/Done.svelte',
+    // The block a done "Hold some" names from the wallet, and the link to that coin on the practice explorer.
+    'step-coin-block': 'src/screens/doit/Done.svelte',
+    'step-explorer': 'src/screens/doit/Done.svelte',
     'step-back': 'src/screens/doit/StepBody.svelte',
     'step-led': 'src/screens/doit/Done.svelte',
     'step-next': 'src/screens/doit/Done.svelte',
     'step-restart': 'src/screens/doit/StepBody.svelte',
     'step-stop': 'src/screens/doit/StepBody.svelte',
-    'step-block-answer': 'src/screens/doit/AskNumber.svelte',
-    'step-block-check': 'src/screens/doit/AskNumber.svelte',
     'step-coins-answer': 'src/screens/doit/AskNumber.svelte',
     'step-coins-check': 'src/screens/doit/AskNumber.svelte',
     'step-word': 'src/screens/doit/AskWords.svelte',
@@ -1299,8 +1580,30 @@ test('every test hook of the spec is in the markup of the piece that draws it', 
     // The way back to a followed step, where a part of it was just done on a wallet screen.
     'faucet-step': 'src/screens/receive/FaucetState.svelte',
     'sent-step': 'src/screens/send/Sent.svelte',
+    // The next move of a reader who is following a step, where they are looking on four wallet screens: the
+    // button under the 12 words on "Wallet made" and the way back beside "Hide them"; the line that says the
+    // followed step is done and the way back to it, on a payment's screen; and Home's restore in the middle
+    // of the drill.
+    'words-written-step': 'src/screens/Backup.svelte',
+    'backup-step': 'src/screens/Backup.svelte',
+    'tx-step-done': 'src/screens/Tx.svelte',
+    'tx-step': 'src/screens/Tx.svelte',
+    'home-step': 'src/screens/Home.svelte',
+    'home-step-restore': 'src/screens/Home.svelte',
+    // The same move on the gate that stands in for a wallet screen, for the same reader.
+    'gate-step': 'src/components/wallet/NoWallet.svelte',
+    'gate-step-restore': 'src/components/wallet/NoWallet.svelte',
+    // The buttons of a done step's card, as one group: what the screen brings into the window when the step
+    // ends while it is open.
+    'step-ways': 'src/screens/doit/Done.svelte',
+    // The line in the faucet's result that says the followed step is done.
+    'faucet-step-done': 'src/screens/receive/FaucetState.svelte',
+    // In the question of "Forget my progress": whose a chapter's mark of a done step is.
+    'do-forget-marks': 'src/screens/Do.svelte',
   };
-  assert.equal(Object.keys(hooks).length, 38);
+  assert.equal(Object.keys(hooks).length, 49);
+  // The question of "Hold some" is gone, and its two hooks with it: nothing in the app draws them.
+  for (const { name, text } of doitSources()) assert.doesNotMatch(text, /step-block-(answer|check)/, name);
   for (const [hook, file] of Object.entries(hooks)) {
     const text = source(file);
     // As an attribute of its own, as the heading's hook, or in the table a piece picks its hooks from.
@@ -1325,7 +1628,7 @@ test('every test hook of the spec is in the markup of the piece that draws it', 
 
 // -- the ways back to a step ----------------------------------------------------------------------------
 
-test('the two links from a need to another step tell the steps that they were used, and the three places that lead back to a step draw one piece', () => {
+test('the two links from a need to another step tell the steps that they were used, and the five places that lead back to a step draw one piece', () => {
   // -- The press of a link that leads to another step is what remembers the step the reader came for. --
   const part = source('src/screens/doit/OpenPart.svelte');
   // What such a link is handed: one function that hands the steps the step the link leads to and the step it
@@ -1392,12 +1695,24 @@ test('the two links from a need to another step tell the steps that they were us
       assert.equal(said, lang === 'en' ? `Back to "${title}"` : `Volver a "${title}"`);
     }
   }
-  // The three places that draw it, each under its own hook, and no other place in the app.
+  // The five places that draw it, each under its own hook, and no other place in the app.
   const drawn: [file: string, tag: RegExp][] = [
     ['src/screens/doit/Done.svelte', /\{#if ways\.led !== null\}\s*<BackToStep step=\{ways\.led\} data-testid="step-led" \/>\s*\{\/if\}/],
-    ['src/screens/receive/FaucetState.svelte', /\{#snippet back\(\)\}\s*\{#if step !== null\}\s*<div><BackToStep \{step\} data-testid="faucet-step" \/><\/div>\s*\{\/if\}\s*\{\/snippet\}/],
+    // The faucet's result: the button and, once the step it leads to is done, one line above it that says so.
+    [
+      'src/screens/receive/FaucetState.svelte',
+      /\{#snippet back\(\)\}\s*\{#if step !== null\}\s*\{#if done\}\s*<p class="font-semibold text-ink-800" data-testid="faucet-step-done">\{fill\(d\.saidDone, \{ step: stepTitle\(step, lang\) \}\)\}<\/p>\s*\{\/if\}\s*<div><BackToStep \{step\} data-testid="faucet-step" \/><\/div>\s*\{\/if\}\s*\{\/snippet\}/,
+    ],
     ['src/screens/send/Sent.svelte', /\{#if step !== null\}\s*(<!--[^>]*-->\s*)?<div><BackToStep \{step\} data-testid="sent-step" \/><\/div>\s*\{\/if\}/],
+    // Backup with the 12 words shown: first in the row that holds "Hide them".
+    ['src/screens/Backup.svelte', /<Actions>\s*(<!--[^>]*-->\s*)?\{#if followed !== null\}\s*<BackToStep step=\{followed\} data-testid="backup-step" \/>\s*\{\/if\}\s*(<!--[^>]*-->\s*)?<Button\s+data-testid="hide-words"/],
+    // A payment's screen, once the followed step is done: the line that says so, and then the button.
+    [
+      'src/screens/Tx.svelte',
+      /\{#if finished !== null\}\s*(<!--[\s\S]*?-->\s*)?<div class="space-y-3" data-testid="tx-step-done">\s*<p class="text-pretty font-semibold leading-relaxed text-ink-800">\{fill\(d\.saidDone, \{ step: stepTitle\(finished, lang\) \}\)\}<\/p>\s*<div><BackToStep step=\{finished\} data-testid="tx-step" \/><\/div>\s*<\/div>\s*\{\/if\}/,
+    ],
   ];
+  assert.equal(drawn.length, 5);
   for (const [file, tag] of drawn) {
     assert.match(source(file), tag, file);
     assert.equal(source(file).match(/<BackToStep\b/g)?.length, 1, `${file}: drawn in one place`);
@@ -1433,8 +1748,45 @@ test('the two links from a need to another step tell the steps that they were us
   // The card says which step is followed: the step the strip shows, worked out again whenever the note changes.
   const faucet = source('src/screens/receive/FaucetCard.svelte');
   assert.match(faucet, /let followed = \$derived\(stripStep\(doit\.progress, Date\.now\(\)\)\);/);
-  assert.match(faucet, /<FaucetState bind:this=\{line\} \{view\} \{more\} \{boxWaited\} step=\{followed\} \/>/);
+  // And whether that step is done: "Hold some" ends when a block takes the coin in, and a reader who waits on
+  // Receive is looking at the faucet's result when it does. The card works it out from the note, and the
+  // result says so in one line above the button, in the two phases that draw the button and in no other.
+  assert.match(faucet, /let finished = \$derived\(followed !== null && doneFollowed\(doit\.progress, Date\.now\(\)\) === followed\);/);
+  assert.match(faucet, /<FaucetState bind:this=\{line\} \{view\} \{more\} \{boxWaited\} step=\{followed\} done=\{finished\} \/>/);
+  assert.match(state, /\/\*\*[^*]*\*\/\s*done\?: boolean;/);
+  assert.match(state, /let \{ view, more, boxWaited = false, step = null, done = false \}: Props = \$props\(\);/);
+  assert.equal(state.match(/data-testid="faucet-step-done"/g)?.length, 1, 'drawn in one place: the snippet the two phases share');
+  assert.equal(state.match(/\bd\.saidDone\b/g)?.length, 1);
   assert.doesNotMatch(code(state), /useDoit/);
+  // The line is the status region's own sentence for a done step, with the step's title in it.
+  assert.deepEqual([en.saidDone, es.saidDone], ['Step done: {step}.', 'Paso terminado: {step}.']);
+  assert.match(source('src/components/doit/strip.ts'), /export function stepTitle\(step: StepId, lang: Lang\): string \{\s*return strings\.doit\[lang\]\[STEP_DEFS\[step\]\.title\];\s*\}/);
+
+  // -- Backup, with the 12 words on screen: the step the strip shows, worked out again whenever the note changes. --
+  const backup = source('src/screens/Backup.svelte');
+  assert.match(backup, /let followed = \$derived\(stripStep\(doit\.progress, Date\.now\(\)\)\);/);
+  // In the view "shown" alone: the "Wallet made" step has a button of its own for the same reader (test/keys-text.test.ts).
+  const shown = backup.slice(backup.indexOf("{:else if view === 'shown' && words !== null}"), backup.indexOf("{:else if view === 'unlock'}"));
+  assert.match(shown, /data-testid="backup-step"/);
+  assert.ok(shown.indexOf('data-testid="backup-step"') < shown.indexOf('data-testid="hide-words"'), 'first in the row');
+
+  // -- A payment's screen: the followed step, once it is done, and for no other reader. --
+  const payment = source('src/screens/Tx.svelte');
+  assert.match(payment, /const doit = useDoit\(\);/);
+  assert.match(payment, /let finished = \$derived\(doneFollowed\(doit\.progress, Date\.now\(\)\)\);/);
+  // Under "What just happened", and before the table of what goes in and what comes out.
+  const explained = payment.indexOf('<Explained view={shows.view} />');
+  const said = payment.indexOf('data-testid="tx-step-done"');
+  const table = payment.indexOf('<Section title={t.txPartsTitle}>');
+  assert.ok(explained > 0 && explained < said && said < table, 'after "What just happened", before the parts');
+  assert.equal(payment.match(/data-testid="tx-step-done"/g)?.length, 1);
+  // It leads to the step, not to the chapter: the link back to the chapter stays in its three places (the
+  // step's own screen, its done card and the strip).
+  assert.doesNotMatch(code(payment), /ChapterLink|chapterLink\(/);
+  for (const name of all) {
+    if (['components/doit/ChapterLink.svelte', 'components/doit/Strip.svelte', 'screens/doit/Done.svelte', 'screens/doit/StepBody.svelte', 'screens/Do.svelte', 'lib/doit/progress.ts'].includes(name)) continue;
+    assert.doesNotMatch(code(readFileSync(new URL(`../src/${name}`, import.meta.url), 'utf8')), /<ChapterLink\b|\bchapterLink\(/, name);
+  }
 
   // -- "Payment sent": for the followed step whose payment part is ticked, and then it is the screen's main button. --
   const sent = source('src/screens/send/Sent.svelte');
@@ -1442,8 +1794,44 @@ test('the two links from a need to another step tell the steps that they were us
   assert.match(sent, /<Button variant=\{step === null \? 'primary' : 'secondary'\} class=\{WIDE\} href=\{router\.link\(\{ name: 'tx', txid \}\)\} data-testid="sent-link">\{t\.sentLink\}<\/Button>/);
   // After the sentences on what happens next, and before the rows of figures.
   assert.ok(sent.indexOf('</Prose>') < sent.indexOf('data-testid="sent-step"') && sent.indexOf('data-testid="sent-step"') < sent.indexOf('<Rows>'));
-  // No clock is kept for either: the step is worked out from the note as it stands.
-  for (const text of [faucet, sent]) assert.doesNotMatch(code(text), /setInterval\(/);
+  // No clock is kept for any of them: the step is worked out from the note as it stands.
+  for (const text of [faucet, sent, backup, payment]) assert.doesNotMatch(code(text), /setInterval\(/);
+});
+
+// -- the done card's buttons in the window ---------------------------------------------------------------
+
+test('when a step ends while its own screen is open, the done card\'s buttons are brought into the window, once, and nothing moves for a step that was done before', () => {
+  const body = source('src/screens/doit/StepBody.svelte');
+  const card = source('src/screens/doit/Done.svelte');
+  // The card's buttons are one group with a hook of its own, and the group is the card's only one.
+  assert.match(card, /<div class="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center" data-testid="step-ways">/);
+  assert.equal(card.match(/data-testid="step-ways"/g)?.length, 1);
+  const group = card.slice(card.indexOf('data-testid="step-ways"'), card.indexOf('{#if coin !== null}'));
+  for (const hook of ['step-led', 'step-back', 'step-next', 'step-list']) assert.ok(group.includes(`data-testid="${hook}"`), `${hook} is in the group`);
+
+  // The step's screen brings that group into the window at the moment the step is done, in the same place
+  // that tells the status region so: for a tick that came while this screen was open, and never where nothing
+  // can be written (no card is drawn there).
+  assert.match(
+    body,
+    /if \(before === null \|\| doit\.kept !== 'yes'\) return;\s*untrack\(\(\) => \{\s*if \(current\.done && !before\.done\) \{\s*announce\(fill\(t\.saidDone, \{ step: t\[def\.title\] \}\)\);\s*showWays\(\);\s*\} else if \(current\.ticks > before\.ticks && !current\.done\) \{/,
+  );
+  assert.equal(code(body).match(/\bshowWays\(\)/g)?.length, 2, 'the function, and the one place that calls it');
+  // One frame later, so that it comes after the move of focus to the heading when the reader's own answer
+  // finished the step; "nearest", so that the page moves just far enough, and not at all when the buttons are
+  // in the window already. The frame is given up when the screen is left.
+  assert.match(
+    body,
+    /let frame = 0;\s*function showWays\(\): void \{\s*cancelAnimationFrame\(frame\);\s*frame = requestAnimationFrame\(\(\) => \{\s*document\.querySelector<HTMLElement>\('\[data-testid="step-ways"\]'\)\?\.scrollIntoView\(\{ block: 'nearest' \}\);\s*\}\);\s*\}\s*\$effect\(\(\) => \(\) => cancelAnimationFrame\(frame\)\);/,
+  );
+  // Nothing else on the step's screen moves the page: not on arrival (the router puts the screen at its top, or
+  // where the reader was), not for a part that ticks, and not from the card itself.
+  assert.equal(code(body).match(/scrollIntoView\(|scrollTo\(|bringIntoView\(/g)?.length, 1);
+  assert.doesNotMatch(code(body), /onMount\(/);
+  assert.doesNotMatch(code(card), /scrollIntoView\(|scrollTo\(|bringIntoView\(|requestAnimationFrame\(/);
+  for (const name of ['src/screens/doit/OpenPart.svelte', 'src/screens/Step.svelte']) assert.doesNotMatch(code(source(name)), /scrollIntoView\(|scrollTo\(|bringIntoView\(/, name);
+  // No smooth scrolling anywhere in the app's styles: the move is made at once.
+  assert.doesNotMatch(source('src/app.css'), /scroll-behavior|scroll-smooth/);
 });
 
 // -- the way back to the chapter ------------------------------------------------------------------------

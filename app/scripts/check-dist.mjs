@@ -146,5 +146,15 @@ if (!existsSync(join(dist, 'licenses.md')) || statSync(join(dist, 'licenses.md')
   problems.push('licenses.md is missing or empty (build.license in vite.config.ts writes it)');
 }
 
+// The About page's string table, as a text file. The page's <noscript> lines send a reader without
+// JavaScript there for what the wallet keeps, sends and counts: so it has to be in the build, and
+// it has to be the table itself, byte for byte, never an older copy of it.
+const sourceAbout = readFileSync(join(appDir, 'src', 'strings', 'about.ts'));
+if (!existsSync(join(dist, 'about.txt'))) {
+  problems.push('there is no about.txt: the <noscript> lines of index.html link it (the plugin in vite.config.ts writes it)');
+} else if (!readFileSync(join(dist, 'about.txt')).equals(sourceAbout)) {
+  problems.push('about.txt differs from src/strings/about.ts');
+}
+
 if (problems.length > 0) fail();
-console.log(`ok: ${dist} passes the dist guard (1 script file, 1 stylesheet, nothing inline, _headers, licenses.md)`);
+console.log(`ok: ${dist} passes the dist guard (1 script file, 1 stylesheet, nothing inline, _headers, licenses.md, about.txt)`);

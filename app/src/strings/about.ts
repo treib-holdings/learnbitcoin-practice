@@ -1,5 +1,24 @@
 // The text of the About page: what this is, the network facts, what is stored and what our server and others see.
 //
+// THIS FILE IS PUBLISHED AS IT STANDS. The build copies it, byte for byte,
+// into the site as /about.txt (vite.config.ts), and the page's <noscript>
+// lines send a reader who browses without JavaScript there (index.html):
+// the About page is drawn by a script, and this file is where its
+// sentences can be read without one. So every comment below is read by the
+// public beside the sentences, and is held to the same rule as they are:
+// it is true of the code, in every state. Nothing private goes into this
+// file, in a sentence or in a comment.
+//
+// What a reader of /about.txt has in front of them is this table and not
+// the page. Where the page chooses between sentences by what this browser
+// holds or by the server's settings ("In this browser right now", whether
+// counting is on), the table holds each of them, and a comment says when
+// a line is shown wherever its own words do not. A sentence with a slot
+// ({seconds}, {amount}) is shown with a value from the wallet's settings
+// in its place. The names of the counts, which the page prints beside
+// their sentences, are the contract's (contract/src/index.ts) and are not
+// in this file.
+//
 // The same shape as every file in this folder (see common.ts): one table per
 // language with the same keys, plain strings, slots written {name}.
 //
@@ -28,7 +47,7 @@
 // link back, followed to a stand-in for the main site) hold the two together
 // where a program can.
 //
-// What the page may promise is short (SPEC section 12): no account, we set
+// What the page may promise is short: no account, we set
 // no cookies, the 12 words never leave this browser. It never says that
 // nothing leaves the browser, and never that nothing says who the reader
 // is: the server sees addresses and an IP address, and the page says so.
@@ -79,7 +98,10 @@ export const en = {
   netFaucet: 'Faucet',
   /** {amount} carries its unit, as in "100,000 practice sats". */
   netFaucetGives: '{amount} for each request',
-  /** Under it, while the settings name no bot check: the faucet then answers nobody. */
+  /**
+   * Under it, once the server's own settings have arrived and name no bot check: the faucet then answers nobody.
+   * Never from the settings the page is built with, which name none either and are drawn first on every visit.
+   */
   netFaucetOff: 'The faucet is switched off right now.',
   netExplorer: 'Block explorer',
   netElectrum: 'Electrum server',
@@ -107,9 +129,16 @@ export const en = {
   // The way back is never free text: for each step it is the English or the Spanish page of the step's own chapter, or nothing (validFrom).
   keepNoteFrom:
     'Whether you came to a step from the English or the Spanish page of its chapter, so that "Back to the chapter" leads to that page.',
-  // Written only on a road that began at a chapter's card, never for a reader who opened a step from the wallet's own
-  // list; one of the six step IDs and nothing else; taken out by the write that finishes the step it names (cameFor).
-  // A later road to the same step takes it out sooner: the step's own card, or a need of a step from the list.
+  // The field cameFor (src/lib/doit/progress.ts). It is written when a step that is under way sends the reader
+  // to another step and the reader presses that link (a tap or a click, the middle button, or the browser's own
+  // menu on the link, whether or not they then follow it), if the step that sends them was itself reached from a
+  // chapter. A step counts as reached from a chapter when its note holds a way back, or a step that it was sent
+  // from in turn and that is not done. The note keeps a step's way back from the first press of its card in this
+  // browser until the progress is forgotten. So the field is also written on a later day, for a reader who opens
+  // from the wallet's own list a step whose card they once pressed here. It holds one of the six step IDs and
+  // nothing else, never the step's own, and it is taken out by the write that finishes the step it names. A
+  // later press takes it out sooner: the step's own card, or a link from a step that was not reached from a
+  // chapter, when the field names another step than that one.
   keepNoteCameFor:
     'If you came from a chapter and a step sent you to another step first: the step you came for, so that the other step can lead you back to it and "Back to the chapter" leads to the chapter you came from. It is erased when the step you came for is done.',
   keepNoteWallet:
@@ -197,7 +226,10 @@ export const en = {
   countTitle: 'What is counted',
   countBody:
     'To learn which steps people finish, this page counts a few things. Each count is the name of what happened, at most one detail from a fixed list, and the screen it happened on. It never holds an address, an amount, a transaction ID, a wallet fingerprint or anything you typed.',
-  /** One of these two, by whether the settings say that events are wanted. */
+  /**
+   * One of these two, by whether the settings say that events are wanted. Neither is shown while the page's
+   * request for the server's settings is still out: what it counts may yet change.
+   */
   countOn: 'Counting is on right now.',
   countOff: 'Counting is off right now, so none of this is sent.',
   /** Under the list: what the line set in code type at the top of each entry is. */

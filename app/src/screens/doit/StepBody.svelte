@@ -25,6 +25,18 @@
   // heading, and Tab starts again from the top. When a part ticks by itself
   // (a block came), focus stays where the reader has it, and goes to the
   // heading only if what held it has left the screen.
+  //
+  // The window. A step often ends while its own screen is open: a block
+  // comes, or the reader's answer ticks the last part. The done card then
+  // takes its place above the parts, and on a phone its buttons, the way
+  // back to the chapter among them, can stand under the window's edge: a
+  // reader who waited at the top of the screen has the card's first
+  // sentences in the window and nothing to press. So at that moment, once,
+  // the page brings the card's buttons into the window. Nothing moves when
+  // they are in it already, and nothing moves for a step that was done
+  // before this screen opened: a reader who opens a done step, or comes
+  // back to one with the browser's Back, finds the page where the router
+  // put it.
 
   import { tick, untrack } from 'svelte';
   import Button from '../../components/Button.svelte';
@@ -127,13 +139,31 @@
     said = current;
     if (before === null || doit.kept !== 'yes') return;
     untrack(() => {
-      if (current.done && !before.done) announce(fill(t.saidDone, { step: t[def.title] }));
-      else if (current.ticks > before.ticks && !current.done) {
+      if (current.done && !before.done) {
+        announce(fill(t.saidDone, { step: t[def.title] }));
+        showWays();
+      } else if (current.ticks > before.ticks && !current.done) {
         // Several parts can tick at once: the one said is the last of them.
         announce(fill(t.saidTicked, { n: String(current.ticks), m: String(partCount(id)), part: t[partNameKey(id, current.ticks)] }));
       }
     });
   });
+
+  // The step ended while this screen was open: the card's buttons come into
+  // the window. One frame after the card is drawn, and not at once: when it
+  // was the reader's own answer that finished the step, focus goes to the
+  // heading first, and the heading is brought into view with it (swapped,
+  // below). The buttons are what has to be in the window once both have
+  // run. "nearest": the page moves just far enough, and not at all when
+  // the buttons are in the window already.
+  let frame = 0;
+  function showWays(): void {
+    cancelAnimationFrame(frame);
+    frame = requestAnimationFrame(() => {
+      document.querySelector<HTMLElement>('[data-testid="step-ways"]')?.scrollIntoView({ block: 'nearest' });
+    });
+  }
+  $effect(() => () => cancelAnimationFrame(frame));
 
   // A part that ticks by itself takes its body off the screen. If that body
   // held the keyboard's focus, the focus would be left on nothing: before

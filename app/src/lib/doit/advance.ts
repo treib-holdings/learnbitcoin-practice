@@ -10,8 +10,8 @@
 //
 //   - Ticks come in order. Only the first part of a step that is not
 //     ticked is looked at; when it ticks, the next one is looked at in the
-//     same breath, so a step opened on a wallet that already holds a
-//     confirmed coin ticks three parts at once.
+//     same breath, so "Hold some" opened on a wallet that already holds a
+//     confirmed coin ticks its three parts at once, and is done.
 //   - A part that is a STATE of the wallet (a wallet is here, a coin is
 //     confirmed, a payment is in a block) ticks when the state holds, on any
 //     screen, for every step that is started and not done, whether or not it
@@ -141,7 +141,10 @@ function nextTick(id: StepId, before: World | null, world: World): Change | null
   const note = world.note.steps[id];
   if (note?.started !== true || note.doneAt !== undefined) return null;
   const part = firstOpen(id, note);
-  // Every part is ticked and the step is not marked done (a note edited by hand): the last tick, again, marks it.
+  // Every part is ticked and the step is not marked done: the last tick, again, marks it, at this moment. Such a
+  // note was edited by hand, or was written by an earlier version of this page for a step that had one part more
+  // then ("Hold some" with its three states ticked and a question still open). The note keeps no time for a
+  // tick, so the moment the last state came true is not known, and the step is done as of now.
   if (part === null) return { kind: 'tick', step: id, part: STEP_DEFS[id].parts.length, at: world.now };
   const def = STEP_DEFS[id].parts[part - 1];
   if (def === undefined) return null;
@@ -248,9 +251,9 @@ export function advance(before: World | null, after: World): Plan {
  * question or the reader's word, or is not the one that is "now" (another
  * tab got there first, the wallet has gone, nothing can be written).
  *
- * The caller has judged the answer first: answerBlock() and answerCoins()
- * for the two numbers, wordsPassed() for the three words (all in
- * judge.ts). This only says what to write once it was right.
+ * The caller has judged the answer first: answerCoins() for the number,
+ * wordsPassed() for the three words (both in judge.ts). This only says
+ * what to write once it was right.
  */
 export function answered(id: StepId, world: World): Change | null {
   if (world.kept !== 'yes') return null;

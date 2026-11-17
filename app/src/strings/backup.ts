@@ -60,7 +60,12 @@ export const en = {
   shownTitle: 'Your 12 words',
   after:
     'Write them on paper, in order, as you would for a real wallet. Take no photo and no screenshot, even though these are practice words. This is a rehearsal for the day the words guard real money.',
-  /** The line that keeps practice words from ever being used for a real wallet. */
+  /**
+   * The line that keeps practice words from ever being used for a real wallet. It is drawn once wherever the
+   * 12 words are on screen. At the "Wallet made" step it stands before any button that ends the step: in the
+   * exception paragraph or, for a reader who follows a "Do it" step and has a button straight under the
+   * words, above that button (the paragraph is then drawn without it).
+   */
   neverRealMoney:
     'Never put real money on these 12 words. Words that have been on a web page are for practice only: a real wallet should make its own.',
   hide: 'Hide them',
@@ -108,6 +113,11 @@ export const en = {
   madeNotPersisted:
     'This browser was asked to keep what this page stores, and did not agree. So it may also erase the wallet by itself when the device runs short of space.',
   written: 'I have written them down',
+  /**
+   * The same press, on a second button that stands straight under the 12 words for a reader who is following
+   * a "Do it" step: it says where the press leads. {step} is that step's title, from the "Do it" table.
+   */
+  writtenStep: 'I have written them down: back to "{step}"',
 
   // -- the practice sheet: the main site's 12-word backup form, blank, for paper --
   //
@@ -176,6 +186,7 @@ export const es: Record<keyof typeof en, string> = {
   madeNotPersisted:
     'A este navegador se le pidió conservar lo que esta página guarda, y no aceptó. Así que también puede borrar la billetera por su cuenta cuando al dispositivo le falte espacio.',
   written: 'Ya las escribí',
+  writtenStep: 'Ya las escribí: volver a "{step}"',
 
   cardTitle: 'Una hoja de respaldo de práctica para imprimir',
   cardLead:

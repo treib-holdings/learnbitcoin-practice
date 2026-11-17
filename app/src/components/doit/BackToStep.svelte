@@ -3,14 +3,19 @@
   // Back to "Pass it on".
   //
   // It stands where a reader has just done what a step sent them to do, or
-  // what another step was waiting for, and is looking at the result:
+  // what another step was waiting for, and is looking at the result. There
+  // are five such places:
   //
   //   - on the card of a done step that a need of another step sent the
   //     reader to: back to the step they came for (screens/doit/Done.svelte);
   //   - in the faucet's result on Receive, once the coins are here
   //     (screens/receive/FaucetState.svelte);
   //   - on Send's "Payment sent", once the step's payment is out
-  //     (screens/send/Sent.svelte).
+  //     (screens/send/Sent.svelte);
+  //   - on Backup, beside "Hide them", while the 12 words are shown and a
+  //     step is followed (screens/Backup.svelte);
+  //   - on a payment's screen, under "What just happened", once the
+  //     followed step is done (screens/Tx.svelte).
   //
   // The strip under the header has the same way back, and says which step
   // is followed. But on a phone the strip is above the window by the time

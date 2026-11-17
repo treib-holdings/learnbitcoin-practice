@@ -8,7 +8,8 @@
 //      loaded since: nothing is ticked for a wallet that is not here
 //   2. the drill, with the wallet out of the browser: "Start this step
 //      again" is not offered; and a step that finds no wallet says where a
-//      wallet a reader already has comes back
+//      wallet a reader already has comes back, beside "Hold some" for a
+//      step from the list and beside Create for one opened by its card
 //   3. the drill for a wallet with no paper copy: the part names "The
 //      seed", and says so when the check was made there; with "The seed"
 //      done for another wallet the drill asks, and names the Backup screen
@@ -28,12 +29,14 @@
 //  10. a done drill for a wallet that was opened with a passkey: no heading
 //      level is jumped, and its screen asks the practice network nothing
 //  11. "Hold some", with the reader back from the faucet before the chain's
-//      index lists the payment: the step sees the coin arrive with no block
+//      index lists the payment: the step sees the coin arrive with no
+//      block, and is done when the block comes
 //
 // All are local only: they pay a wallet from the stand-in, or store a note
 // that stands in the middle of a step.
 
 import assert from 'node:assert/strict';
+import { stepDef } from '../../app/src/lib/doit/steps.ts';
 import { fill } from '../../app/src/lib/format.ts';
 import { strings } from '../../app/src/strings/index.ts';
 import { OTHER_WORDS, freshRecord, fundTestWallet, scenario, testRecord, type OpenedPage } from './helpers.ts';
@@ -169,7 +172,7 @@ scenario(
 );
 
 scenario(
-  'The drill with its wallet out of the browser offers no "Start this step again", and Restore is the one link of its open part; forgotten in that state and opened again, it names "Hold some" and says where a wallet the reader already has comes back, and so does every step that finds no wallet',
+  'The drill with its wallet out of the browser offers no "Start this step again", and Restore is the one link of its open part; forgotten in that state and opened again from the list, it names "Hold some" and says where a wallet the reader already has comes back, and so does every step from the list that finds no wallet; opened by its card, each of the five steps that need a wallet names Create, with the same line under it',
   { localOnly: true, timeout: 200_000 },
   async (s) => {
     const record = freshRecord();
@@ -226,6 +229,24 @@ scenario(
       await page.click('step-list');
       await arrivesAt(page, '/do');
     }
+    // -- The same steps opened by their cards, from their own chapter's page, and the two others that need a
+    //    wallet: a reader who came from a chapter is not sent through "Hold some". Each names Create, the
+    //    screen that makes a wallet, and under it the same line on a wallet the reader already has. --
+    const byCard = ['pass-it-on', 'no-balances', 'waiting-room', SEED, DRILL] as const;
+    for (const id of byCard) {
+      await page.goto(`/do/${id}?from=${stepDef(id).chapter.path.en}`);
+      await page.waitFor('step-need');
+      assert.equal(await attributeOf(page, 'step-need', 'data-reason'), 'no-wallet', id);
+      assert.ok((await page.text('step-need')).startsWith(en['need_no-wallet']), id);
+      assert.equal(await page.text('step-need-link'), en.actCreate, id);
+      assert.equal(await hrefOf(page, 'step-need-link'), '/new', id);
+      assert.equal(await page.page.$$eval('main a[href$="/do/hold-some"]', (links) => links.length), 0, `${id}: no link to "Hold some"`);
+      assert.equal(await page.text('step-need-also'), `${en.needHadOne} ${en.needHadOneLink}`, id);
+      assert.equal(await hrefOf(page, 'step-need-also-link'), '/', id);
+    }
+    assert.doesNotMatch((await noteText(page)) ?? '', /hold-some|cameFor/);
+    await page.click('step-list');
+    await arrivesAt(page, '/do');
 
     // -- That way on, taken: Home offers Restore, and the wallet comes back with its coins. --
     await page.page.locator(`${hook('do-step-link')}[data-step="${DRILL}"]`).click();
@@ -258,6 +279,13 @@ scenario(
         view('/do/pass-it-on'),
         view('/do'),
         view(`/do/${SEED}`),
+        view('/do'),
+        // The five steps, each opened by its card.
+        view('/do/pass-it-on'),
+        view('/do/no-balances'),
+        view('/do/waiting-room'),
+        view(`/do/${SEED}`),
+        view(`/do/${DRILL}`),
         view('/do'),
         view(`/do/${DRILL}`),
         view('/'),
@@ -808,7 +836,7 @@ scenario(
 // -- the faucet's coin, before the index lists it ----------------------------------------------------------------------
 
 scenario(
-  '"Hold some", with the reader back on the step before the chain\'s index lists the faucet\'s payment: the step sees the coin arrive within seconds and with no block, ticks "ask the faucet", and shows the coin waiting for its block',
+  '"Hold some", with the reader back on the step before the chain\'s index lists the faucet\'s payment: the step sees the coin arrive within seconds and with no block, ticks "ask the faucet", shows the coin waiting for its block, and is done when the block comes',
   { localOnly: true, timeout: 200_000 },
   async (s) => {
     const STEP = 'hold-some';
@@ -818,7 +846,7 @@ scenario(
     const words = wordsOf(record);
     const reader = await begin(s, `/do/${STEP}`, { record });
     const { page } = reader;
-    await untilParts(page, ['ticked', 'now', 'later', 'later']);
+    await untilParts(page, ['ticked', 'now', 'later']);
     await act(page, '/wallet/receive');
     await page.waitFor('faucet-ask');
     await page.click('faucet-ask');
@@ -828,24 +856,27 @@ scenario(
     assert.equal(await botCheckScripts(page), 1);
     await stripBack(page, STEP, { load: true });
     // The wallet's first look in the new page finds nothing: the index does not list the payment yet.
-    assert.deepEqual(await partsOf(page), ['ticked', 'now', 'later', 'later']);
+    assert.deepEqual(await partsOf(page), ['ticked', 'now', 'later']);
 
     // -- No block comes. The step looks at the wallet's receive address, as Receive does, and sees the coin arrive. --
-    await untilParts(page, ['ticked', 'ticked', 'now', 'later'], 30_000);
+    await untilParts(page, ['ticked', 'ticked', 'now'], 30_000);
     assert.equal(s.standIn.height(), height, 'no block was made meanwhile');
     await page.waitFor('step-waiting');
     assert.equal(await attributeOf(page, 'step-waiting', 'data-lost'), 'no');
     assert.equal(await page.text('step-guide'), fill(en['guide_hold-some_3'], { seconds: String(s.stack.config.blockSeconds) }));
     assert.deepEqual((await noteOf(page))?.steps[STEP]?.parts, { 1: true, 2: true });
 
-    // -- The block takes the coin in while the screen stays open: part 3 ticks by itself. --
+    // -- The block takes the coin in while the screen stays open: part 3 ticks by itself, and it is the
+    //    step's last part. The step is done, and counted. --
     s.standIn.mine();
-    await untilParts(page, ['ticked', 'ticked', 'ticked', 'now']);
+    await page.waitFor('step-done');
+    assert.deepEqual(await partsOf(page), ['ticked', 'ticked', 'ticked']);
+    assert.deepEqual(stepsCounted(s), { 'hold-some': 1 });
 
     await ends(
       s,
       reader,
-      [view(`/do/${STEP}`), view('/wallet/receive'), { name: 'Faucet', path: '/wallet/receive', value: 'ok' }, view(`/do/${STEP}`)],
+      [view(`/do/${STEP}`), view('/wallet/receive'), { name: 'Faucet', path: '/wallet/receive', value: 'ok' }, view(`/do/${STEP}`), doIt(`/do/${STEP}`, STEP)],
       { records: [record], words: [words], addresses: [record.firstAddress], txids: [] },
     );
   },

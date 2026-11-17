@@ -32,10 +32,19 @@
   // when the coins come. The card says which step is followed, and brings
   // the box on screen at that moment. With no step followed there is no
   // such button.
+  //
+  // A step can end here: "Hold some" is done when a block takes the coin
+  // in, and a reader who waits on this screen is looking at these words
+  // when it does, with the strip above the window on a phone. So once the
+  // followed step is done, one line above the button says so: "Step done:
+  // Hold some." The card says whether it is (`done`). The line is drawn
+  // for any followed step that is done, in the two phases that draw the
+  // button, and for no reader who follows none.
 
   import type { FaucetPayment, StepId } from '@learnbitcoin/practice-contract';
   import Countdown from '../../components/Countdown.svelte';
   import BackToStep from '../../components/doit/BackToStep.svelte';
+  import { stepTitle } from '../../components/doit/strip.ts';
   import Mono from '../../components/Mono.svelte';
   import Notice from '../../components/Notice.svelte';
   import Row from '../../components/Row.svelte';
@@ -59,15 +68,19 @@
     boxWaited?: boolean;
     /** The "Do it" step the reader is following, or null: once the coins are here, the way back to it is offered. */
     step?: StepId | null;
+    /** True when that step is done: a line above the way back says so. */
+    done?: boolean;
   }
 
-  let { view, more, boxWaited = false, step = null }: Props = $props();
+  let { view, more, boxWaited = false, step = null, done = false }: Props = $props();
 
   const wallet = useWallet();
 
   let lang = $derived(router.lang);
   let t = $derived(strings.receive[lang]);
   let e = $derived(strings.errors[lang]);
+  /** The "Do it" table: the one line that says the followed step is done is its own. */
+  let d = $derived(strings.doit[lang]);
 
   let root = $state<HTMLElement>();
 
@@ -113,9 +126,13 @@
   {/if}
 {/snippet}
 
-<!-- The coins are here, and the reader is following a step: the way back to it, where they are looking. -->
+<!-- The coins are here, and the reader is following a step: the way back to it, where they are looking.
+     Once that step is done, a line above the button says so. -->
 {#snippet back()}
   {#if step !== null}
+    {#if done}
+      <p class="font-semibold text-ink-800" data-testid="faucet-step-done">{fill(d.saidDone, { step: stepTitle(step, lang) })}</p>
+    {/if}
     <div><BackToStep {step} data-testid="faucet-step" /></div>
   {/if}
 {/snippet}

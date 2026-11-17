@@ -14,7 +14,9 @@
   //              it is in a block; "What just happened", for a transaction
   //              that touches this wallet: what was spent, what went where,
   //              the change and the fee, in plain sentences
-  //              (read/Explained.svelte); what went in and what came out;
+  //              (read/Explained.svelte); for a reader whose followed "Do
+  //              it" step is done, one line that says so and the way back
+  //              to that step (below); what went in and what came out;
   //              the fee, the size and the fee rate; whether it can still
   //              be replaced; its ID, with a copy button; and a link to the
   //              same transaction on the practice explorer
@@ -35,11 +37,26 @@
   // Looking needs no key, so nothing here asks for a passkey. An address
   // that holds no transaction ID never gets here: the router shows "Page
   // not found" for it.
+  //
+  // A "Do it" step can end on this screen: "There are no balances" is done
+  // when the reader opens one of their payments here, and the step asks
+  // them to read what it did. The screen is long, and the strip that says
+  // the step is done is above the window once they read. So while the
+  // followed step is done (doneFollowed in lib/doit/progress.ts: the step
+  // the strip shows, once it is done), a line under "What just happened"
+  // says "Step done: <the step>." and a button leads back to the step by
+  // its name, where its done card holds the link back to the chapter. The
+  // two go by the strip's rule: they show on every found transaction the
+  // reader opens until the step's own screen is opened, the strip is
+  // closed or 24 hours have passed. A reader who follows no step, or whose
+  // followed step is under way, sees neither.
 
   import { onDestroy, tick, untrack } from 'svelte';
   import Actions from '../components/Actions.svelte';
   import Button from '../components/Button.svelte';
   import CopyButton from '../components/CopyButton.svelte';
+  import BackToStep from '../components/doit/BackToStep.svelte';
+  import { stepTitle } from '../components/doit/strip.ts';
   import Mono from '../components/Mono.svelte';
   import Notice from '../components/Notice.svelte';
   import OutLink from '../components/OutLink.svelte';
@@ -53,6 +70,8 @@
   import TxFeeRows from '../components/wallet/TxFeeRows.svelte';
   import TxParts from '../components/wallet/TxParts.svelte';
   import WalletFrame from '../components/wallet/WalletFrame.svelte';
+  import { useDoit } from '../lib/doit/doit-context.ts';
+  import { doneFollowed } from '../lib/doit/progress.ts';
   import { fill, formatDate, formatSats } from '../lib/format.ts';
   import { focusHeading, router } from '../lib/router.svelte.ts';
   import { useWallet } from '../lib/wallet-context.ts';
@@ -72,10 +91,20 @@
   } from './read/read.ts';
 
   const wallet = useWallet();
+  /** The "Do it" steps: only to know whether the step the reader follows is done. */
+  const doit = useDoit();
 
   let lang = $derived(router.lang);
   let t = $derived(strings.wallet[lang]);
   let c = $derived(strings.common[lang]);
+  /** The "Do it" table: the one line that says the followed step is done is its own. */
+  let d = $derived(strings.doit[lang]);
+
+  /**
+   * The followed "Do it" step, once it is done, or null. Worked out again whenever the note changes (opening
+   * this screen can finish a step); no clock is kept for it.
+   */
+  let finished = $derived(doneFollowed(doit.progress, Date.now()));
 
   // The transaction's ID is part of the address: /wallet/tx/<64 hex characters>.
   let txid = $derived(router.route.name === 'tx' ? router.route.txid : '');
@@ -312,6 +341,15 @@
 
         <!-- What the table under it means for this wallet, in sentences. Nothing for another wallet's transaction. -->
         <Explained view={shows.view} />
+
+        {#if finished !== null}
+          <!-- The step the reader follows is done, and this is where they are reading: said here, with the
+               way back to the step by its name. Its done card holds the link back to the chapter. -->
+          <div class="space-y-3" data-testid="tx-step-done">
+            <p class="text-pretty font-semibold leading-relaxed text-ink-800">{fill(d.saidDone, { step: stepTitle(finished, lang) })}</p>
+            <div><BackToStep step={finished} data-testid="tx-step" /></div>
+          </div>
+        {/if}
 
         <Section title={t.txPartsTitle}>
           <TxParts view={shows.view} />

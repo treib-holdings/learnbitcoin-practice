@@ -47,6 +47,15 @@
 // setting that does this for a whole domain. Whether that is what does it
 // here has not been looked at.) The longer value is stricter, not weaker,
 // and ours stays in the files as the floor under it.
+//
+// One file is held to more than its headers: /about.txt, the About page's
+// string table, which the page's <noscript> lines send a reader without
+// JavaScript to. It must be the text of app/src/strings/about.ts as the
+// repository has it, and it must come as "text/plain; charset=utf-8",
+// exactly. Half of the file is Spanish, and a browser that is not told the
+// file is UTF-8 can show its accented letters broken: the type is the one
+// thing about the file that only the host decides, so this check is the
+// only place that holds the host to it.
 
 import { readFileSync } from 'node:fs';
 
@@ -80,6 +89,12 @@ const ONE_PART_PATH = '/about';
 
 /** Every page this check asks for. */
 const PAGES = [DEEP_PATH, ONE_PART_PATH, '/'];
+
+/** The About page's string table as a file of the site: what a reader without JavaScript is sent to (app/index.html). */
+const ABOUT_PATH = '/about.txt';
+
+/** The one content type that file may come with: plain text, said to be UTF-8. */
+const ABOUT_TYPE = 'text/plain; charset=utf-8';
 
 /**
  * The keys of GET /api/config, and the kind of value each holds (contract/src/index.ts, AppConfig). The list is
@@ -139,6 +154,8 @@ export interface Expectations {
   blocks: HeaderBlock[];
   /** The text of robots.txt. */
   robots: string;
+  /** The text of app/src/strings/about.ts: what /about.txt must be, to the character. */
+  about: string;
 }
 
 /**
@@ -186,7 +203,7 @@ function pathAsRead(path: string): string | null {
  * applies the block to the path it read, and the pattern here would be made
  * of the path as written.
  */
-export function readExpectations(headersText: string, robots: string): Expectations {
+export function readExpectations(headersText: string, robots: string, about: string): Expectations {
   const blocks: HeaderBlock[] = [];
   let block: HeaderBlock | null = null;
   for (const raw of headersText.split('\n')) {
@@ -222,9 +239,9 @@ export function readExpectations(headersText: string, robots: string): Expectati
     }
   }
   if (!blocks.some((each) => each.path === '/*' && each.set.length > 0)) throw new Error('_headers: no "/*" block');
-  const expect = { blocks, robots };
-  // Fails here, before anything is asked, if the file cannot say what one of the pages must carry.
-  for (const path of PAGES) expectedHeaders(expect, path);
+  const expect = { blocks, robots, about };
+  // Fails here, before anything is asked, if the file cannot say what one of the pages, or the text file, must carry.
+  for (const path of [...PAGES, ABOUT_PATH]) expectedHeaders(expect, path);
   return expect;
 }
 
@@ -384,6 +401,26 @@ export async function liveCheck(base: string, expect: Expectations): Promise<Che
     const lines = got.body.split('\n').map((line) => line.trim());
     check('GET /robots.txt: keeps crawlers out of /api/ and /p/', lines.includes('Disallow: /api/') && lines.includes('Disallow: /p/'), `got ${JSON.stringify(got.body.slice(0, 200))}`);
   });
+  // The About page's string table, for a reader without JavaScript. The file itself, not the app's page
+  // (a host that has no such file answers every unknown path with the page): so the type is held to one
+  // exact value, and the body to the repository's file, character for character.
+  const aboutLabel = `GET ${ABOUT_PATH}`;
+  await on(aboutLabel, ABOUT_PATH, undefined, (got) => {
+    const type = got.headers.get('content-type');
+    check(`${aboutLabel}: 200, as ${ABOUT_TYPE}`, got.status === 200 && type === ABOUT_TYPE, `status ${got.status}, type ${show(type)}`);
+    const same = got.body === expect.about;
+    // Where the two differ, the first place they do is what helps: a missing file shows as the page's first line.
+    let at = 0;
+    while (at < got.body.length && at < expect.about.length && got.body[at] === expect.about[at]) at += 1;
+    check(
+      `${aboutLabel}: the text of app/src/strings/about.ts`,
+      same,
+      `${got.body.length} characters came, ${expect.about.length} were expected; they differ from character ${at}: got ${JSON.stringify(got.body.slice(at, at + 80))}`,
+    );
+    // It is a file of the app like any other: the headers the file gives its path, and never listed.
+    for (const [name, value] of expectedHeaders(expect, ABOUT_PATH)) header(aboutLabel, got, name, value);
+    header(`${aboutLabel} (must not be listed)`, got, 'x-robots-tag', 'noindex');
+  });
 
   // -- the Worker --
   /** What every answer the Worker writes carries, whatever it says: a refusal and the config alike. */
@@ -456,6 +493,7 @@ export function repositoryExpectations(): Expectations {
   return readExpectations(
     readFileSync(new URL('../../app/public/_headers', import.meta.url), 'utf8'),
     readFileSync(new URL('../../app/public/robots.txt', import.meta.url), 'utf8'),
+    readFileSync(new URL('../../app/src/strings/about.ts', import.meta.url), 'utf8'),
   );
 }
 

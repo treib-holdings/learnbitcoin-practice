@@ -106,21 +106,40 @@ test('before the first screen is named, a change of the wallet is not looked at'
 test('opening a step is the first write, and what the wallet already satisfies ticks in the same call', () => {
   const p = page({ wallet: funded() });
   p.runner.watch(HOME, '');
-  p.runner.watch(step('hold-some'), '?from=/journey/what-bitcoin-actually-is');
-  // Started, followed, with the way back; a wallet is here, it has seen coins, one is confirmed.
+  p.runner.watch(step('pass-it-on'), '?from=/journey/how-bitcoin-works');
+  // Started, followed, with the way back; the wallet holds a coin it may spend, so the first part is ticked.
   assert.deepEqual(p.note(), {
     v: 1,
-    following: 'hold-some',
+    following: 'pass-it-on',
     followedAt: NOW,
-    steps: { 'hold-some': { started: true, from: '/journey/what-bitcoin-actually-is', parts: { 1: true, 2: true, 3: true } } },
+    steps: { 'pass-it-on': { started: true, from: '/journey/how-bitcoin-works', parts: { 1: true } } },
   });
-  assert.deepEqual(p.states('hold-some'), ['ticked', 'ticked', 'ticked', 'now']);
+  assert.deepEqual(p.states('pass-it-on'), ['ticked', 'now', 'later']);
   // Only the note's key was written, and the wallet's record was not touched.
   assert.deepEqual([...p.storage.map.keys()], [PROGRESS_KEY]);
   assert.equal(p.storage.map.has(RECORD_KEY), false);
   // The screens were told once, after everything was written.
   assert.equal(p.published.at(-1)?.read, 'kept');
   assert.deepEqual(p.published.at(-1)?.progress, p.note());
+
+  // "Hold some" is three states of the wallet and nothing else. Opened on a wallet that already holds a confirmed
+  // coin, all three tick in that same call, and the last tick finishes the step at that moment: a wallet is here,
+  // it has seen coins, one is confirmed. Done on its own screen, it is let go at once.
+  const h = page({ wallet: funded() });
+  h.runner.watch(HOME, '');
+  h.runner.watch(step('hold-some'), '?from=/journey/what-bitcoin-actually-is');
+  assert.deepEqual(h.note(), {
+    v: 1,
+    following: null,
+    steps: { 'hold-some': { started: true, doneAt: NOW, from: '/journey/what-bitcoin-actually-is', parts: { 1: true, 2: true, 3: true } } },
+  });
+  assert.equal(h.view('hold-some').state, 'done');
+  assert.deepEqual(h.states('hold-some'), ['ticked', 'ticked', 'ticked']);
+  // The step is counted by the write that finished it, and that waits until counts are released.
+  assert.deepEqual(h.counted, []);
+  h.runner.release();
+  assert.deepEqual(h.counted, ['hold-some']);
+  assert.deepEqual(h.published.at(-1)?.progress, h.note());
 });
 
 test('a way back that is not the step\'s own chapter is ignored without a word, and a later opening without one keeps the earlier one', () => {
@@ -193,24 +212,49 @@ test('an event on a page\'s first world ticks nothing: the Coins screen was not 
 
 // -- counting ---------------------------------------------------------------------------------------
 
-/** A wallet with a confirmed coin whose block the reader can name: the last part of "Hold some" is a question. */
-function answerHoldSome(p: ReturnType<typeof page>): boolean {
-  return p.runner.answer('hold-some');
+/**
+ * A page on the screen of "The seed" with its first two parts ticked: the three words are the open part, and the
+ * reader's answer to them is the last tick of the step.
+ */
+function seedAtItsQuestion(): ReturnType<typeof page> {
+  const storage = new MemoryStorage();
+  storage.map.set(PROGRESS_KEY, JSON.stringify({ v: 1, following: 'the-seed', followedAt: NOW - 5_000, steps: { 'the-seed': { started: true, parts: { 1: true, 2: true } } } }));
+  const p = page({ storage, wallet: world().wallet });
+  p.runner.watch(step('the-seed'), '');
+  return p;
 }
 
 test('a finished step is counted by the write that finished it, once, and not before counts are released', () => {
-  const p = page({ wallet: funded() });
-  p.runner.watch(step('hold-some'), '');
-  assert.equal(answerHoldSome(p), true);
-  assert.equal(p.note().steps['hold-some']?.doneAt, NOW);
+  // A step the reader's own answer finishes.
+  const p = seedAtItsQuestion();
+  assert.equal(p.runner.answer('the-seed'), true);
+  assert.equal(p.note().steps['the-seed']?.doneAt, NOW);
   assert.deepEqual(p.counted, [], 'held back: the settings have not arrived');
   p.runner.release();
-  assert.deepEqual(p.counted, ['hold-some']);
+  assert.deepEqual(p.counted, ['the-seed']);
   // Released once, it stays released, and nothing is counted twice.
   p.runner.release();
   p.runner.changed();
-  assert.equal(answerHoldSome(p), false, 'a done step has no open question');
-  assert.deepEqual(p.counted, ['hold-some']);
+  assert.equal(p.runner.answer('the-seed'), false, 'a done step has no open question');
+  assert.deepEqual(p.counted, ['the-seed']);
+
+  // A step that a state of the wallet finishes, on a screen that is not its own: "Hold some", when the block
+  // comes while the reader waits on Receive. Counted at that change, since counts are out.
+  const waiting = world({ chain: chain(state([{ tx: 'c1', sats: 50_000, height: null }])) }).wallet;
+  const q = page({ wallet: waiting });
+  q.runner.release();
+  q.runner.watch(step('hold-some'), '');
+  q.runner.watch({ name: 'receive' }, '');
+  assert.deepEqual(q.note().steps['hold-some'], { started: true, parts: { 1: true, 2: true } });
+  assert.deepEqual(q.counted, []);
+  q.now += 30_000;
+  q.publish({ chain: funded().chain });
+  assert.deepEqual(q.note().steps['hold-some'], { started: true, doneAt: NOW + 30_000, parts: { 1: true, 2: true, 3: true } });
+  assert.deepEqual(q.counted, ['hold-some']);
+  // It has nothing for the reader to answer, before or after.
+  assert.equal(q.runner.answer('hold-some'), false);
+  q.publish({ chain: funded().chain });
+  assert.deepEqual(q.counted, ['hold-some']);
 });
 
 test('two tabs that both see the last part tick count the step once between them', () => {
@@ -241,7 +285,7 @@ test('under a newer version\'s note nothing is written, ticked or counted', () =
   const p = page({ storage, wallet: funded() });
   p.runner.release();
   p.runner.watch(step('hold-some'), '');
-  assert.equal(answerHoldSome(p), false);
+  assert.equal(p.runner.answer('hold-some'), false);
   p.runner.restart('hold-some');
   p.runner.stop('hold-some');
   assert.equal(p.runner.forget(), false, 'a newer note is never deleted by this version');
@@ -249,13 +293,18 @@ test('under a newer version\'s note nothing is written, ticked or counted', () =
   assert.equal(storage.writes, 0);
   assert.deepEqual(p.counted, []);
   assert.deepEqual([p.runner.shown().read, p.runner.shown().kept], ['newer', 'newer']);
-  // The parts show as the wallet stands, and the first that needs a tick is blocked.
-  assert.deepEqual(p.states('hold-some'), ['ticked', 'ticked', 'ticked', 'blocked: storage']);
+  // The parts show as the wallet stands: all three states of "Hold some" hold. The step is not done for that,
+  // since nothing can be written; a step that needs a tick of the reader's shows it blocked.
+  assert.deepEqual(p.states('hold-some'), ['ticked', 'ticked', 'ticked']);
+  assert.equal(p.view('hold-some').state, 'not-started');
+  assert.deepEqual(p.states('pass-it-on'), ['ticked', 'blocked: storage', 'later']);
 });
 
 test('every started step is done and none is followed: no look writes, and the first visit to a step\'s screen takes out of the storage what a read dropped', () => {
   // Left by a hand, another program or a build that was never deployed: ways back that are not the steps' own
-  // chapters. A read drops them, and no screen is ever shown them.
+  // chapters. A read drops them, and no screen is ever shown them. And one thing an earlier version of this page
+  // left in good faith: a fourth tick of "Hold some", from when that step ended with a question. A read drops
+  // that as well, and the step stays done on its day.
   const planted = {
     v: 1,
     following: null,
@@ -280,7 +329,7 @@ test('every started step is done and none is followed: no look writes, and the f
   }
   assert.deepEqual([storage.writes, storage.map.get(PROGRESS_KEY)], [0, text]);
   // What the screens were shown all along is the note without those fields.
-  assert.deepEqual(p.runner.shown().progress.steps['hold-some'], { started: true, doneAt: NOW - 9, parts: { 1: true, 2: true, 3: true, 4: true } });
+  assert.deepEqual(p.runner.shown().progress.steps['hold-some'], { started: true, doneAt: NOW - 9, parts: { 1: true, 2: true, 3: true } });
   assert.equal(p.runner.shown().progress.steps['pass-it-on']?.from, undefined);
 
   // The reader opens a done step's screen. Opening a step's screen has always been what writes; for a done
@@ -293,10 +342,11 @@ test('every started step is done and none is followed: no look writes, and the f
     v: 1,
     following: null,
     steps: {
-      'hold-some': { started: true, doneAt: NOW - 9, parts: { 1: true, 2: true, 3: true, 4: true } },
+      'hold-some': { started: true, doneAt: NOW - 9, parts: { 1: true, 2: true, 3: true } },
       'pass-it-on': { started: true, doneAt: NOW - 9, parts: { 1: true, 2: true, 3: true } },
     },
   });
+  assert.doesNotMatch(after, /"4":true/, 'the fourth tick left the storage with that write');
   // Nothing was done again by that write: no step is counted a second time, and none is followed.
   assert.deepEqual(p.counted, []);
   assert.equal(p.note().following, null);
@@ -311,11 +361,21 @@ test('every started step is done and none is followed: no look writes, and the f
 // -- a done step is let go once it was seen on its own screen ------------------------------------------
 
 test('done on its own screen: the step is let go at once', () => {
-  const p = page({ wallet: funded() });
-  p.runner.watch(step('hold-some'), '');
-  assert.equal(answerHoldSome(p), true);
+  // By the reader's own answer.
+  const p = seedAtItsQuestion();
+  assert.equal(p.note().following, 'the-seed');
+  assert.equal(p.runner.answer('the-seed'), true);
+  assert.equal(p.note().steps['the-seed']?.doneAt, NOW);
   assert.equal(p.note().following, null);
   assert.equal(p.note().followedAt, undefined);
+  // By a state of the wallet that comes true while the screen is open: the block of "Hold some".
+  const q = page({ wallet: world({ chain: chain(state([{ tx: 'c1', sats: 50_000, height: null }])) }).wallet });
+  q.runner.watch(step('hold-some'), '');
+  assert.deepEqual([q.note().following, q.note().steps['hold-some']?.doneAt], ['hold-some', undefined]);
+  q.publish({ chain: funded().chain });
+  assert.equal(q.note().steps['hold-some']?.doneAt, NOW);
+  assert.equal(q.note().following, null);
+  assert.equal(q.note().followedAt, undefined);
 });
 
 test('done on another screen: the step stays followed until its screen is opened, or the strip is closed', () => {
@@ -429,51 +489,51 @@ test('"Stop following" and the step\'s action link: only the followed step chang
 
 test('a detour is written through the one write, and not under a newer note or a storage that refuses', () => {
   const CARD = '?from=/journey/how-bitcoin-works';
-  // A reader with no wallet arrives on "Pass it on" by its card in the payment chapter, and presses the link of
-  // its need, which leads to "Hold some".
+  // A reader whose wallet has sent nothing arrives on "There are no balances" by its card in the payment chapter,
+  // and presses the link of its need, which leads to "Pass it on".
   const p = page();
   p.runner.release();
-  p.runner.watch(step('pass-it-on'), CARD);
+  p.runner.watch(step('no-balances'), CARD);
   const writes = p.storage.writes;
   const told = p.published.length;
-  p.runner.detour('hold-some', 'pass-it-on');
+  p.runner.detour('pass-it-on', 'no-balances');
   assert.equal(
     p.storage.map.get(PROGRESS_KEY),
-    '{"v":1,"following":"pass-it-on","followedAt":1800000000000,"steps":{"hold-some":{"cameFor":"pass-it-on"},"pass-it-on":{"started":true,"from":"/journey/how-bitcoin-works"}}}',
+    '{"v":1,"following":"no-balances","followedAt":1800000000000,"steps":{"pass-it-on":{"cameFor":"no-balances"},"no-balances":{"started":true,"from":"/journey/how-bitcoin-works"}}}',
   );
   assert.equal(p.storage.writes, writes + 1, 'one write, of the one value');
   assert.deepEqual([...p.storage.map.keys()], [PROGRESS_KEY]);
   // The world was looked at again, so the screens are told of the note as it now stands.
   assert.ok(p.published.length > told);
-  assert.deepEqual(p.published.at(-1)?.progress.steps['hold-some'], { cameFor: 'pass-it-on' });
+  assert.deepEqual(p.published.at(-1)?.progress.steps['pass-it-on'], { cameFor: 'no-balances' });
   assert.deepEqual(p.runner.shown().progress, p.note());
   // The same press again writes nothing.
-  p.runner.detour('hold-some', 'pass-it-on');
+  p.runner.detour('pass-it-on', 'no-balances');
   assert.equal(p.storage.writes, writes + 1);
-  // The link is followed: "Hold some" opens, is started and followed, and keeps what the press noted.
+  // The link is followed: "Pass it on" opens, is started and followed, and keeps what the press noted.
   p.now += 1_000;
-  p.runner.watch(step('hold-some'), '');
-  assert.deepEqual(p.note().steps['hold-some'], { started: true, cameFor: 'pass-it-on' });
-  assert.deepEqual([p.note().following, p.note().followedAt], ['hold-some', NOW + 1_000]);
+  p.runner.watch(step('pass-it-on'), '');
+  assert.deepEqual(p.note().steps['pass-it-on'], { started: true, cameFor: 'no-balances' });
+  assert.deepEqual([p.note().following, p.note().followedAt], ['pass-it-on', NOW + 1_000]);
   // Nothing of it is counted: no step was finished.
   assert.deepEqual(p.counted, []);
 
-  // A reader who opened "Pass it on" from the wallet's own list: the press is no change, and nothing is written.
+  // A reader who opened "There are no balances" from the wallet's own list: the press is no change, and nothing is written.
   const listed = page();
-  listed.runner.watch(step('pass-it-on'), '');
+  listed.runner.watch(step('no-balances'), '');
   const before = listed.storage.writes;
-  listed.runner.detour('hold-some', 'pass-it-on');
+  listed.runner.detour('pass-it-on', 'no-balances');
   assert.equal(listed.storage.writes, before);
-  assert.deepEqual(listed.note().steps, { 'pass-it-on': { started: true } });
+  assert.deepEqual(listed.note().steps, { 'no-balances': { started: true } });
 
   // Under a newer version's note nothing is written, as for every change.
   const kept = new MemoryStorage();
-  const newer = JSON.stringify({ v: 2, following: 'pass-it-on', steps: { 'pass-it-on': { started: true, from: '/journey/how-bitcoin-works' } } });
+  const newer = JSON.stringify({ v: 2, following: 'no-balances', steps: { 'no-balances': { started: true, from: '/journey/how-bitcoin-works' } } });
   kept.map.set(PROGRESS_KEY, newer);
   const n = page({ storage: kept });
   n.runner.release();
-  n.runner.watch(step('pass-it-on'), CARD);
-  n.runner.detour('hold-some', 'pass-it-on');
+  n.runner.watch(step('no-balances'), CARD);
+  n.runner.detour('pass-it-on', 'no-balances');
   assert.equal(kept.map.get(PROGRESS_KEY), newer);
   assert.equal(kept.writes, 0);
   assert.equal(n.runner.shown().kept, 'newer');
@@ -483,18 +543,18 @@ test('a detour is written through the one write, and not under a newer note or a
   full.full = false;
   const f = page({ storage: full });
   f.runner.release();
-  f.runner.watch(step('pass-it-on'), CARD);
+  f.runner.watch(step('no-balances'), CARD);
   const stored = full.map.get(PROGRESS_KEY);
   assert.equal(f.runner.shown().kept, 'yes');
   full.full = true;
-  f.runner.detour('hold-some', 'pass-it-on');
+  f.runner.detour('pass-it-on', 'no-balances');
   assert.equal(full.map.get(PROGRESS_KEY), stored);
   assert.equal(f.runner.shown().kept, 'no');
   // A storage that cannot be read at all: nothing is read, nothing is written, and nothing throws.
   const blocked = page({ storage: new BlockedStorage() });
   blocked.runner.release();
-  blocked.runner.watch(step('pass-it-on'), CARD);
-  blocked.runner.detour('hold-some', 'pass-it-on');
+  blocked.runner.watch(step('no-balances'), CARD);
+  blocked.runner.detour('pass-it-on', 'no-balances');
   assert.deepEqual([blocked.runner.shown().read, blocked.runner.shown().kept], ['blocked', 'no']);
   // And in none of them was anything counted.
   assert.deepEqual([listed.counted, n.counted, f.counted, blocked.counted], [[], [], [], []]);
@@ -575,16 +635,20 @@ test('a refused write: progress cannot be kept here, and is kept again once a wr
   p.runner.watch(step('hold-some'), '');
   assert.equal(storage.map.size, 0);
   assert.deepEqual([p.runner.shown().read, p.runner.shown().kept], ['none', 'no']);
-  // As the wallet stands: three states hold, and the question cannot be ticked.
-  assert.deepEqual(p.states('hold-some'), ['ticked', 'ticked', 'ticked', 'blocked: storage']);
-  assert.equal(answerHoldSome(p), false);
+  // As the wallet stands: the three states hold, and each part reads ticked. Nothing was written, so the step
+  // is not done, and nothing is counted.
+  assert.deepEqual(p.states('hold-some'), ['ticked', 'ticked', 'ticked']);
+  assert.equal(p.view('hold-some').state, 'not-started');
+  assert.equal(p.runner.answer('hold-some'), false);
   assert.deepEqual(p.counted, []);
-  // The browser takes writes again: the next opening is written, and so is what the wallet satisfies.
+  // The browser takes writes again: the next opening is written, and so is what the wallet satisfies, which
+  // for this step is all of it. It is done by that opening, and counted then.
   storage.full = false;
   p.runner.watch(HOME, '');
   p.runner.watch(step('hold-some'), '');
   assert.equal(p.runner.shown().kept, 'yes');
-  assert.deepEqual(p.note().steps['hold-some']?.parts, { 1: true, 2: true, 3: true });
+  assert.deepEqual(p.note().steps['hold-some'], { started: true, doneAt: NOW, parts: { 1: true, 2: true, 3: true } });
+  assert.deepEqual(p.counted, ['hold-some']);
 });
 
 test('a browser that will not store anything, or whose storage cannot be read: nothing is written', () => {
@@ -596,7 +660,12 @@ test('a browser that will not store anything, or whose storage cannot be read: n
   blocked.runner.watch(step('hold-some'), '');
   assert.deepEqual([blocked.runner.shown().read, blocked.runner.shown().kept], ['blocked', 'no']);
   assert.equal(blocked.runner.forget(), false);
-  assert.deepEqual(blocked.states('hold-some'), ['ticked', 'ticked', 'ticked', 'blocked: storage']);
+  // The parts read as the wallet stands, and the step is not done: nothing was written, and nothing counted.
+  for (const p of [none, blocked]) {
+    assert.deepEqual(p.states('hold-some'), ['ticked', 'ticked', 'ticked']);
+    assert.notEqual(p.view('hold-some').state, 'done');
+    assert.deepEqual(p.counted, []);
+  }
 });
 
 // -- another tab ------------------------------------------------------------------------------------------------------

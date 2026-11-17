@@ -125,8 +125,14 @@ export const en = {
   // -- the review of the signed payment --
   reviewTitle: 'Signed, not sent yet',
   reviewLead: 'This payment is signed with your keys, and it is still on this page only. Nothing has been sent.',
+  /**
+   * Above the address on the first review of a signed payment. It asks for the whole address to be checked,
+   * and names no address the reader "was given": it has to hold for an address they typed or pasted, for one
+   * from a payment link, for an address of their own wallet, and for the pot's address that the wallet's own
+   * button filled in.
+   */
   reviewCheck:
-    'Compare the whole address with the one you were given. A payment cannot be called back once it is sent, here or on Bitcoin.',
+    'Check the whole address, every character of it, before you send. A payment cannot be called back once it is sent, here or on Bitcoin.',
   reviewParts: 'What goes in and what comes out',
   send: 'Send it',
   sending: 'Sending...',
@@ -236,7 +242,7 @@ export const es: Record<keyof typeof en, string> = {
   reviewTitle: 'Firmado, aún sin enviar',
   reviewLead: 'Este pago está firmado con tus claves y sigue solo en esta página. No se ha enviado nada.',
   reviewCheck:
-    'Compara la dirección completa con la que te dieron. Un pago enviado no se puede deshacer, ni aquí ni en Bitcoin.',
+    'Revisa la dirección completa, cada uno de sus caracteres, antes de enviar. Un pago enviado no se puede deshacer, ni aquí ni en Bitcoin.',
   reviewParts: 'Lo que entra y lo que sale',
   send: 'Enviarlo',
   sending: 'Enviando...',

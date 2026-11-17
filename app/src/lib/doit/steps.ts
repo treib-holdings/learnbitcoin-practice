@@ -38,7 +38,6 @@ export type PartKind = 'state' | 'event' | 'ask' | 'say-so';
  *   wallet-here          a wallet is in this browser
  *   coins-seen           the wallet has seen coins arrive: it holds a coin, or one of its receive addresses was used
  *   coin-confirmed       the wallet holds a confirmed coin
- *   block-height         asked: the number of the block that took the wallet's first coin in
  *   spendable            the wallet has coins it may spend now
  *   sent-to-pot          this wallet sent a payment to an address the pot handed out
  *   sent                 this wallet sent a payment, to any address
@@ -58,7 +57,6 @@ export type Fact =
   | 'wallet-here'
   | 'coins-seen'
   | 'coin-confirmed'
-  | 'block-height'
   | 'spendable'
   | 'sent-to-pot'
   | 'sent'
@@ -202,17 +200,14 @@ const part = (kind: PartKind, on: Fact): PartDef => ({ kind, on });
  * of steps: a step added there has no screen until it has its parts here.
  */
 export const STEP_DEFS: Readonly<Record<StepId, StepDef>> = {
-  // The bitcoin chapter: the first coin. The step explains a wallet, an address and the faucet itself.
+  // The bitcoin chapter: the first coin. The step explains a wallet, an address and the faucet itself. Each of
+  // its parts is a state of the wallet, so nothing is asked of the reader: the step is done when a block has
+  // taken a coin of the wallet in, on whatever screen the wallet sees that.
   'hold-some': {
     id: 'hold-some',
     title: 'title_hold-some',
     chapter: BITCOIN,
-    parts: [
-      part('state', 'wallet-here'),
-      part('state', 'coins-seen'),
-      part('state', 'coin-confirmed'),
-      part('ask', 'block-height'),
-    ],
+    parts: [part('state', 'wallet-here'), part('state', 'coins-seen'), part('state', 'coin-confirmed')],
   },
   // The payment chapter, the send button: a payment to the pot, and its first confirmation.
   'pass-it-on': {

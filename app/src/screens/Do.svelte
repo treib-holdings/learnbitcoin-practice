@@ -22,6 +22,14 @@
   // About uses for it: the sentence written for a note would describe what
   // nobody has read.
   //
+  // A done step can have a second record, which this button cannot reach:
+  // the mark a chapter of the main site keeps for its card. So one more
+  // sentence says whose that mark is, and that forgetting here leaves it.
+  // It stands in the question, under what is erased, and again under the
+  // line that says the note is gone. It is shown whatever was stored, a
+  // note or something unreadable in its place: this page cannot see the
+  // main site's marks, and the sentence is true with them and without.
+  //
   // Under a note that a newer version of this page wrote, the list shows
   // the six steps without states and without "Forget my progress": this
   // version reads nothing of that note and deletes nothing. The notice at
@@ -147,7 +155,10 @@
   <ProgressNotice />
 
   {#if forgotten}
-    <Notice kind="info" text={t.forgotten} data-testid="do-forgotten" />
+    <!-- The note is gone. And what is not: a chapter's own mark of a done step, which is the main site's. -->
+    <Notice kind="info" text={t.forgotten} data-testid="do-forgotten">
+      <p>{t.forgetMarks}</p>
+    </Notice>
   {/if}
 
   <div class="space-y-10" data-testid="do-list">
@@ -212,7 +223,11 @@
               <div class="space-y-3">
                 <!-- tabindex="-1": it takes focus from code only, so that the question is read out. -->
                 <p bind:this={question} tabindex="-1" class="font-semibold text-ink-800 outline-none">{t.forgetAsk}</p>
-                <p id="{uid}-forget-what">{t.forgetWarn}</p>
+                <!-- What goes and what stays, and then what this button cannot reach: both are what "Forget it" is described by. -->
+                <div id="{uid}-forget-what" class="space-y-3">
+                  <p>{t.forgetWarn}</p>
+                  <p data-testid="do-forget-marks">{t.forgetMarks}</p>
+                </div>
                 <!-- Full-size buttons of one width on a phone, with room between them: one of the two cannot be undone. -->
                 <Actions>
                   <Button

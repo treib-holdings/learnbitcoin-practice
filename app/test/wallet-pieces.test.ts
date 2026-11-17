@@ -488,9 +488,9 @@ test('a transaction row: on a phone its four parts stand one under the other, in
 test('the gate with no wallet: its three ways in are one width on a phone, and so is the way back under Backup\'s unlock step', () => {
   // Stacked buttons of one group get one width, the whole column under 640 px.
   const gate = readFileSync(new URL('../src/components/wallet/NoWallet.svelte', import.meta.url), 'utf8');
-  assert.match(gate, /<OpenWithPasskey \{onopened\} buttonClass="w-full sm:w-auto" \/>/);
-  const links = gate.match(/<Button [^>]*href=[^>]*>/g) ?? [];
-  assert.equal(links.length, 2, 'Restore and Create');
+  assert.match(gate, /<OpenWithPasskey variant=\{restoring === null \? 'primary' : 'secondary'\} \{onopened\} buttonClass="w-full sm:w-auto" \/>/);
+  const links = gate.match(/<Button\s[^>]*href=[^>]*>/g) ?? [];
+  assert.equal(links.length, 3, 'Restore and Create, and the restore that stands first in the middle of the drill');
   for (const link of links) assert.match(link, /class="w-full sm:w-auto"/, link);
   // The piece that draws the first of the three hands the width on to its button.
   const open = readFileSync(new URL('../src/components/wallet/OpenWithPasskey.svelte', import.meta.url), 'utf8');

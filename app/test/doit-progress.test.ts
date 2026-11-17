@@ -19,6 +19,7 @@ import {
   cameByCard,
   cameFromChapter,
   chapterLink,
+  doneFollowed,
   doneWith,
   emptyProgress,
   endingIds,
@@ -92,7 +93,7 @@ test('a whole note is read back field for field', () => {
     following: 'waiting-room',
     followedAt: NOW,
     steps: {
-      'hold-some': { started: true, doneAt: NOW - 5, from: '/journey/what-bitcoin-actually-is', parts: ticks(1, 2, 3, 4) },
+      'hold-some': { started: true, doneAt: NOW - 5, from: '/journey/what-bitcoin-actually-is', parts: ticks(1, 2, 3) },
       // Sent here by a need of "There are no balances", which is not done: the step the reader came for.
       'pass-it-on': { started: true, cameFor: 'no-balances', tx: TX, sentAt: NOW - 3, parts: ticks(1, 2) },
       'no-balances': { started: true, from: '/journey/how-bitcoin-works' },
@@ -185,8 +186,9 @@ test('a field that fails its check is dropped alone', () => {
   assert.deepEqual(parseProgress(JSON.stringify({ v: 1, steps: { 'hold-some': { cameFor: 'no-balances' }, 'no-balances': { started: true } } })).progress.steps, { 'hold-some': { cameFor: 'no-balances' }, 'no-balances': { started: true } });
   // Ticks: only the numbers the step has parts for, and only `true`.
   const odd = { 0: true, 1: true, 2: 'yes', 3: 1, 4: true, 5: true, '-1': true, '1.5': true, x: true };
-  const read = parseProgress(JSON.stringify({ v: 1, steps: { 'pass-it-on': { started: true, parts: odd }, 'hold-some': { parts: odd } } }));
-  assert.deepEqual(read.progress.steps, { 'hold-some': { parts: { 1: true, 4: true } }, 'pass-it-on': { started: true, parts: { 1: true } } });
+  const read = parseProgress(JSON.stringify({ v: 1, steps: { 'pass-it-on': { started: true, parts: odd }, 'prove-the-backup': { parts: odd }, 'hold-some': { parts: odd } } }));
+  // "Hold some" and "Pass it on" have three parts, the drill four: a "4" is a tick of the drill alone.
+  assert.deepEqual(read.progress.steps, { 'hold-some': { parts: { 1: true } }, 'pass-it-on': { started: true, parts: { 1: true } }, 'prove-the-backup': { parts: { 1: true, 4: true } } });
   // The step followed is one of the six or nobody. A time that is none goes by itself.
   for (const following of ['first-payment', 'toString', 7, true, {}, ['hold-some']]) {
     assert.equal(parseProgress(JSON.stringify({ v: 1, following, followedAt: NOW })).progress.following, null, String(following));
@@ -275,19 +277,19 @@ test('nothing is written until a step is opened, and then one value under one ke
 
 test('two tabs on the same step: each write starts from what is stored, so neither loses the other\'s tick', () => {
   const storage = new MemoryStorage();
-  // Both tabs have the step open, and each remembers the note as it was then.
-  const first = write(storage, open('hold-some'));
+  // Both tabs have the step open, and each remembers the note as it was then. (The drill: a step of four parts.)
+  const first = write(storage, open('prove-the-backup'));
   const second = readProgress(storage as Storage).progress;
   assert.deepEqual(first, second);
 
   // The first tab ticks part 1. The second, which has not heard, ticks part 1 too, and then part 2.
-  write(storage, tick('hold-some', 1, NOW + 1));
-  const same = writeProgress(storage as Storage, tick('hold-some', 1, NOW + 2));
+  write(storage, tick('prove-the-backup', 1, NOW + 1));
+  const same = writeProgress(storage as Storage, tick('prove-the-backup', 1, NOW + 2));
   assert.deepEqual([same.ok, same.ok && same.changed], [true, false], 'already ticked: nothing to write');
-  write(storage, tick('hold-some', 2, NOW + 3));
+  write(storage, tick('prove-the-backup', 2, NOW + 3));
   // The first tab, whose memory still says "only part 1", ticks part 3.
-  write(storage, tick('hold-some', 3, NOW + 4));
-  assert.deepEqual(readProgress(storage as Storage).progress.steps['hold-some'], started(3));
+  write(storage, tick('prove-the-backup', 3, NOW + 4));
+  assert.deepEqual(readProgress(storage as Storage).progress.steps['prove-the-backup'], started(3));
 
   // A tick out of turn does not jump the queue, whoever sends it.
   const pass = write(storage, open('pass-it-on'));
@@ -297,18 +299,18 @@ test('two tabs on the same step: each write starts from what is stored, so neith
 
   // One tab starts the step again while the other still shows it three parts in. The other
   // tab's next tick is for a note that is no longer there: it is not written on top.
-  assert.equal(restartStep(storage as Storage, 'hold-some', NOW + 5).ok, true);
-  const stale = writeProgress(storage as Storage, tick('hold-some', 4, NOW + 6));
+  assert.equal(restartStep(storage as Storage, 'prove-the-backup', NOW + 5).ok, true);
+  const stale = writeProgress(storage as Storage, tick('prove-the-backup', 4, NOW + 6));
   assert.deepEqual([stale.ok, stale.ok && stale.changed], [true, false]);
-  assert.deepEqual(readProgress(storage as Storage).progress.steps['hold-some'], { started: true });
+  assert.deepEqual(readProgress(storage as Storage).progress.steps['prove-the-backup'], { started: true });
 
   // Both finish the step in the same moment: the moment it was done is written once.
-  for (const part of [1, 2, 3]) write(storage, tick('hold-some', part, NOW + 7));
-  const one = writeProgress(storage as Storage, tick('hold-some', 4, NOW + 8));
-  const two = writeProgress(storage as Storage, tick('hold-some', 4, NOW + 9));
+  for (const part of [1, 2, 3]) write(storage, tick('prove-the-backup', part, NOW + 7));
+  const one = writeProgress(storage as Storage, tick('prove-the-backup', 4, NOW + 8));
+  const two = writeProgress(storage as Storage, tick('prove-the-backup', 4, NOW + 9));
   assert.ok(one.ok && two.ok);
-  assert.deepEqual([one.read.steps['hold-some']?.doneAt, one.progress.steps['hold-some']?.doneAt], [undefined, NOW + 8]);
-  assert.deepEqual([two.read.steps['hold-some']?.doneAt, two.changed], [NOW + 8, false], 'the second write read a note that was already done');
+  assert.deepEqual([one.read.steps['prove-the-backup']?.doneAt, one.progress.steps['prove-the-backup']?.doneAt], [undefined, NOW + 8]);
+  assert.deepEqual([two.read.steps['prove-the-backup']?.doneAt, two.changed], [NOW + 8, false], 'the second write read a note that was already done');
 });
 
 test('two tabs on different steps: each keeps its own, and the last one opened is the one followed', () => {
@@ -505,9 +507,9 @@ test('opening: started once, followed unless done, and the way back is the lates
 
   // A done step is not followed again by being opened. If it was still the one followed (the
   // strip had said it was done), opening it lets it go; another step that is followed stays.
-  const done = note({ 'hold-some': started(4, { doneAt: NOW }), 'the-seed': started(1) }, 'hold-some');
+  const done = note({ 'hold-some': started(3, { doneAt: NOW }), 'the-seed': started(1) }, 'hold-some');
   assert.deepEqual(applyChange(done, open('hold-some', NOW + 1)), { v: 1, following: null, steps: done.steps });
-  const elsewhere = note({ 'hold-some': started(4, { doneAt: NOW }), 'the-seed': started(1) }, 'the-seed');
+  const elsewhere = note({ 'hold-some': started(3, { doneAt: NOW }), 'the-seed': started(1) }, 'the-seed');
   assert.deepEqual(applyChange(elsewhere, open('hold-some', NOW + 1)), elsewhere);
   // And it can still take a new way back.
   assert.equal(applyChange(done, open('hold-some', NOW + 1, '/journey/what-bitcoin-actually-is')).steps['hold-some']?.from, '/journey/what-bitcoin-actually-is');
@@ -528,7 +530,7 @@ test('opening: started once, followed unless done, and the way back is the lates
 });
 
 test('following and stopping', () => {
-  const two = note({ 'pass-it-on': started(1), 'the-seed': started(0), 'hold-some': started(4, { doneAt: NOW }) }, 'the-seed');
+  const two = note({ 'pass-it-on': started(1), 'the-seed': started(0), 'hold-some': started(3, { doneAt: NOW }) }, 'the-seed');
   // The tab of a step comes back into view, or its action link is used.
   assert.deepEqual(applyChange(two, { kind: 'follow', step: 'pass-it-on', at: NOW + 5 }), { ...two, following: 'pass-it-on', followedAt: NOW + 5 });
   // Not a done step, and not one that was never opened.
@@ -723,10 +725,11 @@ test('whatever is written, the stored text holds the listed fields and nothing e
     write(storage, open(id, NOW, STEP_DEFS[id].chapter.path.en));
     for (let part = 1; part <= partCount(id) - 1; part++) write(storage, tick(id, part, NOW + part, { tx: TX, sentAt: NOW, wallet: FP, was: 'passkey' }));
   }
-  // A need of "Pass it on" sent the reader to "Hold some", and a need of the drill to "The seed".
-  write(storage, detour('hold-some', 'pass-it-on'));
+  // A need of "There are no balances" sent the reader to "Pass it on", and a need of the drill to "The seed".
+  write(storage, detour('pass-it-on', 'no-balances'));
   write(storage, detour('the-seed', 'prove-the-backup'));
-  write(storage, tick('hold-some', 4, NOW + 9));
+  // And one step is done: its last tick.
+  write(storage, tick('pass-it-on', 3, NOW + 9));
   const text = stored(storage) ?? '';
   const value = JSON.parse(text) as { steps: Record<string, Record<string, unknown>> } & Record<string, unknown>;
   assert.deepEqual(Object.keys(value), ['v', 'following', 'followedAt', 'steps']);
@@ -738,9 +741,9 @@ test('whatever is written, the stored text holds the listed fields and nothing e
     assert.deepEqual(Object.keys(step), listed.filter((field) => field in step), id);
   }
   // The step a reader came for stands straight after the way back, in the two notes that have one.
-  assert.deepEqual(Object.keys(value.steps['hold-some'] ?? {}), ['started', 'doneAt', 'from', 'cameFor', 'wallet', 'was', 'parts']);
-  assert.deepEqual([value.steps['hold-some']?.cameFor, value.steps['the-seed']?.cameFor], ['pass-it-on', 'prove-the-backup']);
-  assert.deepEqual(STEPS.filter((id) => 'cameFor' in (value.steps[id] ?? {})), ['hold-some', 'the-seed']);
+  assert.deepEqual(Object.keys(value.steps['pass-it-on'] ?? {}), ['started', 'doneAt', 'from', 'cameFor', 'wallet', 'was', 'parts']);
+  assert.deepEqual([value.steps['pass-it-on']?.cameFor, value.steps['the-seed']?.cameFor], ['no-balances', 'prove-the-backup']);
+  assert.deepEqual(STEPS.filter((id) => 'cameFor' in (value.steps[id] ?? {})), ['pass-it-on', 'the-seed']);
   // Public things only: a fingerprint, an ID, paths, step IDs, times and ticks. No address and no public key.
   assert.doesNotMatch(text, /bcrt1|tpub|tprv|mnemonic/);
 });
@@ -1081,13 +1084,14 @@ test('the way back, walked from the address to the link: from the English chapte
 
 test('a stored note that names any other page loses that field when it is read, the next write of any kind takes it out of the storage, and no write puts it back', () => {
   const storage = new MemoryStorage();
-  // As a hand, another program or an earlier build of this page might have left it: free text, and another step's chapter.
+  // As a hand, another program or an earlier build of this page might have left it: free text, and another step's
+  // chapter. And, beside a way back that is good, the fourth tick an earlier version wrote for "Hold some".
   const planted = {
     v: 1,
     following: 'pass-it-on',
     followedAt: NOW,
     steps: {
-      'hold-some': { started: true, doneAt: NOW - 9, from: '/es/recorrido/que-es-bitcoin-en-realidad', parts: ticks(1, 2, 3, 4) },
+      'hold-some': { started: true, doneAt: NOW - 9, from: '/es/recorrido/que-es-bitcoin-en-realidad', parts: { 1: true, 2: true, 3: true, 4: true } },
       'pass-it-on': { started: true, from: '/u/reader-4f1c9a7e-2b6d-4c1e-9d0a-7e5f3b2a1c0d/campaign-77', parts: ticks(1) },
       'waiting-room': { started: true, from: '/journey/be-your-own-bank' },
       'the-seed': { from: '/newsletter' },
@@ -1101,7 +1105,7 @@ test('a stored note that names any other page loses that field when it is read, 
   const read = readProgress(storage as Storage);
   assert.equal(read.state, 'kept');
   assert.deepEqual(read.progress.steps, {
-    'hold-some': { started: true, doneAt: NOW - 9, from: '/es/recorrido/que-es-bitcoin-en-realidad', parts: ticks(1, 2, 3, 4) },
+    'hold-some': { started: true, doneAt: NOW - 9, from: '/es/recorrido/que-es-bitcoin-en-realidad', parts: ticks(1, 2, 3) },
     'pass-it-on': { started: true, parts: ticks(1) },
     'waiting-room': { started: true },
   });
@@ -1119,7 +1123,7 @@ test('a stored note that names any other page loses that field when it is read, 
   assert.deepEqual([idle.changed, idle.read, idle.progress], [true, read.progress, read.progress], 'written, and nothing of the note changed');
   const tidied = stored(storage) ?? '';
   assert.notEqual(tidied, text);
-  assert.doesNotMatch(tidied, /reader-4f1c9a7e|campaign|newsletter|be-your-own-bank/);
+  assert.doesNotMatch(tidied, /reader-4f1c9a7e|campaign|newsletter|be-your-own-bank|"4":true/);
   assert.deepEqual(JSON.parse(tidied), read.progress, 'the stored note is the note as it was read');
   assert.equal(storage.writes, 1);
   // From then on the stored text is what this page writes, and a change with nothing to change writes nothing.
@@ -1128,7 +1132,7 @@ test('a stored note that names any other page loses that field when it is read, 
   // A write that has something to write goes on from there.
   const after = write(storage, tick('pass-it-on', 2, NOW + 1, { tx: TX, sentAt: NOW + 1 }));
   assert.deepEqual(after.steps, {
-    'hold-some': { started: true, doneAt: NOW - 9, from: '/es/recorrido/que-es-bitcoin-en-realidad', parts: ticks(1, 2, 3, 4) },
+    'hold-some': { started: true, doneAt: NOW - 9, from: '/es/recorrido/que-es-bitcoin-en-realidad', parts: ticks(1, 2, 3) },
     'pass-it-on': { started: true, tx: TX, sentAt: NOW + 1, parts: ticks(1, 2) },
     'waiting-room': { started: true },
   });
@@ -1172,7 +1176,8 @@ test('what a read dropped leaves the storage at the next write, whatever that wr
     // A field no note has, at the top.
     campaign: 'spring-77',
     steps: {
-      // Ways back that are not the step's own chapter: free text, and another step's chapter.
+      // Ways back that are not the step's own chapter: free text, and another step's chapter. ("Hold some" with
+      // four ticks, as an earlier version of this page left it done: the step has three parts now.)
       'hold-some': done(4, { from: '/u/reader-4f1c9a7e/campaign-77' }),
       'pass-it-on': done(3, { from: '/newsletter' }),
       // A field no step's note has, a wallet fingerprint that is none, and a tick for a part the step has not.
@@ -1182,13 +1187,13 @@ test('what a read dropped leaves the storage at the next write, whatever that wr
       'steal-the-seed': { started: true, from: '/elsewhere' },
     },
   };
-  const hostile = /reader-4f1c9a7e|campaign|newsletter|typed by somebody|not-a-fingerprint|steal-the-seed|elsewhere|spring-77|"9"/;
+  const hostile = /reader-4f1c9a7e|campaign|newsletter|typed by somebody|not-a-fingerprint|steal-the-seed|elsewhere|spring-77|"9"|"4"/;
   /** What a read makes of it: the six steps and the listed fields, each under its check. */
   const sound: Progress = {
     v: 1,
     following: null,
     steps: {
-      'hold-some': { started: true, doneAt: NOW - 9, parts: ticks(1, 2, 3, 4) },
+      'hold-some': { started: true, doneAt: NOW - 9, parts: ticks(1, 2, 3) },
       'pass-it-on': { started: true, doneAt: NOW - 9, parts: ticks(1, 2, 3) },
       'waiting-room': { started: true, doneAt: NOW - 9, parts: ticks(1, 2, 3) },
       'the-seed': { started: true, doneAt: NOW - 9, wallet: FP, parts: ticks(1, 2, 3) },
@@ -1285,11 +1290,19 @@ test('what a read dropped leaves the storage at the next write, whatever that wr
 });
 
 // -- the step a reader came for ----------------------------------------------------------------
+//
+// Which roads leave this field behind. A step that came from a chapter has a link to another step in two cases,
+// each inside one chapter: "There are no balances" leads to "Pass it on" for a payment, and "Prove the backup" to
+// "The seed" for a paper copy. An earlier version of this page also led such a step to "Hold some" for a wallet
+// or for coins, across chapters, and wrote the field into the note of "Hold some". Browsers hold notes it left,
+// and this version reads them as it reads any other. So the rules of the field are held here for all seven
+// pairs, and most of the walks below are that earlier road: "Pass it on", by its card, to "Hold some".
 
 /**
- * The seven pairs the app's own needs can make: the step a need leads to, and the step whose need it is. "Hold
- * some" gives a wallet and coins to each of the other five, "Pass it on" the payment that "There are no
- * balances" reads, and "The seed" the paper copy that the drill starts from.
+ * The seven pairs a need can make: the step it leads to, and the step whose need it is. "Hold some" gives a
+ * wallet and coins to each of the other five (to a step from the wallet's own list and, in a note an earlier
+ * version wrote, to a step that came from a chapter), "Pass it on" the payment that "There are no balances"
+ * reads, and "The seed" the paper copy that the drill starts from.
  */
 const NEED_PAIRS: readonly (readonly [to: StepId, cameFor: StepId])[] = [
   ['hold-some', 'pass-it-on'],
@@ -1302,8 +1315,8 @@ const NEED_PAIRS: readonly (readonly [to: StepId, cameFor: StepId])[] = [
 ];
 
 test('the step a reader came for is written by the press of a need\'s link, and only on a road from a chapter', () => {
-  // The reader pressed the card of "Pass it on" in the payment chapter and has no wallet: the need leads to
-  // "Hold some".
+  // The earlier road: the reader pressed the card of "Pass it on" in the payment chapter and had no wallet, and
+  // the need led to "Hold some".
   const byCard = note({ 'pass-it-on': started(0, { from: '/journey/how-bitcoin-works' }) }, 'pass-it-on');
   const sent = applyChange(byCard, detour('hold-some', 'pass-it-on'));
   // The one field, in a note that is made for it. Nothing else changes: not who is followed, no time, and
@@ -1326,7 +1339,8 @@ test('the step a reader came for is written by the press of a need\'s link, and 
   }
 
   // The step the reader came for was itself reached by a need: a road of three. "There are no balances" by
-  // its card; its need (nothing sent) leads to "Pass it on", whose need (no coins) leads on to "Hold some".
+  // its card; its need (nothing sent) leads to "Pass it on", whose need (no coins) led on to "Hold some" in the
+  // earlier version.
   let road = note({ 'no-balances': started(0, { from: '/es/recorrido/como-funciona-bitcoin' }) }, 'no-balances');
   road = applyChange(road, detour('pass-it-on', 'no-balances'));
   road = applyChange(road, open('pass-it-on', NOW + 1));
@@ -1370,9 +1384,9 @@ test('the step a reader came for is written by the press of a need\'s link, and 
   assert.deepEqual([twice.following, twice.followedAt], ['the-seed', NOW + 1], 'the press itself follows nothing');
 
   // -- A later press that is not remembered ends what an earlier road left. The reader pressed the card of "The
-  //    seed" in the keys chapter with no wallet, was sent to "Hold some", made a wallet and gave up. On a later
-  //    day they open "Pass it on" from the wallet's own list, and its need (no coins) sends them to "Hold some"
-  //    as well. --
+  //    seed" in the keys chapter with no wallet, was sent to "Hold some" (by the earlier version), made a wallet
+  //    and gave up. On a later day they open "Pass it on" from the wallet's own list, and its need (no coins)
+  //    sends them to "Hold some" as well, as it does a step from the list in this version too. --
   let earlier = note({ 'the-seed': started(0, { from: '/journey/be-your-own-bank' }) }, 'the-seed');
   earlier = applyChange(earlier, detour('hold-some', 'the-seed'));
   earlier = applyChange(earlier, open('hold-some', NOW + 1));
@@ -1415,7 +1429,7 @@ test('the step a reader came for is written by the press of a need\'s link, and 
   }
   assert.deepEqual(applyChange(standing, detour('hold-some', 'hold-some')), standing, 'the step itself');
   // And where the press is on the very step the memory names. "There are no balances" by its card sent the reader
-  // to "Pass it on", which sent them on to "Hold some"; then "There are no balances" was done another way. "Pass
+  // to "Pass it on", which sent them on to "Hold some" (the earlier road); then "There are no balances" was done another way. "Pass
   // it on" has lost the step it led back to, and is the step "Hold some" leads back to all the same: a second
   // press of its need changes nothing.
   let three = note({ 'no-balances': started(0, { from: '/journey/how-bitcoin-works' }) }, 'no-balances');
@@ -1476,7 +1490,7 @@ test('the step a reader came for is written by the press of a need\'s link, and 
 });
 
 test('the memory goes when the step it names is done, when the reader arrives by the step\'s own card, and with the note; it stays through every other opening, a restart and a stop', () => {
-  /** A storage in which "Pass it on", reached by its card, has sent the reader to "Hold some", which is open. */
+  /** A storage in which "Pass it on", reached by its card, has sent the reader to "Hold some", which is open: a note of the earlier road. */
   const detoured = (): MemoryStorage => {
     const storage = new MemoryStorage();
     write(storage, open('pass-it-on', NOW, '/journey/how-bitcoin-works'));
@@ -1508,7 +1522,7 @@ test('the memory goes when the step it names is done, when the reader arrives by
   }
   // The step itself is done: it still leads back, and from now on its card says so. The browser's Back from the
   // step the reader came for shows the same card, because opening that step's screen takes nothing away.
-  for (const part of [1, 2, 3, 4]) write(storage, tick('hold-some', part, NOW + 10));
+  for (const part of [1, 2, 3]) write(storage, tick('hold-some', part, NOW + 10));
   assert.ok(readProgress(storage as Storage).progress.steps['hold-some']?.doneAt !== undefined);
   assert.equal(cameFor(storage), 'pass-it-on');
   for (const change of [open('pass-it-on', NOW + 11), open('hold-some', NOW + 12), open('pass-it-on', NOW + 13), open('hold-some', NOW + 14)]) {
@@ -1574,10 +1588,10 @@ test('the note\'s version is 1 with the new field, and a note without it is stor
   const plain = new MemoryStorage();
   write(plain, open('hold-some', NOW, '/journey/what-bitcoin-actually-is'));
   assert.equal(stored(plain), '{"v":1,"following":"hold-some","followedAt":1800000000000,"steps":{"hold-some":{"started":true,"from":"/journey/what-bitcoin-actually-is"}}}');
-  for (const part of [1, 2, 3, 4]) write(plain, tick('hold-some', part, NOW + part));
+  for (const part of [1, 2, 3]) write(plain, tick('hold-some', part, NOW + part));
   assert.equal(
     stored(plain),
-    '{"v":1,"following":"hold-some","followedAt":1800000000004,"steps":{"hold-some":{"started":true,"doneAt":1800000000004,"from":"/journey/what-bitcoin-actually-is","parts":{"1":true,"2":true,"3":true,"4":true}}}}',
+    '{"v":1,"following":"hold-some","followedAt":1800000000003,"steps":{"hold-some":{"started":true,"doneAt":1800000000003,"from":"/journey/what-bitcoin-actually-is","parts":{"1":true,"2":true,"3":true}}}}',
   );
   // The field holds one of a few fixed values, never text of anybody's choosing: whatever else is stored there is not read.
   for (const value of ['anything a reader typed', '/journey/how-bitcoin-works', 'bcrt1qexample', 'pass-it-on,no-balances']) {
@@ -1673,7 +1687,8 @@ test('the link back leads to the page the reader left: during a detour to the ca
 
         // In a detour, done. Where the reader's page holds this step's card too (both are steps of one chapter),
         // the ending marks it. Where it does not ("Hold some", sent from the payment chapter or the keys
-        // chapter), a done ending would mark nothing there: the ending stays the card the reader pressed.
+        // chapter by the earlier version), a done ending would mark nothing there: the ending stays the card
+        // the reader pressed.
         const done: Progress = { v: 1, following: null, steps: { [to]: { started: true, doneAt: NOW, cameFor }, [cameFor]: sender } };
         assert.equal(chapterLink(SITE, to, lang, done), sameChapter ? `${SITE}${page}#done=${to}` : `${SITE}${page}#do-${cameFor}`, what);
         // And the step the reader came for is not done: its own link is its card.
@@ -1722,8 +1737,9 @@ test('the link back leads to the page the reader left: during a detour to the ca
   };
   assert.equal(chapterLink(SITE, 'pass-it-on', 'en', inside), `${SITE}/es/recorrido/como-funciona-bitcoin#done=pass-it-on,waiting-room`);
 
-  // A road of three, walked as the app writes it. No wallet has sent anything, and it holds no coins: the
-  // reader presses the card of "There are no balances", is sent to "Pass it on", and from there to "Hold some".
+  // A road of three, walked as the earlier version of this page wrote it. No wallet has sent anything, and it
+  // holds no coins: the reader pressed the card of "There are no balances", was sent to "Pass it on", and from
+  // there to "Hold some". (This version sends them from "Pass it on" to the faucet: the road ends at two steps.)
   let road = applyChange(emptyProgress(), open('no-balances', NOW, '/journey/how-bitcoin-works'));
   road = applyChange(road, detour('pass-it-on', 'no-balances'));
   road = applyChange(road, open('pass-it-on', NOW + 1));
@@ -1735,7 +1751,8 @@ test('the link back leads to the page the reader left: during a detour to the ca
     for (const id of ['hold-some', 'pass-it-on', 'no-balances'] as const) assert.equal(chapterLink(SITE, id, lang, road), card, `${id}, ${lang}`);
   }
   // "Hold some" done: it leads back to "Pass it on" first, and its link back still to the card.
-  for (const part of [1, 2, 3, 4]) road = applyChange(road, tick('hold-some', part, NOW + 3));
+  for (const part of [1, 2, 3]) road = applyChange(road, tick('hold-some', part, NOW + 3));
+  assert.equal(road.steps['hold-some']?.doneAt, NOW + 3);
   assert.deepEqual([ledBackTo(road, 'hold-some'), chapterLink(SITE, 'hold-some', 'en', road)], ['pass-it-on', card]);
   // "Pass it on" done: it leads back to "There are no balances" first, and is marked on the same page. The
   // done "Hold some" is in no detour any more: its own chapter, and its own ending.
@@ -1852,7 +1869,7 @@ test('a done ending names the step being left first, then the other done steps o
   assert.equal(chapterLink(SITE, 'no-balances', 'en', three), `${SITE}/journey/how-bitcoin-works#done=no-balances,pass-it-on,waiting-room`);
   assert.deepEqual(doneWith(three, 'waiting-room'), ['waiting-room', 'pass-it-on', 'no-balances']);
   // A step of another chapter that is done is never named.
-  assert.deepEqual(doneWith(note({ 'hold-some': started(4, { doneAt: NOW }), 'the-seed': started(3, { doneAt: NOW }) }), 'the-seed'), ['the-seed']);
+  assert.deepEqual(doneWith(note({ 'hold-some': started(3, { doneAt: NOW }), 'the-seed': started(3, { doneAt: NOW }) }), 'the-seed'), ['the-seed']);
 });
 
 test('the two limits of an ending: at most six steps, and at most 200 characters, with the first always kept', () => {
@@ -1930,6 +1947,157 @@ test('the step that a payment\'s result leads back to: the followed step, once i
   assert.equal(paidStep(paid, NOW - 10_000 + STRIP_MS), null);
 });
 
+// -- a step that is done on a wallet screen ------------------------------------------------------
+
+test('the step a wallet screen says is done: the followed step, once it is done', () => {
+  for (const id of STEPS) {
+    const whole = partCount(id);
+    // Done and still followed: that step. (note() follows it since ten seconds ago.)
+    const done = note({ [id]: started(whole, { doneAt: NOW - 5_000 }) }, id);
+    assert.equal(doneFollowed(done, NOW), id, id);
+    assert.equal(doneFollowed(done, NOW), stripStep(done, NOW), `${id}: the step the strip shows`);
+    // Followed and under way, at any of its parts: null.
+    for (let ticked = 0; ticked < whole; ticked++) assert.equal(doneFollowed(note({ [id]: started(ticked) }, id), NOW), null, `${id}, ${ticked} ticked`);
+    // Done and not followed, or done while another step is the one followed: null.
+    assert.equal(doneFollowed(note({ [id]: started(whole, { doneAt: NOW }) }), NOW), null, id);
+    const other = STEPS.find((each) => each !== id) ?? 'hold-some';
+    assert.equal(doneFollowed(note({ [id]: started(whole, { doneAt: NOW }), [other]: started(1) }, other), NOW), null, id);
+    // For as long as the strip shows the step: 24 hours after it was last followed, and no longer.
+    assert.equal(doneFollowed(done, NOW - 10_000 + STRIP_MS - 1), id, id);
+    assert.equal(doneFollowed(done, NOW - 10_000 + STRIP_MS), null, id);
+    // Until the reader has seen it done on its own screen (the opening lets a done step go), or closes the strip.
+    assert.equal(doneFollowed(applyChange(done, open(id, NOW + 1)), NOW + 1), null, id);
+    assert.equal(doneFollowed(applyChange(done, { kind: 'stop', step: id }), NOW), null, id);
+  }
+  // Nothing followed, and nothing stored.
+  assert.equal(doneFollowed(emptyProgress(), NOW), null);
+  // A note that follows a step it never started (edited by hand: this page never writes one), with a moment or without.
+  assert.equal(doneFollowed({ v: 1, following: 'hold-some', followedAt: NOW, steps: {} }, NOW), null);
+  assert.equal(doneFollowed({ v: 1, following: 'hold-some', followedAt: NOW, steps: { 'hold-some': { doneAt: NOW } } }, NOW), null);
+  // No time to count the 24 hours from.
+  assert.equal(doneFollowed({ v: 1, following: 'hold-some', steps: { 'hold-some': { ...started(3), doneAt: NOW } } }, NOW), null);
+  // The moment it turns: "Hold some" waits for its block on Receive, and the block comes.
+  const waiting = note({ 'hold-some': started(2) }, 'hold-some');
+  assert.equal(doneFollowed(waiting, NOW), null);
+  assert.equal(doneFollowed(applyChange(waiting, tick('hold-some', 3, NOW + 30_000)), NOW + 30_000), 'hold-some');
+  // It reads the note and the clock, and nothing of the wallet: the same answer with the wallet removed since.
+  assert.equal(doneFollowed(frozen(note({ 'prove-the-backup': started(4, { doneAt: NOW, was: 'words' }) }, 'prove-the-backup')), NOW), 'prove-the-backup');
+});
+
+// -- a note of the earlier version ----------------------------------------------------------------
+
+test('a note the earlier version wrote for "Hold some" is read without loss: a fourth tick is dropped by the read and leaves the storage at the next write, three ticks with no moment of being done read as started, and the version is 1', () => {
+  // "Hold some" had four parts: three states of the wallet, and a question (the number of the block that took
+  // the coin in). It has the three states now. These are the notes the earlier version left in browsers, as
+  // the texts it stored, and what this version makes of each.
+  assert.equal(partCount('hold-some'), 3);
+  assert.equal(emptyProgress().v, 1);
+  /** A stored note that holds "Hold some" as given, followed since ten seconds before NOW, and whatever other steps. */
+  const text = (hold: string, others = ''): string => `{"v":1,"following":"hold-some","followedAt":1799999990000,"steps":{"hold-some":${hold}${others}}}`;
+  const plant = (value: string): MemoryStorage => {
+    const storage = new MemoryStorage();
+    put(storage, value);
+    return storage;
+  };
+  /** A change that changes nothing in any of these notes: what the next write "of any kind" is, at its least. */
+  const idle: Change = { kind: 'stop', step: 'the-seed' };
+
+  // -- Two of its ticks, or fewer: read as it is, and nothing is written until the next tick. --
+  for (const parts of ['', ',"parts":{"1":true}', ',"parts":{"1":true,"2":true}']) {
+    const stored2 = text(`{"started":true${parts}}`);
+    const storage = plant(stored2);
+    const read = readProgress(storage as Storage);
+    assert.equal(read.state, 'kept', parts);
+    assert.equal(JSON.stringify(read.progress), stored2, 'read whole: it is the text this version writes');
+    assert.equal(stepState(read.progress.steps['hold-some']), 'started');
+    const same = writeProgress(storage as Storage, idle);
+    assert.deepEqual([same.ok, same.ok && same.changed, storage.writes, stored(storage)], [true, false, 0, stored2], parts);
+  }
+  // It goes on at the third part, whose tick finishes the step.
+  const goesOn = plant(text('{"started":true,"parts":{"1":true,"2":true}}'));
+  const block = writeProgress(goesOn as Storage, tick('hold-some', 3, NOW));
+  assert.ok(block.ok && block.changed);
+  assert.equal(stored(goesOn), '{"v":1,"following":"hold-some","followedAt":1800000000000,"steps":{"hold-some":{"started":true,"doneAt":1800000000000,"parts":{"1":true,"2":true,"3":true}}}}');
+
+  // -- Three of its four ticks, and no moment of being done: the block had come, and the number was not typed. --
+  const three = text('{"started":true,"parts":{"1":true,"2":true,"3":true}}');
+  const open3 = plant(three);
+  const read3 = readProgress(open3 as Storage);
+  assert.equal(JSON.stringify(read3.progress), three, 'read whole');
+  // Started, with every part it now has ticked: not done by the read, and reading writes nothing.
+  assert.equal(stepState(read3.progress.steps['hold-some']), 'started');
+  assert.deepEqual(read3.progress.steps['hold-some'], started(3));
+  assert.deepEqual([open3.writes, stored(open3)], [0, three]);
+  // A change that changes nothing still writes nothing: the text is one this version writes.
+  const quiet = writeProgress(open3 as Storage, idle);
+  assert.deepEqual([quiet.ok, quiet.ok && quiet.changed, open3.writes], [true, false, 0]);
+  // The page's first look hands in the last tick again (advance.ts), and that write finishes the step at its
+  // own moment. The time the step was last followed is not renewed by it, and nothing else of the note changes.
+  const finished = writeProgress(open3 as Storage, tick('hold-some', 3, NOW));
+  assert.ok(finished.ok && finished.changed);
+  assert.equal(stored(open3), '{"v":1,"following":"hold-some","followedAt":1799999990000,"steps":{"hold-some":{"started":true,"doneAt":1800000000000,"parts":{"1":true,"2":true,"3":true}}}}');
+  // Counted by that write, and by no later one: the note that was read had no moment, and the one written has.
+  assert.deepEqual([finished.read.steps['hold-some']?.doneAt, finished.progress.steps['hold-some']?.doneAt], [undefined, NOW]);
+  const twice = writeProgress(open3 as Storage, tick('hold-some', 3, NOW + 60_000));
+  assert.deepEqual([twice.ok, twice.ok && twice.changed, twice.ok && twice.read.steps['hold-some']?.doneAt], [true, false, NOW]);
+  // A tick for the fourth part, which a page of the earlier version could still hand in, is no tick of this step.
+  const stray = plant(three);
+  const fourth = writeProgress(stray as Storage, tick('hold-some', 4, NOW));
+  assert.deepEqual([fourth.ok, fourth.ok && fourth.changed, stored(stray)], [true, false, three]);
+
+  // -- Done, with all four ticks: done on its day, and the fourth tick is dropped by the read. --
+  const four = text('{"started":true,"doneAt":1799913600000,"parts":{"1":true,"2":true,"3":true,"4":true}}').replace('"following":"hold-some","followedAt":1799999990000', '"following":null');
+  const done4 = plant(four);
+  const read4 = readProgress(done4 as Storage);
+  assert.equal(read4.state, 'kept');
+  assert.deepEqual(read4.progress, { v: 1, following: null, steps: { 'hold-some': { started: true, doneAt: 1_799_913_600_000, parts: ticks(1, 2, 3) } } });
+  assert.equal(stepState(read4.progress.steps['hold-some']), 'done');
+  // Reading never writes: the stored text still holds the tick.
+  assert.deepEqual([done4.writes, stored(done4)], [0, four]);
+  // It leaves the storage at the next write, whatever that write is for. Nothing of the note changes by it:
+  // the moment the step was done is what it was, so nothing is counted a second time.
+  const tidy = writeProgress(done4 as Storage, idle);
+  assert.ok(tidy.ok && tidy.changed);
+  assert.deepEqual([tidy.read, tidy.progress], [read4.progress, read4.progress]);
+  assert.equal(stored(done4), '{"v":1,"following":null,"steps":{"hold-some":{"started":true,"doneAt":1799913600000,"parts":{"1":true,"2":true,"3":true}}}}');
+  const settled = writeProgress(done4 as Storage, idle);
+  assert.deepEqual([settled.ok, settled.ok && settled.changed, done4.writes], [true, false, 1]);
+  // Opening the done step's screen is such a write too.
+  const visited = plant(four);
+  write(visited, open('hold-some', NOW));
+  assert.equal(stored(visited), '{"v":1,"following":null,"steps":{"hold-some":{"started":true,"doneAt":1799913600000,"parts":{"1":true,"2":true,"3":true}}}}');
+
+  // -- With a way back, or with the step the reader came for: those fields are read as before, and stay. --
+  const card = text('{"started":true,"from":"/es/recorrido/que-es-bitcoin-en-realidad","parts":{"1":true,"2":true,"3":true}}');
+  const byCard = plant(card);
+  assert.equal(JSON.stringify(readProgress(byCard as Storage).progress), card);
+  const marked = write(byCard, tick('hold-some', 3, NOW));
+  assert.deepEqual(marked.steps['hold-some'], { started: true, doneAt: NOW, from: '/es/recorrido/que-es-bitcoin-en-realidad', parts: ticks(1, 2, 3) });
+  assert.equal(chapterLink(SITE, 'hold-some', 'en', marked), `${SITE}/es/recorrido/que-es-bitcoin-en-realidad#done=hold-some`);
+  // The earlier version sent a reader with no wallet from the card of "Pass it on" to "Hold some", and noted the
+  // step they came for. "Hold some" still leads back to it, and to the chapter they left, before it is done and after.
+  const sent = text('{"started":true,"cameFor":"pass-it-on","parts":{"1":true,"2":true,"3":true}}', ',"pass-it-on":{"started":true,"from":"/journey/how-bitcoin-works"}');
+  const detoured = plant(sent);
+  const led = readProgress(detoured as Storage).progress;
+  assert.equal(JSON.stringify(led), sent);
+  assert.deepEqual([ledBackTo(led, 'hold-some'), roadStart(led, 'hold-some'), cameFromChapter(led, 'hold-some')], ['pass-it-on', 'pass-it-on', true]);
+  const after = write(detoured, tick('hold-some', 3, NOW));
+  assert.deepEqual(after.steps['hold-some'], { started: true, doneAt: NOW, cameFor: 'pass-it-on', parts: ticks(1, 2, 3) });
+  assert.equal(ledBackTo(after, 'hold-some'), 'pass-it-on');
+  assert.equal(chapterLink(SITE, 'hold-some', 'en', after), `${SITE}/journey/how-bitcoin-works#do-pass-it-on`);
+  // And done with four ticks in such a detour: the field stands, and the fourth tick goes.
+  const sentDone = plant(text('{"started":true,"doneAt":1799913600000,"cameFor":"pass-it-on","parts":{"1":true,"2":true,"3":true,"4":true}}', ',"pass-it-on":{"started":true,"from":"/journey/how-bitcoin-works"}'));
+  assert.deepEqual(readProgress(sentDone as Storage).progress.steps['hold-some'], { started: true, doneAt: 1_799_913_600_000, cameFor: 'pass-it-on', parts: ticks(1, 2, 3) });
+
+  // -- The version. Every one of these is a note of version 1, this version writes version 1, and no field of
+  //    the note was added, removed or renamed: the texts above are the proof, character for character. --
+  for (const value of [three, four, card, sent]) assert.ok(value.startsWith('{"v":1,'), value);
+  assert.ok((stored(open3) ?? '').startsWith('{"v":1,'));
+  // The other step with four parts keeps its fourth tick.
+  const drill = '{"v":1,"following":null,"steps":{"prove-the-backup":{"started":true,"doneAt":1799913600000,"was":"words","parts":{"1":true,"2":true,"3":true,"4":true}}}}';
+  assert.equal(JSON.stringify(parseProgress(drill).progress), drill);
+});
+
 // -- what the wallet is told -------------------------------------------------------------------
 
 test('the wallet is told the screen the address names, and a done step\'s screen as the list of steps', () => {
@@ -1967,7 +2135,7 @@ test('the strip shows the followed step for 24 hours after it was last followed'
   assert.equal(stripStep({ v: 1, following: 'hold-some', followedAt: NOW, steps: {} }, NOW), null);
   assert.equal(stripStep({ v: 1, following: 'hold-some', followedAt: NOW, steps: { 'hold-some': { from: '/journey/what-bitcoin-actually-is' }, 'waiting-room': started(1) } }, NOW), null);
   // A done step is a started one: its strip stays, to say that it is done.
-  assert.equal(stripStep({ v: 1, following: 'hold-some', followedAt: NOW, steps: { 'hold-some': { ...started(4), doneAt: NOW } } }, NOW), 'hold-some');
+  assert.equal(stripStep({ v: 1, following: 'hold-some', followedAt: NOW, steps: { 'hold-some': { ...started(3), doneAt: NOW } } }, NOW), 'hold-some');
   // A tick of the followed step counts as following it: the day starts again.
   const ticked = applyChange(followed, tick('waiting-room', 2, NOW + STRIP_MS - 1));
   assert.equal(stripStep(ticked, NOW + STRIP_MS + 5), 'waiting-room');

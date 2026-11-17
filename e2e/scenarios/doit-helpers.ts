@@ -10,6 +10,10 @@
 //     themselves (data-state on each): partsOf(), and untilParts() for a
 //     part that ticks by itself when a block comes.
 //   - What does the strip say on the wallet's own screens? stripOf().
+//   - What does the card of a done "Hold some" say of a block, and where
+//     does that piece stand? namesBlock(), namesNoBlock(), watchDoneCard().
+//   - Is the reader's next move in the window? shareOnScreen(),
+//     untilOnScreen(), isMain().
 //   - What does this browser keep of it? The one note of the steps, as it
 //     is stored: noteOf(), noteText().
 //   - What was counted, exactly? Every scenario here ends with the whole
@@ -33,7 +37,7 @@ import type { EventBody, Lang, StepId } from '@learnbitcoin/practice-contract';
 import { ENGLISH_WORDS } from '@learnbitcoin/practice-wallet';
 import { PROGRESS_KEY, type Progress } from '../../app/src/lib/doit/progress.ts';
 import { CHAPTERS, STEPS, chapterOf, partCount, partKey, stepDef, type ChapterKey } from '../../app/src/lib/doit/steps.ts';
-import { fill } from '../../app/src/lib/format.ts';
+import { fill, formatSats } from '../../app/src/lib/format.ts';
 import { ledeKey, withChapters } from '../../app/src/screens/doit/view.ts';
 import { strings } from '../../app/src/strings/index.ts';
 import type { OpenOptions, OpenedPage, Scenario } from './helpers.ts';
@@ -50,6 +54,7 @@ import {
   pairsOf,
   sentBy,
   sentTxid,
+  sleep,
   standBy,
   toSection,
   typeWords,
@@ -278,6 +283,124 @@ export const WORD_FIELD_RULES = {
   inForm: false,
   onPaper: false,
 } as const;
+
+// -- the done card of "Hold some" -----------------------------------------------------------------------
+
+/** The sentences of the piece under the done card's buttons that names a block, in order. Empty when the card has no such piece. */
+export const coinBlockOf = (page: OpenedPage): Promise<string[]> =>
+  page.page.$$eval(`${hook('step-coin-block')} p`, (lines) => lines.map((line) => (line.textContent ?? '').replace(/\s+/g, ' ').trim()));
+
+/** A link that leaves the site, as the page draws it. It is read and never followed: the harness lets no page open a tab. */
+export interface OutLinkSeen {
+  href: string | null;
+  target: string | null;
+  rel: string | null;
+  /** Its words, with the hidden ones that tell a screen reader of the new tab. */
+  words: string;
+}
+
+export const outLinkOf = (page: OpenedPage, id: string): Promise<OutLinkSeen> =>
+  page.page.$eval(hook(id), (link) => ({
+    href: link.getAttribute('href'),
+    target: link.getAttribute('target'),
+    rel: link.getAttribute('rel'),
+    words: (link.textContent ?? '').replace(/\s+/g, ' ').trim(),
+  }));
+
+/**
+ * The card of a done "Hold some" names this block for this coin: its two sentences, in the page's language,
+ * with the height written as every number here is; the link to the coin's transaction on the practice
+ * explorer, which opens a new tab and sends no referrer; and where they stand. The card's sentences come
+ * first, then every button of the card, then the piece, and the link last, outside the piece.
+ */
+export async function namesBlock(page: OpenedPage, s: Scenario, txid: string, height: number, lang: Lang = 'en'): Promise<void> {
+  await page.waitFor('step-coin-block');
+  assert.deepEqual(await coinBlockOf(page), [fill(DOIT[lang].coinBlock, { height: formatSats(height) }), DOIT[lang].coinCheck]);
+  assert.deepEqual(await outLinkOf(page, 'step-explorer'), {
+    href: `${s.stack.config.explorerUrl}/tx/${txid}`,
+    target: '_blank',
+    rel: 'noopener noreferrer',
+    words: `${DOIT[lang].coinExplorer} ${strings.common[lang].opensNewTab}`,
+  });
+  const stands = await page.page.$eval(hook('step-done'), (card) => {
+    const of = (id: string): Element | null => card.querySelector(`[data-testid="${id}"]`);
+    const before = (first: Element | null, second: Element | null): boolean =>
+      first !== null && second !== null && (first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+    const block = of('step-coin-block');
+    const link = of('step-explorer');
+    const buttons = ['step-led', 'step-back', 'step-next', 'step-list'].map(of).filter((button) => button !== null);
+    return {
+      buttons: buttons.length,
+      sentencesFirst: buttons.every((button) => before(of('step-done-text'), button)),
+      buttonsBeforeBlock: buttons.every((button) => before(button, block)),
+      linkAfterBlock: before(block, link),
+      linkOutsideBlock: link !== null && link.closest('[data-testid="step-coin-block"]') === null,
+    };
+  });
+  assert.ok(stands.buttons >= 2, 'the card has its buttons');
+  assert.deepEqual({ ...stands, buttons: 0 }, { buttons: 0, sentencesFirst: true, buttonsBeforeBlock: true, linkAfterBlock: true, linkOutsideBlock: true });
+}
+
+/** The card of a done "Hold some" names no block: no such piece, no link to the practice explorer, and no link in the card that leaves for it. */
+export async function namesNoBlock(page: OpenedPage, s: Scenario, when: string): Promise<void> {
+  await page.waitFor('step-done');
+  assert.deepEqual([await countOf(page, 'step-coin-block'), await countOf(page, 'step-explorer')], [0, 0], when);
+  const links = await page.page.$$eval(`${hook('step-done')} a`, (found) => found.map((link) => link.getAttribute('href') ?? ''));
+  for (const href of links) assert.ok(!href.startsWith(s.stack.config.explorerUrl), `${when}: the card links ${href}`);
+}
+
+/** One look at the done card, taken as the page's elements changed. */
+export interface CardSeen {
+  /** How far "Back to the chapter" stands from the top of the page, in px. */
+  top: number;
+  /** Whether the piece that names a block was on the card. */
+  block: boolean;
+}
+
+/**
+ * From the next page load on, in every document: each time the page's elements change while a done step's
+ * card is on screen, keeps where the card's link back to the chapter stands and whether the piece that names
+ * a block is there. The returned function gives the looks of the document that is showing, oldest first.
+ *
+ * For "the card's main button does not move when the piece arrives": the card is drawn from the note as the
+ * page starts, and the piece comes when the wallet's first look at its coins has ended.
+ */
+export async function watchDoneCard(page: OpenedPage): Promise<() => Promise<CardSeen[]>> {
+  await page.page.evaluateOnNewDocument(() => {
+    const seen: { top: number; block: boolean }[] = [];
+    (window as unknown as { __doneCard: typeof seen }).__doneCard = seen;
+    const look = (): void => {
+      const back = document.querySelector('[data-testid="step-done"] [data-testid="step-back"]');
+      if (back === null) return;
+      seen.push({ top: Math.round(back.getBoundingClientRect().top + window.scrollY), block: document.querySelector('[data-testid="step-coin-block"]') !== null });
+    };
+    new MutationObserver(look).observe(document, { subtree: true, childList: true });
+  });
+  return () => page.page.evaluate(() => [...((window as unknown as { __doneCard?: CardSeen[] }).__doneCard ?? [])]);
+}
+
+// -- where a piece stands in the window ------------------------------------------------------------------
+
+/** How much of the first element with this hook is on screen, under the banner: from 0 (none of it) to 1 (all of it). */
+export const shareOnScreen = (page: OpenedPage, id: string): Promise<number> =>
+  page.page.evaluate((query) => {
+    const box = document.querySelector(query)?.getBoundingClientRect();
+    if (!box || box.height === 0) return 0;
+    const banner = document.querySelector('[role="note"]')?.getBoundingClientRect().bottom ?? 0;
+    const shown = Math.min(box.bottom, window.innerHeight) - Math.max(box.top, banner);
+    return Math.round((100 * Math.max(0, shown)) / box.height) / 100;
+  }, hook(id));
+
+/** Waits until all of the element with this hook is on screen: a scroll takes a frame or two. */
+export async function untilOnScreen(page: OpenedPage, id: string): Promise<void> {
+  const deadline = Date.now() + 3_000;
+  while ((await shareOnScreen(page, id)) < 1 && Date.now() < deadline) await sleep(50);
+  assert.equal(await shareOnScreen(page, id), 1, `${id} is not all on screen`);
+}
+
+/** Whether the element with this hook is drawn as a main button: filled, not an outline. */
+export const isMain = (page: OpenedPage, id: string): Promise<boolean> =>
+  page.page.$eval(hook(id), (button) => getComputedStyle(button).backgroundColor !== 'rgba(0, 0, 0, 0)');
 
 // -- the strip ------------------------------------------------------------------------------------------
 

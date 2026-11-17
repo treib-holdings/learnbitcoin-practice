@@ -238,12 +238,10 @@ export function actionOf(id: StepId, part: number, view: Extract<PartView, { sta
 }
 
 /** The questions and the box: what the open part asks of the reader on the step's own screen. */
-export type Ask = 'block' | 'coins' | 'words' | 'said' | null;
+export type Ask = 'coins' | 'words' | 'said' | null;
 
 export function askOf(id: StepId, part: number): Ask {
   switch (partDef(id, part)?.on) {
-    case 'block-height':
-      return 'block';
     case 'coin-count':
       return 'coins';
     case 'three-words':
@@ -280,19 +278,39 @@ const FAUCET: Action = { label: 'actFaucet', route: { name: 'receive' }, part: '
 const SEND: Action = { label: 'actSend', route: { name: 'send' } };
 const SETTINGS: Action = { label: 'actSettings', route: { name: 'settings' } };
 const HOME: Action = { label: 'actHome', route: { name: 'home' } };
+const CREATE: Action = { label: 'actCreate', route: { name: 'new' } };
 const BACKUP: Action = { label: 'actBackup', route: { name: 'backup' } };
 
 /**
  * For a reader who made a wallet before and finds none here (it is on
  * paper, behind a passkey, or the browser erased it): Home is where a wallet
- * is opened or restored. Said beside the link to "Hold some", whose first
- * part is "make one".
+ * is opened or restored. Said under a link that leads to making a new
+ * wallet: the link to "Hold some", whose first part is "make one", and the
+ * link to Create that a step from a chapter has at its first part.
  */
 const HAD_ONE: Aside = { text: 'needHadOne', action: { label: 'needHadOneLink', route: { name: 'home' } } };
 
 /** True when the step's note says it is done. */
 function isDone(note: Progress, id: StepId): boolean {
   return note.steps[id]?.doneAt !== undefined;
+}
+
+/** The step whose reader removes the wallet and brings it back from the 12 words. */
+const DRILL: StepId = 'prove-the-backup';
+
+/**
+ * True when the note says that the drill's wallet is out of the browser for the drill: "Prove the backup" is
+ * under way, its removal is ticked and its restore is not. From the note alone. With no wallet in the browser
+ * that is the state awaitsRestore() names for the drill's own view: the wallet that was removed is the one to
+ * bring back, and a new wallet would leave the drill with "another wallet".
+ */
+function drillWalletOut(note: Progress): boolean {
+  const drill = note.steps[DRILL];
+  if (drill?.started !== true || drill.doneAt !== undefined) return false;
+  const parts = STEP_DEFS[DRILL].parts;
+  const removal = parts.findIndex((each) => each.on === 'wallet-removed') + 1;
+  const restore = parts.findIndex((each) => each.on === 'restored-from-words') + 1;
+  return removal > 0 && restore > 0 && drill.parts?.[removal] === true && drill.parts?.[restore] !== true;
 }
 
 /**
@@ -302,29 +320,64 @@ function isDone(note: Progress, id: StepId): boolean {
  * browser and a storage the page was not let read, the screen shows the
  * wallet's own piece.
  *
- * A wallet and coins are what "Hold some" gives, so a step that lacks
- * either points there, unless that step is done: then the reader has been
- * through it, and is sent straight to the screen that helps. In the same
- * way "There are no balances" points to "Pass it on" for the payment it
- * needs.
+ * Where a wallet or coins are missing, the way on depends on how the reader
+ * came to the step (cameFromChapter in lib/doit/progress.ts).
+ *
+ * A step that came from a chapter (the reader pressed its card, or a need
+ * of another step sent them here on a road that began at a card) is never
+ * sent to "Hold some". That reader came to do this one step, so the wallet
+ * takes its own short road, and every stop on it leads back here:
+ *
+ *   no wallet, at the step's first part   Create, and under it the line for
+ *                                         a reader who has a wallet already
+ *   no wallet, at a later part            Home: a wallet was here when the
+ *                                         earlier parts ticked, so the way
+ *                                         on is to open or restore it
+ *   no coins                              the faucet, on Receive
+ *
+ * One thing in the note can say, at another step's first part, that this
+ * reader had a wallet: the drill, between its removal and its restore
+ * (drillWalletOut). The wallet that was removed for it has to come back, so
+ * the step leads to Home then, as at a later part, and not to Create.
+ *
+ * A step from the wallet's own list points to "Hold some" for either,
+ * because a wallet and coins are what that step gives and it explains each
+ * of them; once "Hold some" is done the reader has been through it, and is
+ * sent straight to the screen that helps (Home, the faucet).
+ *
+ * For every reader "There are no balances" points to "Pass it on" for the
+ * payment it needs, until that step is done.
  */
 export function needOf(id: StepId, part: number, reason: Exclude<BlockedReason, WalletTrouble>, note: Progress, kept: 'yes' | 'no' | 'newer'): Need {
   const fact = partDef(id, part)?.on;
   const via = (step: StepId, otherwise: Action): NeedLink =>
     step !== id && !isDone(note, step) ? { kind: 'step', step } : { kind: 'screen', action: otherwise };
+  /** The reader came to do this step, from a chapter: no need of it leads through "Hold some". */
+  const direct = cameFromChapter(note, id);
   switch (reason) {
     case 'storage':
       return { text: kept === 'newer' ? 'needNewer' : 'need_storage', more: null, link: null };
     case 'no-wallet': {
       // The drill: nothing was removed while the step was followed, and nothing is here to remove.
       if (fact === 'wallet-removed') return { text: 'needRemovedElsewhere', more: null, link: { kind: 'screen', action: HOME } };
+      if (direct) {
+        // At the first part nothing says that this reader ever had a wallet: they make one, and one who has a wallet
+        // already is told where it comes back. At a later part a wallet was here before, and Home brings it back.
+        // So it does at the first part of another step while the drill's wallet is out of the browser for the
+        // drill: the note names the wallet that has to come back, and making a new one here would stand in the
+        // drill's way.
+        const wasHere = part > 1 || (id !== DRILL && drillWalletOut(note));
+        return wasHere
+          ? { text: 'need_no-wallet', more: null, link: { kind: 'screen', action: HOME } }
+          : { text: 'need_no-wallet', more: null, link: { kind: 'screen', action: CREATE }, also: HAD_ONE };
+      }
       const link = via('hold-some', HOME);
       // "Hold some" would have this reader make a wallet. One who has a wallet already is told where it comes back.
       return link?.kind === 'step' ? { text: 'need_no-wallet', more: null, link, also: HAD_ONE } : { text: 'need_no-wallet', more: null, link };
     }
     case 'no-coins':
       if (fact === 'coins-found') return { text: 'needCoinsAgain', more: null, link: { kind: 'screen', action: FAUCET } };
-      return { text: 'need_no-coins', more: null, link: via('hold-some', FAUCET) };
+      return { text: 'need_no-coins', more: null, link: direct ? { kind: 'screen', action: FAUCET } : via('hold-some', FAUCET) };
     case 'not-spendable-yet':
       return { text: 'need_not-spendable-yet', more: null, link: null };
     case 'nothing-sent':
@@ -427,6 +480,34 @@ export function canRestart(view: StepView, kept: 'yes' | 'no' | 'newer', status:
   return !(removal !== -1 && view.parts[removal]?.state === 'ticked' && (status === 'none' || status === 'blocked'));
 }
 
+// -- the drill, between its removal and its restore ---------------------------------------------
+
+/**
+ * True when the step's open part is the one that brings the removed wallet
+ * back, and the reader can do it now: the part rests on the restore from
+ * the 12 words, and it is "now". It looks at the open part alone.
+ *
+ * With no wallet in the browser that is the drill between its removal and
+ * its restore: the one state in which Home, whose usual main button makes a
+ * new wallet, has to put the restore first (Home.svelte asks this of the
+ * step the note follows, and only while no wallet is here). With the
+ * drill's own wallet here through its passkey, or with another wallet, the
+ * part is not "now": each is a need, said on the step's screen. (Once the
+ * wallet is back from its words the part is "now" for one more moment,
+ * until its tick is written: judge() never calls a part ticked before the
+ * note says so.)
+ *
+ * Where nothing can be written it is false for a drill that was never
+ * started (its first part stands in the way), and true for a note that
+ * holds the removal: the restore is still what brings that reader's wallet
+ * back. It is false for every other step, for a done step, and for a step
+ * that was never started.
+ */
+export function awaitsRestore(view: StepView): boolean {
+  if (view.at === null || partDef(view.id, view.at)?.on !== 'restored-from-words') return false;
+  return view.parts[view.at - 1]?.state === 'now';
+}
+
 // -- the glossary -------------------------------------------------------------------------
 
 /** An entry of the main site's glossary that these screens link: one of the map's (read/read.ts), or the faucet's. */
@@ -444,12 +525,7 @@ export function termKey(term: Term): DoitKey {
  * parts.
  */
 const PART_TERMS: Partial<Record<StepId, readonly (readonly Term[])[]>> = {
-  'hold-some': [
-    ['wallet', 'seed'],
-    ['address', 'faucet'],
-    ['block'],
-    ['explorer', 'height'],
-  ],
+  'hold-some': [['wallet', 'seed'], ['address', 'faucet'], ['block']],
 };
 
 /** The glossary entries the open part links, in the order it names them. */

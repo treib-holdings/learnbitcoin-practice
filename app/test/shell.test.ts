@@ -43,14 +43,40 @@ test('index.html leaves room for the sticky banner when a link jumps to a part o
   assert.match(gallery, /<html lang="en" class="scroll-pt-14 scroll-pb-2">/);
 });
 
-test('index.html tells a browser without JavaScript what is missing, in both of the app\'s languages', () => {
+test('index.html tells a browser without JavaScript what is missing, in both of the app\'s languages, and where the sentences of About can be read without it', () => {
   // One file is served for every address, /es included, and without JavaScript nothing can pick a
-  // language: so the line stands there in both, the Spanish one marked as Spanish.
-  const line = /<noscript>([\s\S]*?)<\/noscript>/.exec(indexHtml)?.[1] ?? '';
-  assert.match(line, /<p>The practice wallet needs JavaScript\.<\/p>/);
-  assert.match(line, /<p lang="es">La billetera de práctica necesita JavaScript\.<\/p>/);
+  // language: so the lines stand there in both, the Spanish ones marked as Spanish.
+  const block = /<noscript>([\s\S]*?)<\/noscript>/.exec(indexHtml)?.[1] ?? '';
+  // Four lines, in this order: what is missing, and where the About page's sentences can be read, in English
+  // and then in Spanish. The About page says what the wallet keeps, sends and counts, and a script draws it: so
+  // a reader who browses without scripts is sent to a copy of the file the page takes its sentences from.
+  const link = '<a class="underline" href="/about.txt">about.txt</a>';
+  const lines = [...block.matchAll(/<p( lang="es")?>([\s\S]*?)<\/p>/g)].map((match) => `${match[1] === undefined ? 'en' : 'es'}: ${match[2]}`);
+  assert.deepEqual(lines, [
+    'en: The practice wallet needs JavaScript.',
+    `en: Its About page says what the wallet keeps, sends and counts. The sentences of that page can be read without JavaScript, in English and in Spanish, in a copy of the file the page takes them from: ${link}.`,
+    'es: La billetera de práctica necesita JavaScript.',
+    `es: Su página Acerca de dice qué guarda, qué envía y qué cuenta la billetera. Las frases de esa página se pueden leer sin JavaScript, en inglés y en español, en una copia del archivo del que la página las toma: ${link}.`,
+  ]);
+  // Nothing else is in the block: no line that the list above does not hold.
+  assert.equal(block.replace(/<p( lang="es")?>[\s\S]*?<\/p>/g, '').trim(), '');
+  // The one link of the block, twice: a file of the wallet's own host, by a path from the root, so that it
+  // leads there from every address the page answers (/about, /es/about, /wallet/receive).
+  const hrefs = [...block.matchAll(/href="([^"]*)"/g)].map((match) => match[1]);
+  assert.deepEqual(hrefs, ['/about.txt', '/about.txt']);
+  assert.doesNotMatch(block, /https?:|\/\/|target=|rel=/);
+  // What the sentence promises is what the build ships: the About page's string table, both languages in
+  // one file, as it is written. The build's own test (test/about-file.test.ts) and the dist guard hold the
+  // built file to the source, byte for byte.
+  const table = readFileSync(new URL('../src/strings/about.ts', import.meta.url), 'utf8');
+  assert.match(table, /^export const en = \{$/m);
+  assert.match(table, /^export const es: Record<keyof typeof en, string> = \{$/m);
+  assert.match(readFileSync(new URL('../vite.config.ts', import.meta.url), 'utf8'), /const ABOUT_SOURCE = 'src\/strings\/about\.ts';\s[\s\S]*?const ABOUT_FILE = 'about\.txt';/);
+  // The router leaves a path with an extension to the browser: a click on the link loads the file, and is
+  // never taken for a screen of the app.
+  assert.match(readFileSync(new URL('../src/lib/router.ts', import.meta.url), 'utf8'), /export function isAppPath\(/);
   // Nothing in it that the page's security policy would refuse.
-  assert.doesNotMatch(line, /style=|<style|<script|\son[a-z]+=/);
+  assert.doesNotMatch(block, /style=|<style|<script|\son[a-z]+=/);
 });
 
 // -- screen views ---------------------------------------------------------------------

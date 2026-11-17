@@ -33,6 +33,11 @@
   // A reader who follows no step sees no such button, and the page does
   // not move for them when coins arrive.
   //
+  // The followed step can be done while the reader waits here: "Hold some"
+  // ends when a block takes the coin in. The card then tells the answer
+  // that the step is done (doneFollowed in lib/doit/progress.ts), and the
+  // answer says so in one line above the button back to the step.
+  //
   // With no site key in the server's settings there is no bot check, and
   // the faucet is closed: the card says so and has a Reload button in place
   // of the faucet's, because the settings are read when the page loads.
@@ -57,7 +62,7 @@
   import { FAUCET_PART, satsText } from '../../components/wallet/frame.ts';
   import ReloadButton from '../../components/wallet/ReloadButton.svelte';
   import { useDoit } from '../../lib/doit/doit-context.ts';
-  import { stripStep } from '../../lib/doit/progress.ts';
+  import { doneFollowed, stripStep } from '../../lib/doit/progress.ts';
   import { fill } from '../../lib/format.ts';
   import { router } from '../../lib/router.svelte.ts';
   import type { ReceiveView, TokenSource } from '../../lib/wallet-api.ts';
@@ -89,6 +94,8 @@
    * the note changes (a part ticked here is such a change); no clock is kept for it.
    */
   let followed = $derived(stripStep(doit.progress, Date.now()));
+  /** True once that step is done: the answer then says so above the way back to it. Worked out with the note, like the step itself. */
+  let finished = $derived(followed !== null && doneFollowed(doit.progress, Date.now()) === followed);
 
   let view = $derived(wallet.faucet);
   /** No site key, no bot check: the faucet is closed. */
@@ -339,7 +346,7 @@
     <div bind:this={answer} class="scroll-mb-4">
       {#if view.phase !== 'idle'}
         <div class="mt-5">
-          <FaucetState bind:this={line} {view} {more} {boxWaited} step={followed} />
+          <FaucetState bind:this={line} {view} {more} {boxWaited} step={followed} done={finished} />
         </div>
       {/if}
 

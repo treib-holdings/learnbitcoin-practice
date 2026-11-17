@@ -18,6 +18,13 @@
   //           overview, or, for a reader who is following a "Do it" step,
   //           straight back to that step: they made the wallet because the
   //           step asked for one (keys/backup-flow.ts, afterWritten).
+  //           That reader has the same press on a second button, straight
+  //           under the words, where they are looking when they have
+  //           written them down: it names the step it leads back to. The
+  //           sentence that keeps practice words from real money stands
+  //           above it there, and is left out of the exception paragraph
+  //           further down, so that it is on the screen once and no reader
+  //           reaches a button before it.
   //   ask     At any other time: why this page is the one exception to
   //           the keys chapter's rule, what to know before the words are
   //           on screen, and "Show the 12 words".
@@ -26,7 +33,17 @@
   //           the screen's first view: a reader who does not want to
   //           unlock after all must not have to leave the screen to get
   //           the warnings and the button back.
-  //   shown   The words, with "Hide them".
+  //   shown   The words, with "Hide them". A reader who is following a
+  //           "Do it" step has the way back to it in the same row, by the
+  //           step's name: a step sent them here to see the words, and
+  //           the strip that leads back is above the window by then. That
+  //           button leaves the screen, so for that reader the sentence
+  //           that keeps practice words from real money stands above the
+  //           row, as it stands above their button at the "Wallet made"
+  //           step: nobody reaches a button that leaves the words before
+  //           it. For a reader who follows no step it stands under the
+  //           row and its paragraph, where it always stood. Either way it
+  //           is on the screen once.
   //
   // The words are held here only while they are on screen. They are
   // dropped when the reader hides them, when the wallet is locked, when the
@@ -43,6 +60,8 @@
   import Actions from '../components/Actions.svelte';
   import Badge from '../components/Badge.svelte';
   import Button from '../components/Button.svelte';
+  import BackToStep from '../components/doit/BackToStep.svelte';
+  import { stepTitle } from '../components/doit/strip.ts';
   import Mono from '../components/Mono.svelte';
   import Notice from '../components/Notice.svelte';
   import OutLink from '../components/OutLink.svelte';
@@ -70,7 +89,7 @@
   import { isRepeatTap } from './keys/taps.ts';
 
   const wallet = useWallet();
-  /** The "Do it" steps: only to know, at the press of "I have written them down", whether the reader follows one. */
+  /** The "Do it" steps: only to know whether the reader follows one, and which. */
   const doit = useDoit();
 
   /** For the ids that tie a warning to the button it is about. */
@@ -89,6 +108,13 @@
   let lang = $derived(router.lang);
   let t = $derived(strings.backup[lang]);
   let c = $derived(strings.common[lang]);
+
+  /**
+   * The "Do it" step the reader is following, or null: the step the strip shows. Worked out again whenever the
+   * note changes (the words shown here can tick a part of it); no clock is kept for it. While there is one, the
+   * way back to it stands where the words are. The press of "I have written them down" asks again (written).
+   */
+  let followed = $derived(stripStep(doit.progress, Date.now()));
 
   /** The 12 words while they are on screen, and at no other time. */
   let words = $state.raw<string[] | null>(null);
@@ -242,7 +268,9 @@
 
   /**
    * "I have written them down": the "Wallet made" step is over. Next is the "Do it" step the reader is
-   * following, if they follow one at this moment, and the wallet's overview if they follow none.
+   * following, if they follow one at this moment, and the wallet's overview if they follow none. Both
+   * buttons of the step come here: the screen's own at its end, and the one under the words that names
+   * the followed step.
    */
   function written(): void {
     drop();
@@ -261,7 +289,10 @@
 
 <!-- Why this page may show 12 words at all, with a link to the chapter whose
      rule it answers. `strict` adds the line that keeps practice words away
-     from real money: it belongs where the words are on screen. -->
+     from real money: it belongs where the words are on screen, once. (At the
+     "Wallet made" step a reader who follows a "Do it" step has read it
+     under the words already, above their button back to the step, and the
+     paragraph is then drawn without it.) -->
 {#snippet exception(strict: boolean)}
   <Notice kind="caution" data-testid="backup-exception">
     <div class="space-y-3">
@@ -329,6 +360,26 @@
             <p data-testid="made-passkey-back">{t.madePasskeyBack}</p>
           {/if}
         </Prose>
+        {#if followed !== null}
+          <!-- A reader who follows a "Do it" step made this wallet because the step asked for one. Their next
+               move stands here, under the words they have just written down, and names the step. The line that
+               keeps practice words from real money comes first, so that nobody reaches a button before it. The
+               button takes no second click of a double tap: the first may have been the press that made the
+               wallet, on the screen before this one, and the words must not leave the screen unread. -->
+          <Notice kind="caution" text={t.neverRealMoney} data-testid="never-real-money" />
+          <Actions>
+            <Button
+              variant="primary"
+              class="w-full sm:w-auto"
+              data-testid="words-written-step"
+              onclick={(event) => {
+                if (!isRepeatTap(event)) written();
+              }}
+            >
+              {fill(t.writtenStep, { step: stepTitle(followed, lang) })}
+            </Button>
+          </Actions>
+        {/if}
       </Section>
 
       {#if wallet.created === 'words'}
@@ -344,15 +395,19 @@
         </Section>
       {/if}
 
-      {@render exception(true)}
+      <!-- With the line on real money, unless it stands under the words already (a step is followed). -->
+      {@render exception(followed === null)}
 
-      <!-- The sheet comes before the button: the button says the words are
-           written down and takes them off the screen, so what to write
-           them on has to be offered first. -->
+      <!-- The sheet comes before the screen's own button: the button says
+           the words are written down and takes them off the screen, so
+           what to write them on is offered first. It is the screen's main
+           button, and a second one for a reader who follows a "Do it"
+           step: their main button stands under the words, and this one
+           stays for whoever reads the screen to its end. -->
       <PracticeCard {site} />
 
       <Actions>
-        <Button variant="primary" data-testid="words-written" onclick={written}>{t.written}</Button>
+        <Button variant={followed === null ? 'primary' : 'secondary'} data-testid="words-written" onclick={written}>{t.written}</Button>
       </Actions>
     {:else if view === 'shown' && words !== null}
       <div class="space-y-4">
@@ -360,7 +415,17 @@
           <p class="mb-3"><Badge tone="stamp">{c.markerBadge}</Badge></p>
           <WordsList {words} />
         </div>
+        {#if followed !== null}
+          <!-- The row below holds a button that leaves this screen, back to the step. The line that keeps practice
+               words from real money comes first, as at the "Wallet made" step, so that nobody reaches that button
+               before it. -->
+          <Notice kind="caution" text={t.neverRealMoney} data-testid="never-real-money" />
+        {/if}
         <Actions>
+          <!-- A step sent this reader here to see the words: the way back to it, by its name, where they are looking. -->
+          {#if followed !== null}
+            <BackToStep step={followed} data-testid="backup-step" />
+          {/if}
           <!-- Not the second click of a double tap: its first click was on "Show the 12 words", which stood here. -->
           <Button
             data-testid="hide-words"
@@ -373,7 +438,10 @@
         </Actions>
       </div>
       <Prose><p>{t.after}</p></Prose>
-      <Notice kind="caution" text={t.neverRealMoney} data-testid="never-real-money" />
+      {#if followed === null}
+        <!-- No step is followed: the line stands where it always stood. (With one followed it stands above the row of buttons.) -->
+        <Notice kind="caution" text={t.neverRealMoney} data-testid="never-real-money" />
+      {/if}
     {:else if view === 'unlock'}
       <div class="space-y-6" data-testid="backup-unlock">
         <Unlock why={t.unlockWhy} onunlocked={unlocked} />

@@ -428,6 +428,49 @@ test('the answer is brought on screen when it follows the reader\'s own tap, and
   assert.match(card, /let followed = \$derived\(stripStep\(doit\.progress, Date\.now\(\)\)\);/);
 });
 
+test('once the followed step is done the faucet\'s result says so, in one line above the way back to it; a reader who follows no step sees the result as it was', () => {
+  const card = readFileSync(new URL('../src/screens/receive/FaucetCard.svelte', import.meta.url), 'utf8');
+  const state = readFileSync(new URL('../src/screens/receive/FaucetState.svelte', import.meta.url), 'utf8');
+  // A step can end on this screen: "Hold some" is done when a block takes the coin in, and a reader who waits
+  // here is looking at the faucet's result when it does. So the card hands the result two things of the step:
+  // which one is followed, and whether it is done. Both are worked out from the note whenever it changes.
+  assert.match(card, /let followed = \$derived\(stripStep\(doit\.progress, Date\.now\(\)\)\);/);
+  assert.match(card, /let finished = \$derived\(followed !== null && doneFollowed\(doit\.progress, Date\.now\(\)\) === followed\);/);
+  assert.match(card, /<FaucetState bind:this=\{line\} \{view\} \{more\} \{boxWaited\} step=\{followed\} done=\{finished\} \/>/);
+  assert.equal(card.match(/<FaucetState bind:this=/g)?.length, 1, 'the result is drawn in one place');
+  assert.doesNotMatch(card, /setInterval\(/, 'no clock is kept for it');
+  // Handed neither, the result is as it was: no step, and nothing done.
+  assert.match(state, /let \{ view, more, boxWaited = false, step = null, done = false \}: Props = \$props\(\);/);
+
+  // The snippet the result draws where the coins are here. With no step followed: nothing. With one: the
+  // button back to it. Once that step is done: one line above the button, set as the result's sentences
+  // and in semibold.
+  const back = /\{#snippet back\(\)\}([\s\S]*?)\{\/snippet\}/.exec(state)?.[1] ?? '';
+  assert.match(
+    back,
+    /^\s*\{#if step !== null\}\s*\{#if done\}\s*<p class="font-semibold text-ink-800" data-testid="faucet-step-done">\{fill\(d\.saidDone, \{ step: stepTitle\(step, lang\) \}\)\}<\/p>\s*\{\/if\}\s*<div><BackToStep \{step\} data-testid="faucet-step" \/><\/div>\s*\{\/if\}\s*$/,
+  );
+  // In the two phases in which the coins are here, with a record of the payment and without one, and in no other.
+  assert.equal(state.match(/\{@render back\(\)\}/g)?.length, 4);
+  for (const phase of ['arrived', 'confirmed']) {
+    const from = state.indexOf(`{:else if view.phase === '${phase}'}`);
+    const box = state.slice(from, state.indexOf('{:else if view.phase', from + 1));
+    assert.equal(box.match(/\{@render back\(\)\}/g)?.length, 2, phase);
+  }
+  // The words are the "Do it" table's own sentence for a done step, with the step's title in it. The Receive
+  // screen's table gains nothing, and the faucet's request, its bot check and its phases are not touched.
+  assert.match(state, /let d = \$derived\(strings\.doit\[lang\]\);/);
+  for (const lang of LANGS) {
+    assert.deepEqual(slotNames(strings.doit[lang].saidDone), ['step'], lang);
+    const said = fill(strings.doit[lang].saidDone, { step: strings.doit[lang]['title_hold-some'] });
+    assert.equal(said, lang === 'en' ? 'Step done: Hold some.' : 'Paso terminado: Ten algunas.');
+  }
+  // The page does not move for the line: the confirmation that follows an arrival brings nothing on screen
+  // again, with a step followed or without. The result was brought on screen when the coins arrived, and the
+  // line stands at its top, straight under its first sentence.
+  for (const followed of [true, false]) assert.equal(bringsAnswer('arrived', 'confirmed', true, followed), false);
+});
+
 // -- the address --------------------------------------------------------------------------
 
 test('the path of a receive address is the one the wallet package derives it at', () => {

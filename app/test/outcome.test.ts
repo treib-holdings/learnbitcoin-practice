@@ -62,10 +62,11 @@ test('"Remove it" and a restore each leave their word, and the screen they lead 
   assert.match(home, /const removed = takeOutcome\('removed'\);/);
   assert.match(home, /if \(removed\) void tick\(\)\.then\(\(\) => announce\(t\.removed\)\);/);
   // Under it, while this browser keeps a note of the "Do it" steps: that the note is still here (it is not
-  // removed with the wallet). Then the way to a new wallet, as before.
+  // removed with the wallet). Then the way to a new wallet, as before: the screen's main button, unless the
+  // note follows the drill and its wallet is out of the browser (test/front-text.test.ts holds that).
   assert.match(
     home,
-    /\{#if removed && progressKept\(doit\.read\)\}[\s\S]*?<Notice kind="info" text=\{t\.removed\} data-testid="home-removed" \/>\s*<Notice kind="info" text=\{d\.staysAfterRemove\} data-testid="home-progress-stays">[\s\S]*?\{:else if removed\}\s*<Notice kind="info" text=\{t\.removed\} data-testid="home-removed" \/>\s*\{\/if\}\s*<div>\s*<Button variant="primary"[^>]*data-testid="home-create"/,
+    /\{#if removed && progressKept\(doit\.read\)\}[\s\S]*?<Notice kind="info" text=\{t\.removed\} data-testid="home-removed" \/>\s*<Notice kind="info" text=\{d\.staysAfterRemove\} data-testid="home-progress-stays">[\s\S]*?\{:else if removed\}\s*<Notice kind="info" text=\{t\.removed\} data-testid="home-removed" \/>\s*\{\/if\}\s*(<!--[^>]*-->\s*)?<div>\s*<Button variant=\{restoring === null \? 'primary' : 'secondary'\}[^>]*data-testid="home-create"/,
   );
   const overview = source('screens/Overview.svelte');
   assert.match(overview, /const restoredNow = takeOutcome\('restored'\);/);

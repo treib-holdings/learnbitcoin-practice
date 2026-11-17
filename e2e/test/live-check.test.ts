@@ -5,6 +5,8 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
+import { createServer, type Server } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { after, before, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import type { Handler } from '@learnbitcoin/practice-worker';
@@ -15,6 +17,8 @@ import { APP_HEADERS, PAGE, scratchSite } from './scratch-site.ts';
 
 const SCRIPT = fileURLToPath(new URL('../../tools/live-check/live-check.ts', import.meta.url));
 const ROBOTS = readFileSync(new URL('../../app/public/robots.txt', import.meta.url), 'utf8');
+/** The About page's string table, as the repository has it: what the build ships as /about.txt. */
+const ABOUT = readFileSync(new URL('../../app/src/strings/about.ts', import.meta.url), 'utf8');
 const EXPECT = repositoryExpectations();
 
 /** The pages the check asks for, in the order it asks: a path of two parts, a path of one, the home page. */
@@ -52,6 +56,15 @@ const WORKER_ANSWERS = [
 /** The name of one header's check, on every page. */
 const onPages = (name: string) => PAGES.map((path) => `GET ${path}: ${name}`);
 
+/** The About page's text file. It is a file of the app, under the headers its path is given: a path of one part. */
+const ABOUT_FILE = 'GET /about.txt';
+const ABOUT_TYPE = `${ABOUT_FILE}: 200, as text/plain; charset=utf-8`;
+const ABOUT_TEXT = `${ABOUT_FILE}: the text of app/src/strings/about.ts`;
+const ABOUT_UNLISTED = `${ABOUT_FILE} (must not be listed): x-robots-tag`;
+
+/** The name of one header's check on every page, and on the text file after them. */
+const onFiles = (name: string) => [...onPages(name), `${ABOUT_FILE}: ${name}`];
+
 /** The names of the checks that the script states outright, whatever the file it reads says. */
 const mustNotBeListed = (path: string) => `GET ${path} (must not be listed): x-robots-tag`;
 const floor = (path: string) => `GET ${path} (the floor, as written in this script): strict-transport-security`;
@@ -67,9 +80,64 @@ after(async () => {
   await stack.close();
 });
 
-/** A site that holds what the build ships (the app's headers and robots.txt, and a page), with the Worker's handler behind it. */
-const site = (files: Record<string, string> = {}, handler: Handler = stack.handler) =>
-  scratchSite({ 'robots.txt': ROBOTS, ...files }, handler);
+/**
+ * A site that holds what the build ships (the app's headers, robots.txt and the About page's text file, and a
+ * page), with the Worker's handler behind it. A file given as null is one the site does not have.
+ */
+const site = (files: Record<string, string | null> = {}, handler: Handler = stack.handler) => {
+  const held = Object.entries({ 'robots.txt': ROBOTS, 'about.txt': ABOUT, ...files }).filter((file): file is [string, string] => file[1] !== null);
+  return scratchSite(Object.fromEntries(held), handler);
+};
+
+const fronts: Server[] = [];
+after(async () => {
+  for (const front of fronts) {
+    await new Promise<void>((resolve) => {
+      front.close(() => resolve());
+      front.closeAllConnections();
+    });
+  }
+});
+
+/**
+ * A server that stands in front of a site as a host stands in front of the files it was given: every request is
+ * handed on as it came and every answer back as it came, but for the headers of one path, which `change` alters.
+ * (The local server takes a file's type from its own table, as Cloudflare does. This is how a test has a host
+ * that sends a file under another type.)
+ */
+async function inFrontOf(base: string, path: string, change: (headers: Headers) => void): Promise<{ url: string }> {
+  const front = createServer((request, response) => {
+    const pass = async (): Promise<void> => {
+      const headers = new Headers();
+      for (let i = 0; i + 1 < request.rawHeaders.length; i += 2) {
+        const name = request.rawHeaders[i]!.toLowerCase();
+        // What belongs to this connection and not to the request is left to the next one.
+        if (!['host', 'connection', 'content-length', 'transfer-encoding', 'accept-encoding'].includes(name)) headers.append(name, request.rawHeaders[i + 1]!);
+      }
+      const sent: Buffer[] = [];
+      for await (const chunk of request) sent.push(chunk as Buffer);
+      const method = request.method ?? 'GET';
+      const answer = await fetch(`${base}${request.url ?? '/'}`, {
+        method,
+        headers,
+        body: method === 'GET' || method === 'HEAD' ? undefined : Buffer.concat(sent),
+        redirect: 'manual',
+      });
+      const body = Buffer.from(await answer.arrayBuffer());
+      const out = new Headers(answer.headers);
+      // The body is handed on as it was read here: whole, and not compressed.
+      for (const name of ['content-length', 'content-encoding', 'transfer-encoding', 'connection', 'keep-alive']) out.delete(name);
+      if (new URL(request.url ?? '/', base).pathname === path) change(out);
+      response.statusCode = answer.status;
+      for (const [name, value] of out) response.setHeader(name, value);
+      response.end(body);
+    };
+    pass().catch(() => response.destroy());
+  });
+  fronts.push(front);
+  await new Promise<void>((resolve) => front.listen(0, '127.0.0.1', () => resolve()));
+  return { url: `http://localhost:${(front.address() as AddressInfo).port}` };
+}
 
 /** The names of the checks that failed. */
 const failed = (checks: Check[]) => checks.filter((check) => !check.ok).map((check) => check.name);
@@ -97,27 +165,30 @@ test('what it expects: for each path what the app\'s own _headers file gives it,
   // The policy in the script is, today, the policy in the file. Changing one without the other fails here first.
   assert.equal(policy[0]![1], PAGE_CSP);
   // Every other path, unless it begins with two slashes: the same policy, and noindex. One part or more, a file or not.
-  for (const path of ['/about', '/wallet', '/es', '/robots.txt', '/index.html', '/wallet/receive', '/es/', '/es/about', '/assets/x.js', '/do/hold-some']) {
+  for (const path of ['/about', '/about.txt', '/wallet', '/es', '/robots.txt', '/index.html', '/wallet/receive', '/es/', '/es/about', '/assets/x.js', '/do/hold-some']) {
     assert.deepEqual(expectedHeaders(EXPECT, path), [...policy, ['x-robots-tag', 'noindex']], path);
   }
   assert.equal(EXPECT.robots, ROBOTS);
+  // The text file is held to the repository's own copy of the About page's strings, and to nothing shorter.
+  assert.equal(EXPECT.about, ABOUT);
+  assert.ok(ABOUT.includes('export const en = {') && ABOUT.includes('export const es: Record<keyof typeof en, string> = {') && ABOUT.length > 20_000, `${ABOUT.length} characters`);
 });
 
 test('a _headers file it cannot hold a site to is refused, with the reason', () => {
-  assert.throws(() => readExpectations('/:part\n  X-Robots-Tag: noindex\n', ROBOTS), /no "\/\*" block/);
-  assert.throws(() => readExpectations('/*\n  nonsense\n', ROBOTS), /cannot read the line/);
+  assert.throws(() => readExpectations('/:part\n  X-Robots-Tag: noindex\n', ROBOTS, ABOUT), /no "\/\*" block/);
+  assert.throws(() => readExpectations('/*\n  nonsense\n', ROBOTS, ABOUT), /cannot read the line/);
   // A rule for one host is refused, and not taken for a header named "https" in the block above it.
-  assert.throws(() => readExpectations('/*\n  X-A: 1\nhttps://example.test/*\n  X-B: 2\n', ROBOTS), /is a rule for one host/);
-  assert.throws(() => readExpectations('https://example.test/*\n  X-B: 2\n/*\n  X-A: 1\n', ROBOTS), /is a rule for one host/);
+  assert.throws(() => readExpectations('/*\n  X-A: 1\nhttps://example.test/*\n  X-B: 2\n', ROBOTS, ABOUT), /is a rule for one host/);
+  assert.throws(() => readExpectations('https://example.test/*\n  X-B: 2\n/*\n  X-A: 1\n', ROBOTS, ABOUT), /is a rule for one host/);
   // The app's file as it was first deployed. On the deployed site the home page kept the header this line takes away.
   assert.throws(
-    () => readExpectations('/*\n  X-Content-Type-Options: nosniff\n  X-Robots-Tag: noindex\n\n/\n  ! X-Robots-Tag\n', ROBOTS),
+    () => readExpectations('/*\n  X-Content-Type-Options: nosniff\n  X-Robots-Tag: noindex\n\n/\n  ! X-Robots-Tag\n', ROBOTS, ABOUT),
     /the line " {2}! X-Robots-Tag" takes a header away, and what a page must carry cannot be worked out from such a line/,
   );
   // Two blocks that match one of the pages and name the same header: its value would depend on the order they are applied in.
-  assert.throws(() => readExpectations('/*\n  X-Robots-Tag: noindex\n/:part\n  X-Robots-Tag: nofollow\n', ROBOTS), /two blocks that match \/about name x-robots-tag/);
-  assert.throws(() => readExpectations('/*\n  X-A: 1\n/*\n  X-B: 2\n', ROBOTS), /the path \/\* twice/);
-  assert.throws(() => readExpectations('/*\n  X-A: 1\n/:a/:a\n  X-B: 2\n', ROBOTS), /no pattern can be made of the path \/:a\/:a/);
+  assert.throws(() => readExpectations('/*\n  X-Robots-Tag: noindex\n/:part\n  X-Robots-Tag: nofollow\n', ROBOTS, ABOUT), /two blocks that match \/about name x-robots-tag/);
+  assert.throws(() => readExpectations('/*\n  X-A: 1\n/*\n  X-B: 2\n', ROBOTS, ABOUT), /the path \/\* twice/);
+  assert.throws(() => readExpectations('/*\n  X-A: 1\n/:a/:a\n  X-B: 2\n', ROBOTS, ABOUT), /no pattern can be made of the path \/:a\/:a/);
   // A path Cloudflare would read as another path than the one written. It applies the block to the path it read,
   // and this check would hold a site to the path as written. (What it reads each as: see test/serve.test.ts.)
   const rewritten: [written: string, read: string][] = [
@@ -128,17 +199,20 @@ test('a _headers file it cannot hold a site to is refused, with the reason', () 
   ];
   for (const [written, read] of rewritten) {
     assert.throws(
-      () => readExpectations(`/*\n  X-A: 1\n${written}\n  X-B: 2\n`, ROBOTS),
+      () => readExpectations(`/*\n  X-A: 1\n${written}\n  X-B: 2\n`, ROBOTS, ABOUT),
       { message: `_headers: Cloudflare would read the path ${written} as ${read}, and what a page must carry cannot be worked out from the path as written` },
       written,
     );
   }
   // A path that is read as it is written is taken as before.
   for (const path of ['/:part', '/:part/*', '/assets/*', '/a.b', '/es/']) {
-    assert.deepEqual(readExpectations(`/*\n  X-A: 1\n${path}\n  X-B: 2\n`, ROBOTS).blocks.map((block) => block.path), ['/*', path]);
+    assert.deepEqual(readExpectations(`/*\n  X-A: 1\n${path}\n  X-B: 2\n`, ROBOTS, ABOUT).blocks.map((block) => block.path), ['/*', path]);
   }
+  // A block of the text file's own that names a header a block for every path of one part names too: refused
+  // as it is for a page, before anything is asked.
+  assert.throws(() => readExpectations(`${APP_HEADERS}\n/about.txt\n  X-Robots-Tag: none\n`, ROBOTS, ABOUT), /two blocks that match \/about\.txt name x-robots-tag/);
   // The same name twice in one block is one header, as Cloudflare reads it, and no fault.
-  assert.deepEqual(expectedHeaders(readExpectations('/*\n  X-Robots-Tag: noindex\n  X-Robots-Tag: nofollow\n', ROBOTS), '/about'), [['x-robots-tag', 'noindex, nofollow']]);
+  assert.deepEqual(expectedHeaders(readExpectations('/*\n  X-Robots-Tag: noindex\n  X-Robots-Tag: nofollow\n', ROBOTS, ABOUT), '/about'), [['x-robots-tag', 'noindex, nofollow']]);
 });
 
 test('it matches a path to a block as the local server does: the same headers for the same file and path', () => {
@@ -150,7 +224,7 @@ test('it matches a path to a block as the local server does: the same headers fo
   const paths = ['/', '/about', '/es', '/robots.txt', '/index.html', '/wallet/receive', '/es/', '/es/about', '/assets/x.js', '/do/hold-some'];
   const more = ['/books/7', '/books/7/', '/Books/7', '/books/a%2Fb', '/es/wallet/send/now', '/es/wallet/', '/es/wallet', '/file-a.b.txt', '/file-.txt', '/a:1', '/ax'];
   for (const file of files) {
-    const expect = readExpectations(file, ROBOTS);
+    const expect = readExpectations(file, ROBOTS, ABOUT);
     for (const path of [...paths, ...more]) {
       const served = new Headers();
       applyHeaderRules(parseHeadersFile(file), path, served);
@@ -159,7 +233,7 @@ test('it matches a path to a block as the local server does: the same headers fo
     }
   }
   // Not an empty comparison: the second file gives these two paths something of their own.
-  const second = readExpectations(files[1]!, ROBOTS);
+  const second = readExpectations(files[1]!, ROBOTS, ABOUT);
   assert.deepEqual(expectedHeaders(second, '/books/7').filter(([, value]) => value !== null), [['x-all', 'yes, twice'], ['x-id', 'book-7']]);
   assert.deepEqual(expectedHeaders(second, '/es/wallet/send/now').filter(([, value]) => value !== null), [['x-all', 'yes, twice'], ['x-where', 'es|send/now']]);
 });
@@ -228,6 +302,14 @@ test('it passes on the local server', async () => {
     'GET /about (the floor, as written in this script): strict-transport-security',
     'GET / (the floor, as written in this script): strict-transport-security',
     'GET /robots.txt: keeps crawlers out of /api/ and /p/',
+    // The About page's text file: there, as plain text said to be UTF-8, the repository's text, and never listed.
+    ABOUT_TYPE,
+    ABOUT_TEXT,
+    'GET /about.txt: content-security-policy',
+    'GET /about.txt: x-content-type-options',
+    'GET /about.txt: strict-transport-security',
+    'GET /about.txt: x-robots-tag',
+    ABOUT_UNLISTED,
     'GET /api/no-such-path: 404 {"error":"not_found"}',
     'GET /p/no-such-path: 404 {"error":"not_found"}',
     'GET /api/config: cache-control',
@@ -315,8 +397,8 @@ const noting = (inner: Handler): { handler: Handler; paths: string[] } => {
 
 test('every expectation, broken one at a time, fails its own check', async () => {
   /** The same mistake in both places: in the copy that is served, and in the file the check reads what to expect from. */
-  const inBoth = (headers: string) => ({ files: { _headers: headers }, expect: readExpectations(headers, ROBOTS) });
-  const cases: { what: string; files?: Record<string, string>; handler?: Handler; expect?: Expectations; fails: (string | RegExp)[] }[] = [
+  const inBoth = (headers: string) => ({ files: { _headers: headers }, expect: readExpectations(headers, ROBOTS, ABOUT) });
+  const cases: { what: string; files?: Record<string, string | null>; handler?: Handler; expect?: Expectations; fails: (string | RegExp)[] }[] = [
     // -- the pages --
     {
       what: 'the pages are not the app (another page is served in its place)',
@@ -327,50 +409,59 @@ test('every expectation, broken one at a time, fails its own check', async () =>
     {
       what: 'a page header is missing',
       files: { _headers: headersWith('  Referrer-Policy: no-referrer\n', '') },
-      fails: onPages('referrer-policy'),
+      fails: onFiles('referrer-policy'),
     },
     {
       what: 'a page header has another value',
       files: { _headers: headersWith('Cross-Origin-Opener-Policy: same-origin', 'Cross-Origin-Opener-Policy: unsafe-none') },
-      fails: onPages('cross-origin-opener-policy'),
+      fails: onFiles('cross-origin-opener-policy'),
     },
     {
       what: 'a permission is opened',
       files: { _headers: headersWith('camera=()', 'camera=(self)') },
-      fails: onPages('permissions-policy'),
+      fails: onFiles('permissions-policy'),
     },
     {
       what: 'the policy is loosened by one word',
       files: { _headers: headersWith("style-src 'self'", "style-src 'self' 'unsafe-inline'") },
-      fails: PAGES.flatMap((path) => [`GET ${path}: content-security-policy`, `GET ${path} (the policy, as written in this script): content-security-policy`]),
+      fails: [
+        ...PAGES.flatMap((path) => [`GET ${path}: content-security-policy`, `GET ${path} (the policy, as written in this script): content-security-policy`]),
+        `${ABOUT_FILE}: content-security-policy`,
+      ],
     },
     {
       what: 'no headers at all (the file did not reach the build)',
       files: { _headers: '/nowhere\n  X-Nothing: 1\n' },
-      fails: PAGES.flatMap((path) => [
-        ...POLICY_NAMES.map((name) => `GET ${path}: ${name}`),
-        // The home page is the one page that is right to come without this one.
-        ...(path === '/' ? [] : [`GET ${path}: x-robots-tag`]),
-        `GET ${path} (the policy, as written in this script): content-security-policy`,
-        ...(path === '/' ? [] : [mustNotBeListed(path)]),
-        floor(path),
-      ]),
+      fails: [
+        ...PAGES.flatMap((path) => [
+          ...POLICY_NAMES.map((name) => `GET ${path}: ${name}`),
+          // The home page is the one page that is right to come without this one.
+          ...(path === '/' ? [] : [`GET ${path}: x-robots-tag`]),
+          `GET ${path} (the policy, as written in this script): content-security-policy`,
+          ...(path === '/' ? [] : [mustNotBeListed(path)]),
+          floor(path),
+        ]),
+        // The text file is there and is the right text, and comes as bare as the pages.
+        ...POLICY_NAMES.map((name) => `${ABOUT_FILE}: ${name}`),
+        `${ABOUT_FILE}: x-robots-tag`,
+        ABOUT_UNLISTED,
+      ],
     },
     // -- the one header that may say more: it still has to be there, readable, and no shorter --
     {
       what: 'the pages come without Strict-Transport-Security',
       files: { _headers: headersWith('  Strict-Transport-Security: max-age=31536000\n', '') },
-      fails: bothOnPages,
+      fails: [...bothOnPages, `${ABOUT_FILE}: strict-transport-security`],
     },
     {
       what: 'the pages\' Strict-Transport-Security is one second shorter',
       files: { _headers: headersWith('max-age=31536000', 'max-age=31535999; includeSubDomains; preload') },
-      fails: bothOnPages,
+      fails: [...bothOnPages, `${ABOUT_FILE}: strict-transport-security`],
     },
     {
       what: 'the pages\' Strict-Transport-Security cannot be read',
       files: { _headers: headersWith('max-age=31536000', 'max-age=forever; includeSubDomains; preload') },
-      fails: bothOnPages,
+      fails: [...bothOnPages, `${ABOUT_FILE}: strict-transport-security`],
     },
     // A max-age made shorter in the file itself: served and read alike, so the site agrees with the file.
     // Only the floor in the script says no.
@@ -407,12 +498,13 @@ test('every expectation, broken one at a time, fails its own check', async () =>
     {
       what: 'no page is marked noindex',
       files: { _headers: headersWith('\n/:part\n  X-Robots-Tag: noindex\n\n/:part/*\n  X-Robots-Tag: noindex\n', '') },
-      fails: ['GET /wallet/receive: x-robots-tag', mustNotBeListed('/wallet/receive'), 'GET /about: x-robots-tag', mustNotBeListed('/about')],
+      fails: ['GET /wallet/receive: x-robots-tag', mustNotBeListed('/wallet/receive'), 'GET /about: x-robots-tag', mustNotBeListed('/about'), `${ABOUT_FILE}: x-robots-tag`, ABOUT_UNLISTED],
     },
     {
+      // The text file is a path of one part too: the block that marks /about marks it.
       what: 'a path of one part is not marked noindex',
       files: { _headers: headersWith('\n/:part\n  X-Robots-Tag: noindex\n', '') },
-      fails: ['GET /about: x-robots-tag', mustNotBeListed('/about')],
+      fails: ['GET /about: x-robots-tag', mustNotBeListed('/about'), `${ABOUT_FILE}: x-robots-tag`, ABOUT_UNLISTED],
     },
     {
       what: 'a path of more than one part is not marked noindex',
@@ -422,7 +514,7 @@ test('every expectation, broken one at a time, fails its own check', async () =>
     {
       what: 'a page is marked in another way',
       files: { _headers: headersWith('/:part\n  X-Robots-Tag: noindex\n', '/:part\n  X-Robots-Tag: none\n') },
-      fails: ['GET /about: x-robots-tag', mustNotBeListed('/about')],
+      fails: ['GET /about: x-robots-tag', mustNotBeListed('/about'), `${ABOUT_FILE}: x-robots-tag`, ABOUT_UNLISTED],
     },
     // The file itself marks the home page: served and read alike, so the site agrees with the file. Only
     // what the script states outright says no.
@@ -436,7 +528,7 @@ test('every expectation, broken one at a time, fails its own check', async () =>
     {
       what: 'the "/:part" block is gone from the file itself (the same in what is served and in what the check reads)',
       ...inBoth(headersWith('\n/:part\n  X-Robots-Tag: noindex\n', '')),
-      fails: [mustNotBeListed('/about')],
+      fails: [mustNotBeListed('/about'), ABOUT_UNLISTED],
     },
     {
       what: 'the "/:part/*" block is gone from the file itself (the same in what is served and in what the check reads)',
@@ -447,6 +539,23 @@ test('every expectation, broken one at a time, fails its own check', async () =>
       what: 'robots.txt lets crawlers into the Worker\'s paths',
       files: { 'robots.txt': 'User-agent: *\nAllow: /\n' },
       fails: ['GET /robots.txt: the text of app/public/robots.txt', 'GET /robots.txt: keeps crawlers out of /api/ and /p/'],
+    },
+    // -- the About page's text file --
+    {
+      // A host answers a path that names no file with the app's page: status 200, and nothing of the text.
+      what: 'the About page\'s text file is not there (it did not reach the build)',
+      files: { 'about.txt': null },
+      fails: [ABOUT_TYPE, ABOUT_TEXT],
+    },
+    {
+      what: 'the About page\'s text file is another text by one letter',
+      files: { 'about.txt': ABOUT.replace('Qué guarda este navegador', 'Que guarda este navegador') },
+      fails: [ABOUT_TEXT],
+    },
+    {
+      what: 'the About page\'s text file is cut short',
+      files: { 'about.txt': ABOUT.slice(0, -1) },
+      fails: [ABOUT_TEXT],
     },
     // -- the Worker --
     {
@@ -581,7 +690,85 @@ test('every expectation, broken one at a time, fails its own check', async () =>
   assert.equal(ran.code, 1);
   assert.match(ran.out, /^FAIL {2}GET \/wallet\/receive: referrer-policy: expected "no-referrer", got "unsafe-url"$/m);
   assert.match(ran.out, /^FAIL {2}GET \/about: referrer-policy: expected "no-referrer", got "unsafe-url"$/m);
-  assert.match(ran.out, /^3 of [0-9]+ checks FAILED for http:\/\/localhost:[0-9]+$/m);
+  assert.match(ran.out, /^FAIL {2}GET \/about\.txt: referrer-policy: expected "no-referrer", got "unsafe-url"$/m);
+  assert.match(ran.out, /^4 of [0-9]+ checks FAILED for http:\/\/localhost:[0-9]+$/m);
+});
+
+test('the About page\'s text file: there, the repository\'s text to the character, and under one type to the letter', async () => {
+  // -- As the build ships it: every check on the file passes, and each was made. --
+  const shipped = await site();
+  const made = (await liveCheck(shipped.url, EXPECT)).filter((check) => check.name.startsWith(ABOUT_FILE));
+  assert.deepEqual(failed(made), []);
+  assert.deepEqual(
+    made.map((check) => check.name),
+    [ABOUT_TYPE, ABOUT_TEXT, ...POLICY_NAMES.map((name) => `${ABOUT_FILE}: ${name}`), `${ABOUT_FILE}: x-robots-tag`, ABOUT_UNLISTED],
+  );
+  // What the local server sends for it is what the check asks for: the type of a text file as Cloudflare names it.
+  const sent = await fetch(`${shipped.url}/about.txt`);
+  assert.deepEqual([sent.status, sent.headers.get('content-type'), sent.headers.get('x-robots-tag')], [200, 'text/plain; charset=utf-8', 'noindex']);
+  assert.equal(await sent.text(), ABOUT);
+
+  // -- A site without the file. The host answers with the app's page, as it answers every path that names no
+  //    file: status 200, so only the type and the text say that the file is not there. Both fail, and say what came. --
+  const without = await site({ 'about.txt': null });
+  const missing = (await liveCheck(without.url, EXPECT)).filter((check) => !check.ok);
+  assert.deepEqual(missing, [
+    { name: ABOUT_TYPE, ok: false, detail: 'status 200, type "text/html; charset=utf-8"' },
+    {
+      name: ABOUT_TEXT,
+      ok: false,
+      detail: `${PAGE.length} characters came, ${ABOUT.length} were expected; they differ from character 0: got ${JSON.stringify(PAGE.slice(0, 80))}`,
+    },
+  ]);
+
+  // -- Another text. One letter of the Spanish half lost its accent: the check names the place. --
+  const at = ABOUT.indexOf('Qué guarda este navegador') + 2;
+  assert.ok(at > 2);
+  const plain = `${ABOUT.slice(0, at)}e${ABOUT.slice(at + 1)}`;
+  const other = (await liveCheck((await site({ 'about.txt': plain })).url, EXPECT)).filter((check) => !check.ok);
+  assert.deepEqual(other, [
+    { name: ABOUT_TEXT, ok: false, detail: `${ABOUT.length} characters came, ${ABOUT.length} were expected; they differ from character ${at}: got ${JSON.stringify(plain.slice(at, at + 80))}` },
+  ]);
+
+  // -- The right text under another type. The host decides the type, and half of the file is Spanish: a browser
+  //    that is not told the file is UTF-8 may show its accented letters broken. Every other check passes. --
+  const types: [sent: string | null, shown: string][] = [
+    // Plain text, and nothing said about how its letters are written.
+    ['text/plain', '"text/plain"'],
+    ['text/plain; charset=iso-8859-1', '"text/plain; charset=iso-8859-1"'],
+    ['text/plain; charset=utf-8; format=flowed', '"text/plain; charset=utf-8; format=flowed"'],
+    // What a host sends for a kind of file it does not know, and a file sent as the source it is a copy of.
+    ['application/octet-stream', '"application/octet-stream"'],
+    ['text/typescript; charset=utf-8', '"text/typescript; charset=utf-8"'],
+    // No type at all.
+    [null, 'no such header'],
+  ];
+  for (const [type, shown] of types) {
+    const front = await inFrontOf(shipped.url, '/about.txt', (headers) => {
+      if (type === null) headers.delete('content-type');
+      else headers.set('content-type', type);
+    });
+    // The file is the same, to the byte, and so is every other answer of the site.
+    const got = await fetch(`${front.url}/about.txt`);
+    assert.deepEqual([got.status, got.headers.get('content-type'), await got.text()], [200, type, ABOUT], String(type));
+    assert.deepEqual(
+      (await liveCheck(front.url, EXPECT)).filter((check) => !check.ok),
+      [{ name: ABOUT_TYPE, ok: false, detail: `status 200, type ${shown}` }],
+      String(type),
+    );
+  }
+  // The server in front changes nothing else: with the type left alone, every check passes through it.
+  const untouched = await inFrontOf(shipped.url, '/about.txt', () => {});
+  const through = await liveCheck(untouched.url, EXPECT);
+  assert.deepEqual(failed(through), []);
+  assert.equal(through.length, (await liveCheck(shipped.url, EXPECT)).length);
+
+  // -- The script itself, on a site without the file: two lines that say FAIL, and exit code 1. --
+  const ran = await run([without.url]);
+  assert.equal(ran.code, 1);
+  assert.match(ran.out, /^FAIL {2}GET \/about\.txt: 200, as text\/plain; charset=utf-8: status 200, type "text\/html; charset=utf-8"$/m);
+  assert.match(ran.out, /^FAIL {2}GET \/about\.txt: the text of app\/src\/strings\/about\.ts: [0-9]+ characters came, [0-9]+ were expected; they differ from character 0: got "<!doctype html>/m);
+  assert.match(ran.out, /^2 of [0-9]+ checks FAILED for http:\/\/localhost:[0-9]+$/m);
 });
 
 test('Strict-Transport-Security: a max-age as long as ours passes, and so does a longer one with more behind it', async () => {
@@ -593,11 +780,11 @@ test('Strict-Transport-Security: a max-age as long as ours passes, and so does a
     const checks = await liveCheck(local.url, EXPECT);
     assert.deepEqual(failed(checks), [], value);
     // The value that was looked at is the one this test sent, on every answer: the three pages and the Worker's six.
-    for (const path of [...PAGES, '/api/config', '/api/no-such-path']) {
+    for (const path of [...PAGES, '/about.txt', '/api/config', '/api/no-such-path']) {
       assert.equal((await fetch(`${local.url}${path}`)).headers.get('strict-transport-security'), value, `${path}: ${value}`);
     }
-    // Each page's is looked at twice: against the file, and against the floor in the script.
-    assert.equal(checks.filter((check) => check.name.endsWith(': strict-transport-security')).length, 2 * PAGES.length + WORKER_ANSWERS.length, value);
+    // Each page's is looked at twice: against the file, and against the floor in the script. The text file's once.
+    assert.equal(checks.filter((check) => check.name.endsWith(': strict-transport-security')).length, 2 * PAGES.length + 1 + WORKER_ANSWERS.length, value);
   }
 
   // A failed one says what was expected and what came.
@@ -619,7 +806,7 @@ test('the first deploy, as it answered: the longer Strict-Transport-Security pas
 
 test('every other header is still compared letter for letter: more behind the expected value fails', async () => {
   const local = await site({ _headers: headersWith('Referrer-Policy: no-referrer', 'Referrer-Policy: no-referrer, strict-origin') }, withHeader('X-Robots-Tag', 'noindex, nofollow'));
-  assert.deepEqual(failed(await liveCheck(local.url, EXPECT)), [...onPages('referrer-policy'), ...WORKER_ANSWERS.map((label) => `${label}: x-robots-tag`)]);
+  assert.deepEqual(failed(await liveCheck(local.url, EXPECT)), [...onFiles('referrer-policy'), ...WORKER_ANSWERS.map((label) => `${label}: x-robots-tag`)]);
 });
 
 test('the pot\'s counts: asked for only while the settings say that they are off, and then held to the answer of an unknown path', async () => {

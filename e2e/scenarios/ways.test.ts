@@ -1,16 +1,19 @@
 // Ways through the app that cross two screens, and what the reader is told
 // on the way: where "Get practice coins" lands, what Home and the Overview
-// say after a wallet was removed or restored, the way back out of Backup's
-// unlock step, an answer about typed words that no longer fits them, and
-// what becomes of Send's form and title when the reader leaves and returns.
+// say after a wallet was removed or restored, what the done card of "Hold
+// some" says of a block when the browser brings it back from its memory,
+// the way back out of Backup's unlock step, an answer about typed words
+// that no longer fits them, and what becomes of Send's form and title when
+// the reader leaves and returns.
 //
 // Each of these looked right on its own screen. They went wrong between
 // screens, or one step into a screen, where no single screen's scenario
 // was looking.
 
 import assert from 'node:assert/strict';
-import { fill } from '../../app/src/lib/format.ts';
+import { fill, formatDate, formatSats } from '../../app/src/lib/format.ts';
 import { strings } from '../../app/src/strings/index.ts';
+import { PROGRESS_KEY, coinBlockOf, namesBlock, namesNoBlock, noteFor, noteText, outLinkOf, pay, reloadStep } from './doit-helpers.ts';
 import { OTHER_WORDS, TEST_WORDS, freshRecord, fundTestWallet, scenario, testRecord, type OpenedPage } from './helpers.ts';
 import {
   arrivesAt,
@@ -23,6 +26,7 @@ import {
   heldBy,
   hook,
   noticeOf,
+  onNetwork,
   refuseNextGet,
   sleep,
   standBy,
@@ -374,6 +378,74 @@ scenario(
     // status region was emptied when the gate took the screen's place, as it is when the address changes.
     await until(async () => (await statusNow(third)) === '', 'the status region is empty under the gate');
     assert.ok(!(await textOf(third, 'body')).includes('This browser now keeps them'), 'no part of the page says it, seen or read out');
+  },
+);
+
+scenario(
+  'The done card of "Hold some", brought back from the browser\'s memory after its coin was sent on, reads as it did, and what it says is still so: its line names the block the practice network still gives for that coin and says nothing of what the wallet holds; loaded again, the card names no block',
+  { localOnly: true, timeout: 200_000 },
+  async (s) => {
+    const doit = strings.doit.en;
+    // Another site, on this machine: the reader leaves the wallet for it in the same tab, as "Back to the
+    // chapter" takes them to the main site.
+    const otherSite = await s.elsewhere();
+    const record = testRecord();
+    const funding = s.standIn.fund(record.firstAddress, 50_000);
+    const height = (await onNetwork(s, funding)).status.block_height ?? 0;
+    // "Hold some" was done three days ago. Its note names no wallet, no coin and no block.
+    const doneAt = Date.now() - 3 * 86_400_000;
+    const stored = noteFor({ following: null, steps: { 'hold-some': { started: true, doneAt, parts: { 1: true, 2: true, 3: true } } } });
+    const page = await standBy(s, { record, storage: { [PROGRESS_KEY]: stored }, allow: [otherSite], timeout: 30_000 });
+    await page.goto('/do/hold-some');
+
+    // -- The card, with the wallet's coin in its block: the sentences from the note, and under the buttons
+    //    the block the wallet read for that coin, with the explorer beside who runs it. --
+    await namesBlock(page, s, funding, height);
+    /** What the card says, piece by piece. */
+    const cardNow = async (): Promise<{ on: string; said: string; block: string[]; explorer: string | null }> => ({
+      on: await page.text('step-done-on'),
+      said: await page.text('step-done-text'),
+      block: await coinBlockOf(page),
+      explorer: (await outLinkOf(page, 'step-explorer')).href,
+    });
+    const before = await cardNow();
+    assert.deepEqual(before, {
+      on: `Done on ${formatDate(doneAt / 1000, 'en', 'utc')}.`,
+      said: doit['done_hold-some'],
+      block: [fill(doit.coinBlock, { height: formatSats(height) }), doit.coinCheck],
+      explorer: `${s.stack.config.explorerUrl}/tx/${funding}`,
+    });
+    await markDocument(page);
+
+    // -- The reader leaves for another site in this tab, comes back to the wallet by its address (a page of
+    //    its own), and sends every coin on. The wallet holds nothing now. --
+    await page.page.goto(`${otherSite}/chapter`, { waitUntil: 'load' });
+    await page.goto('/wallet/send');
+    const sent = await pay(page, SOMEBODY, 'all');
+    assert.deepEqual(await s.network.coins(record.firstAddress), { count: 0, sats: 0 });
+
+    // -- Back, until the done card the reader left is on the screen again: out of the browser's memory, as it
+    //    was. A done step's screen does not read the coins again, so the card reads as it did. --
+    await backToMarked(page, 1);
+    await page.waitFor('step-done');
+    assert.equal(await page.page.evaluate(() => location.pathname), '/do/hold-some');
+    assert.deepEqual(await cardNow(), before);
+    // And every sentence of it is still so. The block did take that coin in: the practice network still gives
+    // that block for it, and the explorer's page for it is the same. The line is about what a block did, and
+    // says nothing of what the wallet holds, which is nothing now.
+    assert.equal((await onNetwork(s, funding)).status.block_height, height);
+    for (const sentence of [...before.block, before.said]) assert.doesNotMatch(sentence, /\b(holds?|has|have|still|now|today|balance)\b/i, sentence);
+    assert.match(before.block[0] ?? '', /took in a coin that came to this wallet\.$/);
+    assert.equal(await noteText(page), stored, 'nothing was written for any of it');
+
+    // -- Loaded again, the page looks at the wallet's coins anew: there is none that was paid to it, and the
+    //    card names no block. Its own sentences are as they were. --
+    await reloadStep(page);
+    await page.waitFor('step-done');
+    await page.settle();
+    await namesNoBlock(page, s, 'loaded again, with the coin sent on');
+    assert.deepEqual([await page.text('step-done-on'), await page.text('step-done-text')], [before.on, before.said]);
+    assert.match(sent.txid, /^[0-9a-f]{64}$/);
   },
 );
 

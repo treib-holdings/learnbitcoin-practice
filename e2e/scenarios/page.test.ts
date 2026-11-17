@@ -1,5 +1,7 @@
 // The app's pages as a browser gets them: under the headers of
-// app/public/_headers, with every file from this origin.
+// app/public/_headers, with every file from this origin. And what a
+// browser with scripts switched off gets: the page's <noscript> lines, and
+// the text file they send a reader to.
 
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -86,4 +88,77 @@ scenario('a deep path and a path of one part get the app, marked noindex; the ho
 
   const home = await s.open('/');
   assert.equal(documentOf(home, `${s.url}/`).headers['x-robots-tag'], undefined);
+});
+
+scenario('Without JavaScript the page says where the sentences of About can be read, and that file is the page\'s own string table', async (s) => {
+  /** The About page's string table, as the repository has it: the bytes the build ships as /about.txt. */
+  const SOURCE = readFileSync(new URL('../../app/src/strings/about.ts', import.meta.url));
+  const TEXT = SOURCE.toString('utf8');
+
+  // -- The file, as any client gets it: there, as plain text said to be UTF-8, under the policy's headers,
+  //    never listed, and the source file to the byte. --
+  const got = await fetch(`${s.url}/about.txt`);
+  assert.equal(got.status, 200);
+  assert.equal(got.headers.get('content-type'), 'text/plain; charset=utf-8');
+  for (const [name, value] of POLICY) assert.equal(got.headers.get(name), value, name);
+  assert.equal(got.headers.get('x-robots-tag'), 'noindex');
+  assert.ok(Buffer.from(await got.arrayBuffer()).equals(SOURCE), 'the file is app/src/strings/about.ts, to the byte');
+  // Half of it is Spanish, and its letters outside ASCII are all in that half: the type matters for them.
+  assert.ok(TEXT.includes('Qué guarda este navegador') && TEXT.includes('What this browser keeps'));
+
+  // -- A browser shows it as the text it is. The app's router leaves the address alone: the page that
+  //    answers is the file, and its accented letters arrive whole. --
+  const page = await s.open('/about.txt');
+  assert.equal(page.status, 200);
+  const file = documentOf(page, `${s.url}/about.txt`);
+  assert.equal(file.headers['content-type'], 'text/plain; charset=utf-8');
+  assert.equal(file.headers['x-robots-tag'], 'noindex');
+  const shownText = await page.page.evaluate(() => document.body.innerText);
+  assert.equal(shownText.trimEnd(), TEXT.trimEnd());
+  assert.equal(await page.page.evaluate(() => document.querySelector('#app')), null, 'the file, not the app');
+
+  // -- With scripts switched off the app's one page draws nothing but its <noscript> block: four lines, two
+  //    in English and two marked as Spanish, on About's own address in each language. --
+  const LINES = [
+    'The practice wallet needs JavaScript.',
+    'Its About page says what the wallet keeps, sends and counts. The sentences of that page can be read without JavaScript, in English and in Spanish, in a copy of the file the page takes them from: about.txt.',
+    'La billetera de práctica necesita JavaScript.',
+    'Su página Acerca de dice qué guarda, qué envía y qué cuenta la billetera. Las frases de esa página se pueden leer sin JavaScript, en inglés y en español, en una copia del archivo del que la página las toma: about.txt.',
+  ];
+  await page.page.setJavaScriptEnabled(false);
+  for (const path of ['/about', '/es/about']) {
+    const answer = await page.page.goto(`${s.url}${path}`, { waitUntil: 'load' });
+    assert.equal(answer?.status(), 200, path);
+    const drawn = await page.page.$$eval('noscript p', (lines) =>
+      lines.map((line) => ({
+        text: (line.textContent ?? '').replace(/\s+/g, ' ').trim(),
+        lang: line.getAttribute('lang'),
+        seen: line.getBoundingClientRect().height > 0,
+      })),
+    );
+    assert.deepEqual(drawn.map((line) => line.text), LINES, path);
+    assert.deepEqual(drawn.map((line) => line.lang), [null, null, 'es', 'es'], path);
+    assert.ok(drawn.every((line) => line.seen), `${path}: every line is on the page`);
+    // The app drew nothing, and the block's two links lead to the file on this site.
+    assert.equal(await page.page.$eval('#app', (app) => app.childElementCount), 0, path);
+    assert.deepEqual(
+      await page.page.$$eval('noscript a', (links) => links.map((link) => [link.getAttribute('href'), link.getAttribute('target'), (link.textContent ?? '').trim()])),
+      [
+        ['/about.txt', null, 'about.txt'],
+        ['/about.txt', null, 'about.txt'],
+      ],
+      path,
+    );
+  }
+  // The link, pressed: the file, in this tab.
+  await Promise.all([page.page.waitForNavigation({ waitUntil: 'load' }), page.page.click('noscript a')]);
+  assert.equal(page.page.url(), `${s.url}/about.txt`);
+  assert.equal((await page.page.evaluate(() => document.body.innerText)).trimEnd(), TEXT.trimEnd());
+
+  // -- With scripts on, a reader never sees the block: the app draws About, and nothing in it links the file. --
+  await page.page.setJavaScriptEnabled(true);
+  await page.goto('/about');
+  await page.waitFor('about-kept-now');
+  assert.equal(await page.page.$$eval('noscript p', (lines) => lines.length), 0);
+  assert.equal(await page.page.$$eval('a[href$="about.txt"]', (links) => links.length), 0);
 });

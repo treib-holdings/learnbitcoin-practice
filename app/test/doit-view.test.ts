@@ -28,6 +28,7 @@ import {
   actionOf,
   askOf,
   asksPotCount,
+  awaitsRestore,
   canRestart,
   chapterHeading,
   chapterUrl,
@@ -65,7 +66,7 @@ const NOW_PART: Extract<PartView, { state: 'now' }> = { state: 'now', txid: null
 
 test('a ticked part says what kind of proof it is: checked, opened, or the reader\'s word', () => {
   const proofs: Record<StepId, string[]> = {
-    'hold-some': ['checked', 'checked', 'checked', 'checked'],
+    'hold-some': ['checked', 'checked', 'checked'],
     'pass-it-on': ['checked', 'checked', 'checked'],
     'no-balances': ['opened', 'checked', 'opened'],
     'waiting-room': ['checked', 'checked', 'checked'],
@@ -129,7 +130,6 @@ test('each part that sends the reader into the wallet names one screen, and the 
   assert.equal(where('hold-some', 1), 'Create a practice wallet -> new');
   assert.equal(where('hold-some', 2), 'Get practice coins -> receive#faucet');
   assert.equal(where('hold-some', 3), 'none');
-  assert.equal(where('hold-some', 4), 'none');
   assert.equal(where('pass-it-on', 1), 'none');
   assert.equal(where('pass-it-on', 2), 'Open Send -> send');
   assert.equal(where('pass-it-on', 3), 'none');
@@ -150,11 +150,12 @@ test('each part that sends the reader into the wallet names one screen, and the 
   assert.deepEqual(read, { label: 'actPayment', route: { name: 'tx', txid: txid('a1') } });
   // A part that waits for a block has nothing to press.
   assert.equal(actionOf('waiting-room', 1, { ...NOW_PART, waiting: { txid: txid('a1'), sentAt: NOW, lost: false } }), null);
-  // The questions and the box, by the fact they rest on.
+  // The questions and the box, by the fact they rest on. "Hold some" asks nothing: no part of it is a question.
   assert.deepEqual(
     STEPS.flatMap((id) => STEP_DEFS[id].parts.map((_part, index) => askOf(id, index + 1))).filter((ask) => ask !== null),
-    ['block', 'coins', 'said', 'words', 'words'],
+    ['coins', 'said', 'words', 'words'],
   );
+  for (const part of [1, 2, 3, 4]) assert.equal(askOf('hold-some', part), null, String(part));
 });
 
 // -- what is missing -----------------------------------------------------------------------
@@ -167,13 +168,15 @@ test('a need names the step or the screen that meets it', () => {
       need.link === null ? 'no link' : need.link.kind === 'step' ? `step ${need.link.step}` : `${need.link.action.route.name}${need.link.action.part === undefined ? '' : `#${need.link.action.part}`}`;
     return `${need.text} -> ${to}`;
   };
-  // A wallet and coins are what "Hold some" gives: until it is done, a step that lacks either leads there.
+  // A step from the wallet's own list (this note holds no way back and no step the reader came for). A wallet
+  // and coins are what "Hold some" gives: until it is done, such a step that lacks either leads there. (A step
+  // that came from a chapter never does: the test after the next one.)
   assert.equal(link('pass-it-on', 1, 'no-wallet'), 'need_no-wallet -> step hold-some');
   assert.equal(link('pass-it-on', 1, 'no-coins'), 'need_no-coins -> step hold-some');
   assert.equal(link('prove-the-backup', 1, 'no-wallet'), 'need_no-wallet -> step hold-some');
   assert.equal(link('prove-the-backup', 1, 'no-coins'), 'need_no-coins -> step hold-some');
   // Once it is done the reader has been through it, and goes straight to the screen that helps.
-  const held = note({ 'hold-some': { started: true, doneAt: NOW, parts: { 1: true, 2: true, 3: true, 4: true } } });
+  const held = note({ 'hold-some': { started: true, doneAt: NOW, parts: { 1: true, 2: true, 3: true } } });
   assert.equal(link('pass-it-on', 1, 'no-wallet', held), 'need_no-wallet -> home');
   assert.equal(link('pass-it-on', 1, 'no-coins', held), 'need_no-coins -> receive#faucet');
   // "Hold some" does not send the reader to itself.
@@ -199,7 +202,7 @@ test('a need names the step or the screen that meets it', () => {
   assert.equal(needOf('the-seed', 2, 'storage', none, 'newer').text, 'needNewer');
 });
 
-test('sent to "Hold some" for a wallet, a reader who has one already is told where it comes back: Home', () => {
+test('a step from the list that is sent to "Hold some" for a wallet: a reader who has one already is told where it comes back, Home', () => {
   const none = note();
   // The main link leads to the step whose first part is "make one". Beside it: open or restore, on Home.
   for (const id of ['pass-it-on', 'no-balances', 'waiting-room', 'the-seed', 'prove-the-backup'] as const) {
@@ -210,7 +213,7 @@ test('sent to "Hold some" for a wallet, a reader who has one already is told whe
   assert.equal(en.needHadOne, 'If you made one before, open or restore it on the home screen.');
   assert.equal(es.needHadOne, 'Si ya creaste una antes, ábrela o restáurala en la pantalla de inicio.');
   // Once "Hold some" is done the link is Home itself, which says all three: nothing is added.
-  const held = note({ 'hold-some': { started: true, doneAt: NOW, parts: { 1: true, 2: true, 3: true, 4: true } } });
+  const held = note({ 'hold-some': { started: true, doneAt: NOW, parts: { 1: true, 2: true, 3: true } } });
   const direct = needOf('pass-it-on', 1, 'no-wallet', held, 'yes');
   assert.deepEqual(direct.link, { kind: 'screen', action: { label: 'actHome', route: { name: 'home' } } });
   assert.equal(direct.also, undefined);
@@ -219,6 +222,151 @@ test('sent to "Hold some" for a wallet, a reader who has one already is told whe
   assert.equal(needOf('prove-the-backup', 2, 'no-wallet', none, 'yes').also, undefined);
   assert.equal(needOf('pass-it-on', 1, 'no-coins', none, 'yes').also, undefined);
   assert.equal(needOf('hold-some', 3, 'no-coins', none, 'yes').also, undefined);
+});
+
+test('a step that came from a chapter is never sent to "Hold some": Create at its first part, Home at a later one and while the drill\'s wallet is out of the browser, the faucet for coins', () => {
+  const CREATE = { kind: 'screen', action: { label: 'actCreate', route: { name: 'new' } } };
+  const HOME = { kind: 'screen', action: { label: 'actHome', route: { name: 'home' } } };
+  const FAUCET = { kind: 'screen', action: { label: 'actFaucet', route: { name: 'receive' }, part: 'faucet' } };
+  const SEND = { kind: 'screen', action: { label: 'actSend', route: { name: 'send' } } };
+  const HAD_ONE = { text: 'needHadOne', action: { label: 'needHadOneLink', route: { name: 'home' } } };
+  const HOLD = { kind: 'step', step: 'hold-some' };
+  const others = ['pass-it-on', 'no-balances', 'waiting-room', 'the-seed', 'prove-the-backup'] as const;
+  /** What the note may say of "Hold some": nothing, started, done. None of it changes the road of a step from a chapter. */
+  const holds: [string, StepNote | undefined][] = [
+    ['no note', undefined],
+    ['started', started(1)],
+    ['started, with coins', started(2)],
+    ['done', doneNote('hold-some')],
+  ];
+  /** The same checks for one step whose note says that it came from a chapter. */
+  const direct = (id: StepId, progress: Progress, label: string): void => {
+    // No wallet, at the step's first part: Create, and under it the line for a reader who has a wallet already.
+    assert.deepEqual(needOf(id, 1, 'no-wallet', progress, 'yes'), { text: 'need_no-wallet', more: null, link: CREATE, also: HAD_ONE }, label);
+    for (let part = 2; part <= partCount(id); part++) {
+      const need = needOf(id, part, 'no-wallet', progress, 'yes');
+      // The drill's removal is looked at first, for every reader: nothing was removed, and nothing is here to remove.
+      if (partDef(id, part)?.on === 'wallet-removed') {
+        assert.deepEqual(need, { text: 'needRemovedElsewhere', more: null, link: HOME }, `${label}, part ${part}`);
+        continue;
+      }
+      // At a later part a wallet was here when the earlier parts ticked: Home brings it back. No line under it.
+      assert.deepEqual(need, { text: 'need_no-wallet', more: null, link: HOME }, `${label}, part ${part}`);
+      assert.equal(need.also, undefined, `${label}, part ${part}`);
+    }
+    for (let part = 1; part <= partCount(id); part++) {
+      const need = needOf(id, part, 'no-coins', progress, 'yes');
+      // The drill's last part is looked at first, for every reader: the wallet is back, and holds nothing.
+      if (partDef(id, part)?.on === 'coins-found') {
+        assert.deepEqual(need, { text: 'needCoinsAgain', more: null, link: FAUCET }, `${label}, part ${part}`);
+        continue;
+      }
+      // No coins: the faucet, whichever part it is. The line for a wallet elsewhere stands beside Create and nowhere else.
+      assert.deepEqual(need, { text: 'need_no-coins', more: null, link: FAUCET }, `${label}, part ${part}`);
+    }
+  };
+
+  for (const id of others) {
+    for (const [what, hold] of holds) {
+      const also = hold === undefined ? {} : { 'hold-some': hold };
+      // Reached by its card, from either of its chapter's two pages; under way, at any of its parts.
+      for (const from of Object.values(STEP_DEFS[id].chapter.path)) {
+        for (let done = 0; done < partCount(id); done++) {
+          direct(id, note({ ...also, [id]: started(done, { from }) }, id), `${id} by card from ${from}, ${done} ticked, "Hold some": ${what}`);
+        }
+      }
+      // The same step from the wallet's own list is as before: to "Hold some" until that step is done, with the line
+      // for a wallet elsewhere under the link that leads to making one; then straight to the screen that helps.
+      const listed = note({ ...also, [id]: started(0) }, id);
+      const done = hold?.doneAt !== undefined;
+      assert.deepEqual(needOf(id, 1, 'no-wallet', listed, 'yes'), done ? { text: 'need_no-wallet', more: null, link: HOME } : { text: 'need_no-wallet', more: null, link: HOLD, also: HAD_ONE }, `${id} from the list, ${what}`);
+      assert.deepEqual(needOf(id, 1, 'no-coins', listed, 'yes'), { text: 'need_no-coins', more: null, link: done ? FAUCET : HOLD }, `${id} from the list, ${what}`);
+      // A way back that is none is no card, and a step the reader came for that is done is no detour: both are steps from the list.
+      const noCard: Progress = { v: 1, following: id, followedAt: NOW, steps: { ...also, [id]: { started: true, from: '/newsletter' } } };
+      assert.deepEqual(needOf(id, 1, 'no-wallet', noCard, 'yes').link, done ? HOME : HOLD, `${id} with a way back that is none, ${what}`);
+    }
+  }
+
+  // Reached by a need of another step, on a road that began at a card: "Pass it on", sent to by "There are no
+  // balances", and "The seed", sent to by "Prove the backup". The same short road, with no card of its own.
+  const pairs: [StepId, StepId][] = [
+    ['pass-it-on', 'no-balances'],
+    ['the-seed', 'prove-the-backup'],
+  ];
+  for (const [id, cameFor] of pairs) {
+    for (const [what, hold] of holds) {
+      const also = hold === undefined ? {} : { 'hold-some': hold };
+      const sender = started(0, { from: cardOf(cameFor) });
+      direct(id, note({ ...also, [cameFor]: sender, [id]: { cameFor } }, cameFor), `${id} for ${cameFor}, not opened yet, "Hold some": ${what}`);
+      direct(id, note({ ...also, [cameFor]: sender, [id]: started(0, { cameFor }) }, id), `${id} for ${cameFor}, "Hold some": ${what}`);
+      // The step the reader came for is done (a stale field in a note handed in): no detour is left, and the step is from the list.
+      const over: Progress = { v: 1, following: id, followedAt: NOW, steps: { ...also, [cameFor]: doneNote(cameFor, { from: cardOf(cameFor) }), [id]: started(0, { cameFor }) } };
+      assert.deepEqual(needOf(id, 1, 'no-wallet', over, 'yes').link, hold?.doneAt !== undefined ? HOME : HOLD, `${id} for ${cameFor}, which is done, ${what}`);
+    }
+  }
+
+  // One thing in the note says, at another step's first part, that this reader had a wallet: the drill between
+  // its removal and its restore. The wallet that was removed for it is the one to bring back, and a new one
+  // would leave the drill with "another wallet". So a step from a chapter leads to Home then, as at a later
+  // part, with no line under the link: Home says all three ways itself.
+  const drillAt = (ticked: number, extra: StepNote = { wallet: FP, was: 'words' }): StepNote => started(ticked, extra);
+  for (const id of ['pass-it-on', 'no-balances', 'waiting-room', 'the-seed'] as const) {
+    const byCard = (drill: StepNote | undefined, hold?: StepNote): Progress =>
+      note({ ...(hold === undefined ? {} : { 'hold-some': hold }), ...(drill === undefined ? {} : { 'prove-the-backup': drill }), [id]: started(0, { from: cardOf(id) }) }, id);
+    // The removal ticked, the restore not: Home. Whatever the note says of "Hold some", and however the drill was reached.
+    for (const [what, hold] of holds) {
+      for (const drill of [drillAt(2), drillAt(2, { wallet: FP, was: 'passkey' }), drillAt(2, { from: cardOf('prove-the-backup'), wallet: FP, was: 'words' })]) {
+        assert.deepEqual(needOf(id, 1, 'no-wallet', byCard(drill, hold), 'yes'), { text: 'need_no-wallet', more: null, link: HOME }, `${id}, the drill's wallet out, "Hold some": ${what}`);
+      }
+    }
+    // At every other place of the drill the first part still leads to Create: before the removal, once the
+    // wallet is back, and when the drill is done.
+    for (const drill of [undefined, drillAt(0, {}), drillAt(1), drillAt(3), doneNote('prove-the-backup', { was: 'words' })]) {
+      assert.deepEqual(needOf(id, 1, 'no-wallet', byCard(drill), 'yes'), { text: 'need_no-wallet', more: null, link: CREATE, also: HAD_ONE }, `${id}, the drill at ${JSON.stringify(drill?.parts ?? null)}`);
+    }
+    // Coins are asked of the faucet as before: this is about a wallet alone.
+    assert.deepEqual(needOf(id, 1, 'no-coins', byCard(drillAt(2)), 'yes'), { text: 'need_no-coins', more: null, link: FAUCET }, id);
+    // A step from the list is as it was, with the drill's wallet out as without: "Hold some", or Home once that is done.
+    const listed = (hold?: StepNote): Progress => note({ ...(hold === undefined ? {} : { 'hold-some': hold }), 'prove-the-backup': drillAt(2), [id]: started(0) }, id);
+    assert.deepEqual(needOf(id, 1, 'no-wallet', listed(), 'yes'), { text: 'need_no-wallet', more: null, link: HOLD, also: HAD_ONE }, id);
+    assert.deepEqual(needOf(id, 1, 'no-wallet', listed(doneNote('hold-some')), 'yes'), { text: 'need_no-wallet', more: null, link: HOME }, id);
+  }
+  // "Pass it on" reached by a need of "There are no balances", with the drill's wallet out: Home as well.
+  const sentOn = note({ 'prove-the-backup': drillAt(2), 'no-balances': started(0, { from: cardOf('no-balances') }), 'pass-it-on': started(0, { cameFor: 'no-balances' }) }, 'pass-it-on');
+  assert.deepEqual(needOf('pass-it-on', 1, 'no-wallet', sentOn, 'yes'), { text: 'need_no-wallet', more: null, link: HOME });
+  // The drill's own first part never goes by this: its removal is not ticked while that part is open. (A note
+  // that says otherwise is not one this page writes, and the drill then still names Create at its first part.)
+  assert.deepEqual(needOf('prove-the-backup', 1, 'no-wallet', note({ 'prove-the-backup': started(0, { from: cardOf('prove-the-backup') }) }, 'prove-the-backup'), 'yes').link, CREATE);
+  // The state is the one Home asks about: with no wallet in the browser, the drill's open part waits for its restore.
+  assert.equal(awaitsRestore(judge('prove-the-backup', noWallet({ note: note({ 'prove-the-backup': drillAt(2), 'pass-it-on': started(0, { from: cardOf('pass-it-on') }) }, 'pass-it-on') }))), true);
+
+  // "Hold some" itself, by its own card: it never names itself, and its first part is "make one" in any case.
+  const own = note({ 'hold-some': started(1, { from: cardOf('hold-some') }) }, 'hold-some');
+  assert.deepEqual(needOf('hold-some', 2, 'no-wallet', own, 'yes'), { text: 'need_no-wallet', more: null, link: HOME });
+  assert.deepEqual(needOf('hold-some', 3, 'no-coins', own, 'yes'), { text: 'need_no-coins', more: null, link: FAUCET });
+
+  // "Nothing sent" still names "Pass it on" for both readers, until that step is done; then Send.
+  for (const progress of [note({ 'no-balances': started(0, { from: cardOf('no-balances') }) }, 'no-balances'), note({ 'no-balances': started(0) }, 'no-balances')]) {
+    for (const part of [1, 2, 3]) {
+      assert.deepEqual(needOf('no-balances', part, 'nothing-sent', progress, 'yes'), { text: 'needSentOnce', more: null, link: { kind: 'step', step: 'pass-it-on' } });
+    }
+    const passed: Progress = { ...progress, steps: { ...progress.steps, 'pass-it-on': doneNote('pass-it-on') } };
+    assert.deepEqual(needOf('no-balances', 1, 'nothing-sent', passed, 'yes').link, SEND);
+  }
+  // Every other reason is as it is for a step from the list.
+  const card = note({ 'prove-the-backup': started(2, { from: cardOf('prove-the-backup'), wallet: FP, was: 'words' }) }, 'prove-the-backup');
+  const list = note({ 'prove-the-backup': started(2, { wallet: FP, was: 'words' }) }, 'prove-the-backup');
+  for (const reason of ['not-spendable-yet', 'nothing-sent', 'came-back-with-passkey', 'another-wallet', 'storage'] as const) {
+    for (const part of [1, 2, 3, 4]) assert.deepEqual(needOf('prove-the-backup', part, reason, card, 'yes'), needOf('prove-the-backup', part, reason, list, 'yes'), `${reason}, part ${part}`);
+  }
+
+  // The words on the two buttons and the line, in both languages: none is new.
+  assert.deepEqual([en.actCreate, en.actHome, en.actFaucet], ['Create a practice wallet', 'Open, restore or create a wallet', 'Get practice coins']);
+  assert.deepEqual([es.actCreate, es.actHome, es.actFaucet], ['Crear una billetera de práctica', 'Abrir, restaurar o crear una billetera', 'Pedir monedas de práctica']);
+  // The piece draws a need's link to a screen and the line under it as it always did: nothing in it knows of the rule.
+  const piece = readFileSync(new URL('../src/screens/doit/OpenPart.svelte', import.meta.url), 'utf8');
+  assert.match(piece, /let need = \$derived\(view\.state === 'blocked' && !isWalletTrouble\(view\.reason\) \? needOf\(id, part, view\.reason, doit\.progress, doit\.kept\) : null\);/);
+  assert.match(piece, /\{#if need\.also !== undefined\}/);
 });
 
 test('the drill asks for three words off the paper, and names where a reader with no paper copy makes one', () => {
@@ -289,6 +437,69 @@ test('"Start this step again" is offered on a step under way, and not while the 
   assert.equal(canRestart(judge('prove-the-backup', world({ chain: coins, note: drill(1) })), 'newer', 'ready'), false);
 });
 
+test('the open part that waits for the wallet to come back: the drill between its removal and its restore', () => {
+  const drill = (count: number, extra: StepNote = { wallet: FP, was: 'words' }): Progress => note({ 'prove-the-backup': started(count, extra) }, 'prove-the-backup');
+  const coins = chain(state([{ tx: 'c1', sats: 50_000 }]));
+  const waits = (seen: Parameters<typeof judge>[1]): boolean => awaitsRestore(judge('prove-the-backup', seen));
+
+  // The wallet removed, and nothing here: the restore is what the step waits for.
+  const out = judge('prove-the-backup', noWallet({ note: drill(2) }));
+  assert.deepEqual(out.parts.map((part) => part.state), ['ticked', 'ticked', 'now', 'later']);
+  assert.equal(awaitsRestore(out), true);
+  // However the wallet was kept before, and whether or not the step is still the one followed.
+  assert.equal(waits(noWallet({ note: drill(2, { wallet: FP, was: 'passkey' }) })), true);
+  assert.equal(waits(noWallet({ note: note({ 'prove-the-backup': started(2, { wallet: FP, was: 'words' }) }) })), true);
+  // Where nothing can be written, a note that holds the removal says the same: the restore is still what
+  // brings that reader's wallet back.
+  for (const kept of ['no', 'newer'] as const) assert.equal(waits(noWallet({ note: drill(2), kept })), true, kept);
+
+  // Not at its other parts: before the removal, with a wallet here and with none, and once the wallet is back.
+  assert.equal(waits(world({ chain: coins, note: drill(0, {}) })), false);
+  assert.equal(waits(noWallet({ note: drill(0, {}) })), false);
+  assert.equal(waits(world({ chain: coins, note: drill(1) })), false);
+  assert.equal(waits(noWallet({ note: drill(1) })), false, 'no wallet, and nothing was removed while the step was followed: a need, not the restore');
+  assert.equal(waits(world({ chain: coins, note: drill(3) })), false);
+  // Not with a wallet here that is not the restored one: the drill's own through its passkey, and another
+  // wallet, are each a need, said on the step's screen.
+  const passkey = judge('prove-the-backup', world({ record: record('passkey'), unlocked: false, chain: coins, note: drill(2, { wallet: FP, was: 'passkey' }) }));
+  assert.deepEqual(passkey.parts[2], { state: 'blocked', reason: 'came-back-with-passkey' });
+  assert.equal(awaitsRestore(passkey), false);
+  const other = judge('prove-the-backup', world({ record: sampleOther(), chain: coins, note: drill(2) }));
+  assert.deepEqual(other.parts[2], { state: 'blocked', reason: 'another-wallet' });
+  assert.equal(awaitsRestore(other), false);
+  // The wallet's own trouble is no "no wallet": nobody knows what is here, and the wallet's own piece speaks.
+  for (const status of ['unreadable', 'newer', 'broken', 'blocked'] as const) assert.equal(waits(world({ status, record: null, note: drill(2) })), false, status);
+
+  // Not for a done drill, nor for one that was never started: also where nothing can be written, where its
+  // first part stands in the way.
+  assert.equal(waits(noWallet({ note: note({ 'prove-the-backup': doneNote('prove-the-backup', { was: 'words' }) }) })), false);
+  assert.equal(waits(noWallet()), false);
+  for (const kept of ['no', 'newer'] as const) {
+    const never = judge('prove-the-backup', noWallet({ kept }));
+    assert.deepEqual([never.at, never.parts[0]], [1, { state: 'blocked', reason: 'storage' }], kept);
+    assert.equal(awaitsRestore(never), false, kept);
+  }
+  // Nor for a note that follows a step it never started (a note edited by hand).
+  assert.equal(waits(noWallet({ note: { v: 1, following: 'prove-the-backup', followedAt: NOW, steps: {} } })), false);
+
+  // And for no other step, at any of its parts, with a wallet in the browser or with none.
+  for (const id of STEPS) {
+    if (id === 'prove-the-backup') continue;
+    for (let done = 0; done <= partCount(id); done++) {
+      const held = note({ [id]: started(done, { wallet: FP, tx: txid('a1'), sentAt: NOW }) }, id);
+      for (const seen of [noWallet({ note: held }), world({ chain: coins, note: held }), noWallet({ note: held, kept: 'no' })]) {
+        assert.equal(awaitsRestore(judge(id, seen)), false, `${id} ${done}`);
+      }
+    }
+  }
+  // It looks at the open part alone, and never at the wallet: a view handed in says it all.
+  const made: StepView = { id: 'prove-the-backup', state: 'started', parts: [{ state: 'ticked', waited: null }, { state: 'ticked', waited: null }, NOW_PART, { state: 'later' }], at: 3 };
+  assert.equal(awaitsRestore(made), true);
+  assert.equal(awaitsRestore({ ...made, at: null }), false);
+  assert.equal(awaitsRestore({ ...made, at: 4 }), false);
+  assert.equal(awaitsRestore({ ...made, parts: [made.parts[0]!, made.parts[1]!, { state: 'unknown', reason: 'looking' }, { state: 'later' }] }), false);
+});
+
 test('the sentences the spec gives for the drill, word for word', () => {
   assert.equal(
     en['need_came-back-with-passkey'],
@@ -308,7 +519,8 @@ test('"Hold some" links each new thing it names; no other step links the glossar
   assert.deepEqual(termsOf('hold-some', 1), ['wallet', 'seed']);
   assert.deepEqual(termsOf('hold-some', 2), ['address', 'faucet']);
   assert.deepEqual(termsOf('hold-some', 3), ['block']);
-  assert.deepEqual(termsOf('hold-some', 4), ['explorer', 'height']);
+  // Three parts, three lists. A part the step does not have links nothing.
+  assert.deepEqual(termsOf('hold-some', 4), []);
   for (const id of STEPS) {
     if (id === 'hold-some') continue;
     for (let part = 1; part <= partCount(id); part++) assert.deepEqual(termsOf(id, part), [], `${id} ${part}`);
@@ -319,13 +531,20 @@ test('"Hold some" links each new thing it names; no other step links the glossar
     wallet: { en: 'wallet', es: 'billetera' },
     address: { en: 'address', es: 'direccion' },
     seed: { en: 'seed-phrase', es: 'frase-semilla' },
-    explorer: { en: 'block-explorer', es: 'explorador-de-bloques' },
-    height: { en: 'block-height', es: 'altura-de-bloque' },
     block: { en: 'block', es: 'bloque' },
   } as const;
   for (const [term, slugs] of Object.entries(entries) as [keyof typeof entries, { en: string; es: string }][]) {
     assert.equal(glossaryUrl(SITE, 'en', term), `${SITE}/glossary/${slugs.en}`);
     assert.equal(glossaryUrl(SITE, 'es', term), `${SITE}/es/glosario/${slugs.es}`);
+  }
+  // The step once linked two more entries, a block explorer and a block's height, from a part that sent the
+  // reader to the explorer. That part is gone, and the map of entries holds neither: nothing in the app links them.
+  const map = readFileSync(new URL('../src/screens/read/read.ts', import.meta.url), 'utf8');
+  const listed = /const GLOSSARY = \{([\s\S]*?)\} as const;/.exec(map)?.[1] ?? '';
+  assert.deepEqual([...listed.matchAll(/^  (\w+): /gm)].map((match) => match[1]), ['utxo', 'rbf', 'change', 'fee', 'block', 'mempool', 'wallet', 'address', 'seed']);
+  assert.doesNotMatch(listed, /explorer|height|explorador|altura/);
+  for (const lang of LANGS) {
+    for (const gone of ['term_explorer', 'term_height']) assert.equal(Object.hasOwn(strings.doit[lang], gone), false, `${lang}.${gone}`);
   }
   // The faucet has an English entry only: one address, and the Spanish link says that it is English.
   assert.equal(faucetGlossaryUrl(SITE), `${SITE}/glossary/bitcoin-faucet`);
@@ -492,22 +711,36 @@ test('a done step\'s ways on: back to the step the reader came for, or back to t
   assert.equal(nextStep('the-seed'), 'prove-the-backup');
   assert.equal(nextStep('hold-some'), null);
 
-  // Walked through the one write function, as the app writes it: "Pass it on" by its card with no wallet,
-  // on to "Hold some", which is done; then "Pass it on" itself.
-  let progress = applyChange({ v: 1, following: null, steps: {} }, { kind: 'open', step: 'pass-it-on', at: NOW, from: '/journey/how-bitcoin-works' });
-  progress = applyChange(progress, { kind: 'detour', step: 'hold-some', cameFor: 'pass-it-on' });
-  progress = applyChange(progress, { kind: 'open', step: 'hold-some', at: NOW + 1, from: null });
-  for (const part of [1, 2, 3, 4]) progress = applyChange(progress, { kind: 'tick', step: 'hold-some', part, at: NOW + 2 });
-  assert.deepEqual(waysOn('hold-some', progress), { led: 'pass-it-on', next: null });
-  // The reader presses the button: the opening of "Pass it on" changes nothing on the card they left.
-  progress = applyChange(progress, { kind: 'open', step: 'pass-it-on', at: NOW + 3, from: null });
-  assert.deepEqual(waysOn('hold-some', progress), { led: 'pass-it-on', next: null });
-  for (const part of [1, 2, 3]) progress = applyChange(progress, { kind: 'tick', step: 'pass-it-on', part, at: NOW + 4 });
-  // "Pass it on" was reached by its card: no "Next step". And "Hold some", which no card ever led to, is a
-  // step from the list again: it leads back to no step, and its chapter has no next one to offer.
-  assert.deepEqual(waysOn('pass-it-on', progress), { led: null, next: null });
-  assert.deepEqual(waysOn('hold-some', progress), { led: null, next: null });
-  assert.equal(progress.steps['hold-some']?.cameFor, undefined);
+  // Walked through the one write function, as the app writes it: "There are no balances" by its card with a
+  // wallet that has sent nothing, on to "Pass it on", which is done; then "There are no balances" itself.
+  let progress = applyChange({ v: 1, following: null, steps: {} }, { kind: 'open', step: 'no-balances', at: NOW, from: '/journey/how-bitcoin-works' });
+  progress = applyChange(progress, { kind: 'detour', step: 'pass-it-on', cameFor: 'no-balances' });
+  progress = applyChange(progress, { kind: 'open', step: 'pass-it-on', at: NOW + 1, from: null });
+  for (const part of [1, 2, 3]) progress = applyChange(progress, { kind: 'tick', step: 'pass-it-on', part, at: NOW + 2 });
+  assert.deepEqual(waysOn('pass-it-on', progress), { led: 'no-balances', next: null });
+  // The reader presses the button: the opening of "There are no balances" changes nothing on the card they left.
+  progress = applyChange(progress, { kind: 'open', step: 'no-balances', at: NOW + 3, from: null });
+  assert.deepEqual(waysOn('pass-it-on', progress), { led: 'no-balances', next: null });
+  for (const part of [1, 2, 3]) progress = applyChange(progress, { kind: 'tick', step: 'no-balances', part, at: NOW + 4 });
+  // "There are no balances" was reached by its card: no "Next step". And "Pass it on", which no card ever led
+  // to, is a step from the list again: it leads back to no step, and is offered its chapter's next one.
+  assert.deepEqual(waysOn('no-balances', progress), { led: null, next: null });
+  assert.deepEqual(waysOn('pass-it-on', progress), { led: null, next: 'no-balances' });
+  assert.equal(progress.steps['pass-it-on']?.cameFor, undefined);
+
+  // A road that an earlier version of this page wrote, and that this one still reads: "Pass it on" by its card
+  // with no wallet, sent on to "Hold some". "Hold some" leads back to it when it is done, as that note says.
+  let earlier = applyChange({ v: 1, following: null, steps: {} }, { kind: 'open', step: 'pass-it-on', at: NOW, from: '/journey/how-bitcoin-works' });
+  earlier = applyChange(earlier, { kind: 'detour', step: 'hold-some', cameFor: 'pass-it-on' });
+  earlier = applyChange(earlier, { kind: 'open', step: 'hold-some', at: NOW + 1, from: null });
+  for (const part of [1, 2, 3]) earlier = applyChange(earlier, { kind: 'tick', step: 'hold-some', part, at: NOW + 2 });
+  assert.equal(earlier.steps['hold-some']?.doneAt, NOW + 2);
+  assert.deepEqual(waysOn('hold-some', earlier), { led: 'pass-it-on', next: null });
+  for (const part of [1, 2, 3]) earlier = applyChange(earlier, { kind: 'tick', step: 'pass-it-on', part, at: NOW + 4 });
+  // And when the step the reader came for is done, "Hold some" is a step from the list again.
+  assert.deepEqual(waysOn('pass-it-on', earlier), { led: null, next: null });
+  assert.deepEqual(waysOn('hold-some', earlier), { led: null, next: null });
+  assert.equal(earlier.steps['hold-some']?.cameFor, undefined);
   // The same steps done from the wallet's own list: "Next step" is offered, as before.
   let listed = applyChange({ v: 1, following: null, steps: {} }, { kind: 'open', step: 'pass-it-on', at: NOW, from: null });
   for (const part of [1, 2, 3]) listed = applyChange(listed, { kind: 'tick', step: 'pass-it-on', part, at: NOW + 1 });
@@ -615,14 +848,14 @@ test('three places are picked once for a question and kept until it is answered 
 });
 
 test('an answer that does not tick gets a sentence that never says the number', () => {
-  assert.equal(answerKey('block', 'right'), null);
-  assert.equal(answerKey('block', 'wrong'), 'blockWrong');
-  assert.equal(answerKey('coins', 'wrong'), 'coinsWrong');
-  assert.equal(answerKey('coins', 'total'), 'coinsTotal');
-  assert.equal(answerKey('coins', 'empty'), 'answerEmpty');
-  assert.equal(answerKey('block', 'period'), 'answerPeriod');
-  assert.equal(answerKey('block', 'invalid'), 'answerInvalid');
-  assert.equal(answerKey('coins', 'not-now'), 'answerClosed');
+  // One question has a number for its answer: how many coins the wallet holds.
+  assert.equal(answerKey('right'), null);
+  assert.equal(answerKey('wrong'), 'coinsWrong');
+  assert.equal(answerKey('total'), 'coinsTotal');
+  assert.equal(answerKey('empty'), 'answerEmpty');
+  assert.equal(answerKey('period'), 'answerPeriod');
+  assert.equal(answerKey('invalid'), 'answerInvalid');
+  assert.equal(answerKey('not-now'), 'answerClosed');
   // The total gets the line the spec gives, and any other wrong count says to count the rows.
   assert.equal(en.coinsTotal, 'That is what your coins add up to. The question is how many coins hold it.');
   assert.match(en.coinsWrong, /Count the rows on the Coins screen/);
@@ -631,11 +864,18 @@ test('an answer that does not tick gets a sentence that never says the number', 
   for (const lang of LANGS) assert.notEqual(strings.doit[lang].coinsHint, strings.doit[lang]['guide_no-balances_2'], lang);
   // None of them has a slot: nothing of the wallet can be put into them.
   for (const lang of LANGS) {
-    for (const key of ['blockWrong', 'coinsWrong', 'coinsTotal', 'answerEmpty', 'answerPeriod', 'answerInvalid', 'answerClosed'] as const) {
+    for (const key of ['coinsWrong', 'coinsTotal', 'answerEmpty', 'answerPeriod', 'answerInvalid', 'answerClosed'] as const) {
       assert.deepEqual(slotNames(strings.doit[lang][key]), [], `${lang}.${key}`);
       assert.doesNotMatch(strings.doit[lang][key], /[0-9]/, `${lang}.${key}`);
     }
+    // Nothing is asked about a block any more: the table holds no word of that question.
+    for (const gone of ['blockLabel', 'blockHint', 'blockWrong', 'blockExplorer']) assert.equal(Object.hasOwn(strings.doit[lang], gone), false, `${lang}.${gone}`);
   }
+  // The piece that asks draws the one question, and judges it against the wallet as it stands at the press.
+  const piece = readFileSync(new URL('../src/screens/doit/AskNumber.svelte', import.meta.url), 'utf8');
+  assert.match(piece, /const judged = answerCoins\(doit\.seen\(Date\.now\(\)\), typed\);/);
+  assert.match(piece, /<Field label=\{t\.coinsLabel\} hint=\{t\.coinsHint\} \{error\}>/);
+  assert.doesNotMatch(piece, /block/i);
 });
 
 // -- a sentence with an address in it --------------------------------------------------------------------
@@ -704,21 +944,12 @@ test('a need that is read off the list of transactions is said only where the sc
   const elsewhere = { coins: true, list: false };
   const confirmed = chain(state([{ tx: 'c1', sats: 100_000 }]));
 
-  // "Hold some", part 4, on Receive. The faucet's coin has its block, so part 3 is ticked. The list of
-  // transactions the page holds was read on the step's own screen, before the coin came: it holds no payment.
-  const behind = viewOf('hold-some', { chain: confirmed, history: [], note: note({ 'hold-some': started(3) }, 'hold-some') });
-  assert.deepEqual(behind.parts[3], { state: 'blocked', reason: 'no-coins' }, 'what judge() reads off such a list');
-  // The strip must not say "first: get practice coins" over a coin that is confirmed: it names the part.
-  const onReceive = stripView(behind, elsewhere);
-  assert.deepEqual(onReceive, { step: 'hold-some', part: 4, parts: 4, says: { kind: 'part' } });
-  assert.equal(stripText(onReceive, 'en', NOW), 'See it from outside');
-  assert.equal(stripText(onReceive, 'es', NOW), es['part_hold-some_4']);
-  assert.equal(stripSpeaks(onReceive), false, 'on a phone the strip keeps "4 of 4": it has no need to say');
-  assert.deepEqual(stripView(behind, { coins: false, list: false }).says, { kind: 'part' });
-  // On a screen that keeps the list read, the answer is that list's own, and it is said.
-  assert.deepEqual(stripView(behind, { coins: true, list: true }).says, { kind: 'need', reason: 'no-coins' });
-  assert.deepEqual(stripView(behind).says, { kind: 'need', reason: 'no-coins' });
-  assert.equal(stripText(stripView(behind), 'en', NOW), 'first: get practice coins');
+  // No part of "Hold some" is read off the list: on Receive, where the faucet's coin gets its block and the list
+  // the page holds is older than the coin, the step is simply done, and the strip says so.
+  const behind = viewOf('hold-some', { chain: confirmed, history: [], note: note({ 'hold-some': { ...started(3), doneAt: NOW } }, 'hold-some') });
+  assert.deepEqual(stripView(behind, elsewhere), { step: 'hold-some', part: null, parts: 3, says: { kind: 'done' } });
+  assert.equal(stripText(stripView(behind, elsewhere), 'en', NOW), '"Hold some" is done');
+  assert.equal(stripText(stripView(behind, elsewhere), 'es', NOW), '"Ten algunas": hecho');
 
   // "There are no balances": each of its parts rests on a payment the wallet has sent, read off the list. On
   // Send, where the payment goes out and the list is not read, the strip names the part.
@@ -750,7 +981,11 @@ test('a need that is read off the list of transactions is said only where the sc
   // After "Send another" the note names no payment: the note says so.
   said('waiting-room', { chain: confirmed, history: [], note: note({ 'waiting-room': started(1) }, 'waiting-room') }, 'nothing-sent');
   // No wallet in the browser.
-  assert.deepEqual(stripView(judge('hold-some', noWallet({ note: note({ 'hold-some': started(3) }, 'hold-some') })), elsewhere).says, { kind: 'need', reason: 'no-wallet' });
+  assert.deepEqual(stripView(judge('hold-some', noWallet({ note: note({ 'hold-some': started(2) }, 'hold-some') })), elsewhere).says, { kind: 'need', reason: 'no-wallet' });
+  // And the part of "Hold some" that waits for its coin: the strip counts "3 of 3".
+  const third = stripView(viewOf('hold-some', { note: note({ 'hold-some': started(2) }, 'hold-some') }), elsewhere);
+  assert.deepEqual(stripCount(third, 'en'), { long: 'part 3 of 3', short: '3 of 3' });
+  assert.deepEqual(stripCount(third, 'es'), { long: 'parte 3 de 3', short: '3 de 3' });
 
   // The piece hands the strip what the screen it stands on keeps read.
   const piece = readFileSync(new URL('../src/components/doit/Strip.svelte', import.meta.url), 'utf8');
@@ -818,8 +1053,9 @@ test('on a narrow screen the strip gives the room of "2 of 3" to its words where
   // The coins are still being looked up, or could not be: the wallet's own screen says that under the strip.
   assert.equal(speaks('pass-it-on', { chain: chain(null), note: note({ 'pass-it-on': started() }, 'pass-it-on') }), false);
   assert.equal(speaks('pass-it-on', { chain: chain(null, { error: 'network', scanning: false }), note: note({ 'pass-it-on': started() }, 'pass-it-on') }), false);
-  // The drill, with the wallet removed: the reader is on Home, whose main button makes a new wallet.
-  // The strip is all that says "restore", so it says the part's name on a phone too.
+  // The drill, with the wallet removed: the screens a reader with no wallet is on offer to make a new one,
+  // and the step goes on with a restore. So the strip says the part's name on a phone too. (Home says so
+  // itself in that state: test/front-text.test.ts.)
   const removed = stripView(judge('prove-the-backup', noWallet({ note: note({ 'prove-the-backup': started(2, { wallet: FP, was: 'words' }) }, 'prove-the-backup') })));
   assert.deepEqual(removed, { step: 'prove-the-backup', part: 3, parts: 4, says: { kind: 'part' } });
   assert.equal(stripSpeaks(removed), true);
@@ -840,7 +1076,7 @@ test('on a narrow screen the strip gives the room of "2 of 3" to its words where
 test('"done" is said of a done step and of no other: a step the note follows and never started gets no strip at all', () => {
   // A note edited by hand: it follows a step whose screen was never opened.
   const never = stripView(judge('hold-some', world({ note: { v: 1, following: 'hold-some', followedAt: NOW, steps: {} } })));
-  assert.deepEqual(never, { step: 'hold-some', part: null, parts: 4, says: { kind: 'part' } });
+  assert.deepEqual(never, { step: 'hold-some', part: null, parts: 3, says: { kind: 'part' } });
   assert.equal(stripShows(never), false);
   assert.equal(stripText(never, 'en', NOW), '');
   // A step under way, and one that is done, are shown.

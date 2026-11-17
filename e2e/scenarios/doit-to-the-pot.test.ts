@@ -75,6 +75,8 @@ import {
   listState,
   mainSays,
   marked,
+  namesBlock,
+  namesNoBlock,
   noteFor,
   noteOf,
   noteText,
@@ -241,12 +243,12 @@ scenario(
     const reader = await begin(s, '/do/hold-some', { record });
     const { page } = reader;
 
-    // -- "Hold some": the wallet is here and holds confirmed coins, so three parts tick as it opens. The block is the first coin's. --
-    await untilParts(page, ['ticked', 'ticked', 'ticked', 'now']);
-    await page.fill('step-block-answer', String(firstBlock));
-    await page.click('step-block-check');
+    // -- "Hold some": the wallet is here and holds confirmed coins, so its three parts tick as it opens, and
+    //    it is done by that opening. Its card names the block of the first coin, the lower of the two. --
     await page.waitFor('step-done');
     assert.equal(await page.waitForStatus(saidDone('hold-some')), saidDone('hold-some'));
+    assert.deepEqual(await partsOf(page), ['ticked', 'ticked', 'ticked']);
+    await namesBlock(page, s, fundings[0]!, firstBlock);
 
     // -- "Pass it on", by the list, inside the same page --
     await page.click('step-list');
@@ -285,7 +287,10 @@ scenario(
     assert.deepEqual([await listState(page, 'hold-some'), await listState(page, STEP)], ['done', 'done']);
     await pickStep(page, 'hold-some');
     await page.waitFor('step-done');
-    assert.deepEqual(await partsOf(page), ['ticked', 'ticked', 'ticked', 'ticked']);
+    assert.deepEqual(await partsOf(page), ['ticked', 'ticked', 'ticked']);
+    // Its card names no block now: the coin that was paid to the wallet was sent on, and the wallet holds none.
+    await page.settle();
+    await namesNoBlock(page, s, 'every coin sent on');
     await page.goto('/wallet');
     await page.waitFor('no-coins');
     assert.equal(await page.text('total'), '0 practice sats');
@@ -319,6 +324,9 @@ scenario(
       assert.doesNotMatch(said, /\byou hold\b|\bholds your coins\b|\bis in a block\b|\bstill\b|\bnow\b/i, id);
       assert.equal(await hrefOf(page, 'step-back'), `${s.stack.config.siteUrl}${id === STEP ? CHAPTER : '/journey/what-bitcoin-actually-is'}#done=${id}`);
       assert.equal(await countOf(page, 'step-need'), 0);
+      // And with no wallet to read a coin from, no card names a block.
+      await page.settle();
+      await namesNoBlock(page, s, `${id} with no wallet`);
       await page.click('step-list');
       await arrivesAt(page, '/do');
     }

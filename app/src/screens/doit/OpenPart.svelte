@@ -6,7 +6,11 @@
   //   now      what to do, in one or two sentences, and the part's one
   //            action: a link into the wallet, a question, or the box the
   //            reader ticks. A part that waits for a block has no action:
-  //            it shows the waiting display, and ticks by itself.
+  //            it shows the waiting display, and ticks by itself. The
+  //            display links the practice explorer where the part waits
+  //            for a payment of the wallet's own, and not where "Hold some"
+  //            waits for its coin's block: the first step's one idle moment
+  //            does not send a newcomer to the explorer (WaitingBlock.svelte).
   //   blocked  what is missing, and the step or the screen that meets it.
   //            For the wallet's own trouble (a stored wallet that cannot be
   //            used, a wallet that cannot run in this browser, a storage
@@ -34,7 +38,6 @@
   import Button from '../../components/Button.svelte';
   import Checkbox from '../../components/Checkbox.svelte';
   import Notice from '../../components/Notice.svelte';
-  import OutLink from '../../components/OutLink.svelte';
   import TextLink from '../../components/TextLink.svelte';
   import { faucetLink } from '../../components/wallet/frame.ts';
   import StoredTrouble from '../../components/wallet/StoredTrouble.svelte';
@@ -45,7 +48,6 @@
   import { router } from '../../lib/router.svelte.ts';
   import { useWallet } from '../../lib/wallet-context.ts';
   import { strings } from '../../strings/index.ts';
-  import { explorerTxUrl } from '../read/read.ts';
   import AskNumber from './AskNumber.svelte';
   import AskWords from './AskWords.svelte';
   import ChainLines from './ChainLines.svelte';
@@ -244,7 +246,8 @@
     {/if}
 
     {#if waits !== null}
-      <WaitingBlock waiting={waits} {now} onagain={sendAnother} />
+      <!-- No link to the explorer while "Hold some" waits for its coin's block: the done card offers it, beside who runs it. -->
+      <WaitingBlock waiting={waits} {now} explorer={fact !== 'coin-confirmed'} onagain={sendAnother} />
     {:else if confirmations !== null}
       <div class="space-y-2">
         <p class="text-xl font-bold text-ink-800" data-testid="step-confirmations" data-count={String(confirmations)}>
@@ -258,18 +261,11 @@
         </div>
         {@render chain()}
       </div>
-    {:else if ask === 'block'}
-      {#if view.txid !== null}
-        <p class="text-sm">
-          <OutLink href={explorerTxUrl(wallet.config.explorerUrl, view.txid)} text={t.blockExplorer} data-testid="step-explorer" />
-        </p>
-      {/if}
-      <AskNumber {id} ask="block" {onticked} />
     {:else if ask === 'coins'}
       <p class="text-sm">
         <TextLink href={router.link({ name: 'coins' })} onclick={() => doit.follow(id)}>{t.actCoins}</TextLink>
       </p>
-      <AskNumber {id} ask="coins" {onticked} />
+      <AskNumber {id} {onticked} />
     {:else if ask === 'words'}
       {#if paper !== null}
         <!-- Three words off the paper, and a reader who has no paper yet: the step or the screen where one is made. -->

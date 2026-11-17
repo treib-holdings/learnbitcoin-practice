@@ -59,15 +59,12 @@ const EVERYTHING: StripLive = { coins: true, list: true };
 
 /**
  * True for a need that judge() reads off the wallet's list of transactions
- * and off nothing else: that no transaction in a block has paid the wallet
- * yet (the question of "Hold some" is about the first one that has), and
- * that the wallet has sent no payment of its own (every part of "There are
- * no balances" rests on one). `part` is the number of the part that is
- * open, from 1.
+ * and off nothing else: that the wallet has sent no payment of its own
+ * (every part of "There are no balances" rests on one). `part` is the
+ * number of the part that is open, from 1.
  */
 function readOffList(id: StepId, part: number, reason: BlockedReason): boolean {
   const fact = partDef(id, part)?.on;
-  if (fact === 'block-height') return reason === 'no-coins';
   return (fact === 'coins-opened' || fact === 'coin-count' || fact === 'payment-read') && reason === 'nothing-sent';
 }
 
@@ -83,11 +80,11 @@ function readOffList(id: StepId, part: number, reason: BlockedReason): boolean {
  *
  * The same holds for a need that is read off the list of transactions. On
  * a screen that does not keep the list read, the list the page holds can
- * be older than what the reader has just done there: on Receive the
- * faucet's coin gets its block, and a list read before the coin came still
- * holds no payment to the wallet. The strip would then say "first: get
- * practice coins" over the very coins. So such a need is said only where
- * the list is kept read. Elsewhere the strip names the part.
+ * be older than what the reader has just done there: on Send a payment
+ * goes out, and a list read before it was sent still holds no payment of
+ * the wallet's own. The strip would then say "first: send a payment" over
+ * the very payment. So such a need is said only where the list is kept
+ * read. Elsewhere the strip names the part.
  */
 export function stripView(view: StepView, live: StripLive = EVERYTHING): StripView {
   const parts = partCount(view.id);
@@ -143,9 +140,12 @@ export function stripOffersChapter(progress: Progress, step: StepId): boolean {
  * that room to the words when they are what the reader has to know on the
  * very screen they are on: something is missing first, the part waits for a
  * block, or the network has lost the payment. And for the one part that is
- * done with no wallet in the browser, the drill's restore: the reader is
- * then on Home, whose main button makes a new wallet, and the strip is the
- * only thing on that screen that says "restore".
+ * done with no wallet in the browser, the drill's restore: the screens a
+ * reader with no wallet is on (Home, Create) offer to make a new one, and
+ * the strip says on each of them that the step goes on with a restore.
+ * (Home says so itself in that state, and so does the gate that stands in
+ * for a wallet screen: each puts the restore first, as its main button, and
+ * names the step under it.)
  */
 export function stripSpeaks(strip: StripView): boolean {
   const { kind } = strip.says;

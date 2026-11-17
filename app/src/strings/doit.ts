@@ -1,7 +1,8 @@
 // The text of the "Do it" steps: the list of steps, one step's screen, the
 // strip that follows the reader through the wallet, "What just happened" on
 // the transaction screen, and the sentences other screens gain because the
-// progress of the steps is kept in this browser.
+// progress of the steps is kept in this browser, or because the reader is
+// following a step there.
 //
 // The same shape as every file in this folder (see common.ts): one table per
 // language with the same keys, plain strings, slots written {name}.
@@ -43,6 +44,21 @@
 //     what the reader did and saw, in the past tense, or what is true of
 //     Bitcoin whatever happens here. None says what the wallet, the chain,
 //     the pot or this browser holds now.
+//   - Under the buttons of a done "Hold some" stands a piece that is not
+//     from the note: the block that took in a coin paid to the wallet in
+//     this browser, from the wallet's latest look at its coins (coinBlock,
+//     coinCheck and the link coinExplorer). Its sentences are held to the
+//     same rule all the same: they say what a block did, in the past
+//     tense, and nothing of what the wallet holds, so they stay true on a
+//     page that is left open after the coin was sent on. (Two more
+//     pieces of a done card rest on more than the note, and each says so
+//     where it stands below: the pot's count, and under a done "The seed"
+//     the lines on the wallet that is in this browser now.)
+//   - The practice explorer is run by the same people as this wallet and
+//     its network. No sentence here offers a look at it as proof, and none
+//     says "verify, don't trust" of it. Where the done card of "Hold some"
+//     offers a look there, the sentence beside the link says who runs the
+//     explorer (coinCheck).
 //
 // The Spanish name of "Do it" is "Hazlo", the term the site's voice notes
 // propose. The Spanish here is a first draft that no native reviewer has
@@ -95,11 +111,35 @@ export const en = {
   forgetAsk: 'Forget your "Do it" progress in this browser?',
   /**
    * Of this site, not of the browser: "Forget my progress" erases what this site stores, and cannot reach what
-   * another site keeps in the same browser. (Once the main site's chapters stamp a step as done, that stamp is
-   * LearnBitcoin's own, kept by its pages: one more sentence will be needed here then.)
+   * another site keeps in the same browser. The main site's chapters keep a record of their own of a done step
+   * (a card's "done" mark), and the sentence that says so follows this one: forgetMarks.
    */
   forgetWarn:
     'Every tick and every finished step is erased from what this site keeps in this browser. Your wallet and its coins are not touched, and each step can be done again.',
+  /**
+   * The second record of a done step. Drawn in two places on the list of steps: in the question, under the
+   * sentence above, and under the line that says the note is gone (forgotten). It says who keeps a chapter's
+   * mark and where, whose that page is, and that forgetting here leaves the mark. It is true while no chapter
+   * marks anything, too: it speaks of a chapter that "shows a step as done", if one does.
+   *
+   * Where: in the browser that shows the chapter. When this was written the main site's script kept a mark in
+   * that browser's storage for the main site and sent it nowhere, and the main site's privacy page said of its
+   * reading progress that it lives only on the reader's device. The sentence says where because "kept on the
+   * main site" alone can be read as a record on a server, and there is none. It says "the browser that shows
+   * it", not "this browser": a reader who uses two browsers can have a mark in the other one. If the main site
+   * ever keeps a mark anywhere else, this sentence has to change with it.
+   *
+   * It says nothing of how the mark is cleared, on purpose. That is the main site's to decide and to change,
+   * and when this was written the main site had no control for it that every reader can reach: none on a
+   * chapter's page. So the sentence must never say more than the main site's own pages do. Nor does it point
+   * to the browser's site data: most browsers erase stored data site by site, and to them the main site and
+   * this wallet are one site, so that advice could take the wallet with the marks.
+   *
+   * "This one" is the practice wallet's site, "this site" of the two sentences it stands beside. "The main
+   * LearnBitcoin site" is the other one, named without its address: a host name is a fact, and facts are slots.
+   */
+  forgetMarks:
+    "If a chapter of the Journey shows a step as done, that mark is kept by the chapter's page, in the browser that shows it. The chapter's page belongs to the main LearnBitcoin site, not to this one, so forgetting your progress here leaves the mark as it is.",
   forgetYes: 'Forget it',
   forgetNo: 'Keep it',
   /**
@@ -187,7 +227,6 @@ export const en = {
   'part_hold-some_1': 'Make a practice wallet',
   'part_hold-some_2': 'Ask the faucet for coins',
   'part_hold-some_3': 'See them confirm',
-  'part_hold-some_4': 'See it from outside',
   'part_pass-it-on_1': 'Have coins that can be spent',
   'part_pass-it-on_2': 'Send some to the pot',
   'part_pass-it-on_3': 'It gets its first confirmation',
@@ -214,8 +253,6 @@ export const en = {
   /** {seconds} is the time between two practice blocks. */
   'guide_hold-some_3':
     'Your coins are on their way: sent, and not in a block yet. A block takes them in, and that is their first confirmation. On Bitcoin a block comes about every 10 minutes; here, about every {seconds} seconds.',
-  'guide_hold-some_4':
-    'A block explorer is a website that shows a chain to anyone who asks, with no wallet at all. Look up your coin on the practice explorer, and read there which block took it in.',
   'guide_pass-it-on_1': 'The page checks that this wallet holds coins it may spend.',
   'guide_pass-it-on_2':
     'On the Send screen, press "Pass it on" to fill in an address of the pot, choose an amount and send it. The page sees the payment go out.',
@@ -268,7 +305,11 @@ export const en = {
 
   // -- what is missing, when a part cannot be done yet --
   'need_no-wallet': 'This part needs a practice wallet in this browser, and there is none.',
-  /** Under the link to "Hold some", which makes a new wallet: for a reader who has one already. Then its link, to Home. */
+  /**
+   * Under a link that leads to making a new wallet, for a reader who has one already: under the link to "Hold
+   * some" (a step from the wallet's own list) and under "Create a practice wallet" (the first part of a step
+   * that came from a chapter). Then its link, to Home.
+   */
   needHadOne: 'If you made one before, open or restore it on the home screen.',
   needHadOneLink: 'Go to the home screen',
   'need_no-coins': 'This part needs coins, and this wallet holds none.',
@@ -323,13 +364,8 @@ export const en = {
   /** {count} goes from 1 to {total}. */
   confirmations: '{count} of {total} confirmations',
 
-  // -- the questions --
+  // -- the question whose answer is a number --
   check: 'Check',
-  blockLabel: 'Which block took your coin in?',
-  blockHint: 'The number of the block, in digits, as the practice explorer shows it.',
-  blockExplorer: 'Your coin on the practice explorer',
-  blockWrong:
-    'That is not the block. On the practice explorer, the page of your coin\'s transaction names the block that holds it.',
   coinsLabel: 'How many separate coins does this wallet hold?',
   coinsHint: 'The number of rows, in digits.',
   coinsWrong: 'That is not it. Count the rows on the Coins screen: each row is one coin.',
@@ -381,12 +417,13 @@ export const en = {
   // What the reader did and saw, in the past tense (see the top of this file): each is read again on every
   // later visit, when the wallet may be gone, the chain started again, and the pot's coins handed on.
   //
-  // "Hold some": what the page checked is a number, the block of the wallet's first coin. It cannot know where
-  // the reader read it (the wallet's own transaction screen shows it too), so it does not say that the explorer
-  // showed them anything. What an explorer is for is said of any explorer and any chain: of the practice
-  // explorer and "that block" it would stop being true once the practice chain is started again.
+  // "Hold some": what the page saw is that the wallet held a coin in a block. The card is drawn from the note
+  // alone, and the note of this step names no wallet, no coin and no block: so the sentences name none, and
+  // say nothing of an explorer. A block is named under the card's buttons, and only from the latest look of
+  // the wallet that is here at its coins: the block of a coin that was paid to that wallet, which need not be
+  // the block that finished the step, nor a coin of the wallet the step was done with (coinBlock, below).
   'done_hold-some':
-    "You got practice coins, and you named the block that took the first of them in. A block explorer shows a chain to anyone who asks, with no wallet at all, so nobody has to take a wallet's word for what is on it. On Bitcoin it works the same way: verify, don't trust.",
+    'You got practice coins, and a block took them in: that was their first confirmation. Coins are never inside a wallet: the chain keeps the record of them, and a wallet keeps the keys that can spend them.',
   'done_pass-it-on':
     'Your payment got into a block, and the pot took your coins to hand on to a learner who comes after you. The fee was what went in less what came out.',
   'done_no-balances':
@@ -397,6 +434,23 @@ export const en = {
     'You said you wrote your 12 words on paper, and three of them matched. Three right words do not prove the other nine: "Prove the backup" does that.',
   'done_prove-the-backup':
     'The wallet came back from its 12 words, with its coins. The chain kept them the whole time, and the words only unlocked them: you own keys, not coins.',
+  /**
+   * Under the buttons of a done "Hold some", and only while the wallet in this browser holds a coin that was
+   * paid to it and is in a block (coinInBlock in lib/doit/judge.ts): which block that was. {height} is the
+   * block's number. The card cannot know that this wallet is the one the step was done with, nor that the coin
+   * is one of the step's, so it says "a coin that came to this wallet", never "your first coins". And it says
+   * what the block did, not what the wallet holds: the line stays on a page that is left open, where the coin
+   * may have been sent on since, and is still true there.
+   */
+  coinBlock: 'Block {height} of the practice chain took in a coin that came to this wallet.',
+  /**
+   * Under it. The explorer is offered as something to look at, never as proof: the people who run it are the
+   * people who run this wallet and the practice network, and the sentence says so.
+   */
+  coinCheck:
+    'You can look the same coin up on the practice block explorer, a website that shows the chain to anyone who asks, with no wallet at all. We run that explorer too, as we run this wallet and its network, so a look there shows how such a check is done and proves nothing by itself.',
+  /** The link under those two sentences: the coin's transaction on the practice explorer, in a new tab. */
+  coinExplorer: 'This coin on the practice explorer',
   /**
    * Under a done "Pass it on": how many payments, never how many people, and never whose. The count is the
    * pot's own, of the chain as it stands, and the Worker may hand out one that is a few seconds old. A done
@@ -439,10 +493,19 @@ export const en = {
   /** {step} is the next step's title. Only within the same chapter, and only for a reader who opened the step from the wallet's own list. */
   next: 'Next step: {step}',
   /**
-   * The way back to a step, named, on a button: on the card of a done step that a need of another step sent
-   * the reader to, in the faucet's result on Receive, and on Send's "Payment sent". {step} is the step's title.
+   * The way back to a step, named, on a button. It stands in five places: on the card of a done step that a
+   * need of another step sent the reader to, in the faucet's result on Receive, on Send's "Payment sent", on
+   * Backup beside "Hide them" while the 12 words are shown, and on a payment's screen once the followed step
+   * is done. {step} is the step's title.
    */
   backTo: 'Back to "{step}"',
+  /**
+   * On Home, under its first button, while the note follows the drill and the wallet it removed is out of
+   * this browser: Home then puts "Restore from the 12 words" first, and this sentence says which step that
+   * goes on with. The gate that stands in for a wallet screen draws the same pair for the same reader.
+   * {step} is the step's title.
+   */
+  homeRestore: '"{step}" goes on with a restore: bring the wallet you removed back from the 12 words on your paper.',
 
   // -- the strip under the header, on every screen but the followed step's own --
   /** What a screen reader calls the strip. */
@@ -478,7 +541,11 @@ export const en = {
   // -- what the status region says: outcomes only --
   /** {part} is the part's name. */
   saidTicked: 'Part {n} of {m} is ticked: {part}.',
-  /** {step} is the step's title. */
+  /**
+   * {step} is the step's title. Said by the status region when a step is done, and drawn on two of the
+   * wallet's own screens for a reader who follows that step: in the faucet's result on Receive and on a
+   * payment's screen, each time above the button that leads back to the step.
+   */
   saidDone: 'Step done: {step}.',
 
   // -- "What just happened", on the transaction screen --
@@ -528,8 +595,6 @@ export const en = {
   term_wallet: 'wallet',
   term_address: 'address',
   term_seed: 'the 12 words (seed phrase)',
-  term_explorer: 'block explorer',
-  term_height: 'block height',
   term_faucet: 'faucet',
 } as const;
 
@@ -553,6 +618,8 @@ export const es: Record<keyof typeof en, string> = {
   forgetAsk: '¿Olvidar tu progreso de "Hazlo" en este navegador?',
   forgetWarn:
     'Cada marca y cada paso terminado se borra de lo que este sitio guarda en este navegador. Tu billetera y sus monedas no se tocan, y cada paso se puede volver a hacer.',
+  forgetMarks:
+    'Si un capítulo del Recorrido muestra un paso como hecho, esa marca la guarda la página del capítulo, en el navegador que la muestra. La página del capítulo es del sitio principal de LearnBitcoin, no de este, así que olvidar tu progreso aquí deja la marca como está.',
   forgetYes: 'Olvidarlo',
   forgetNo: 'Conservarlo',
   forgotten: 'Tu progreso de "Hazlo" se olvidó. Este sitio ya no guarda nada de él en este navegador.',
@@ -612,7 +679,6 @@ export const es: Record<keyof typeof en, string> = {
   'part_hold-some_1': 'Crea una billetera de práctica',
   'part_hold-some_2': 'Pídele monedas al faucet',
   'part_hold-some_3': 'Míralas confirmarse',
-  'part_hold-some_4': 'Míralo desde afuera',
   'part_pass-it-on_1': 'Ten monedas que se puedan gastar',
   'part_pass-it-on_2': 'Envía algunas al fondo común',
   'part_pass-it-on_3': 'Recibe su primera confirmación',
@@ -636,8 +702,6 @@ export const es: Record<keyof typeof en, string> = {
     'Una dirección es adonde se envían las monedas, y tu billetera muestra una suya en la pantalla Recibir. El faucet reparte monedas de práctica a quien las pide, así que pídeselas ahí.',
   'guide_hold-some_3':
     'Tus monedas están en camino: enviadas, y todavía fuera de un bloque. Un bloque las incluye, y esa es su primera confirmación. En Bitcoin llega un bloque más o menos cada 10 minutos; aquí, más o menos cada {seconds} segundos.',
-  'guide_hold-some_4':
-    'Un explorador de bloques es un sitio web que le muestra una cadena a quien pregunte, sin ninguna billetera. Busca tu moneda en el explorador de práctica, y lee ahí qué bloque la incluyó.',
   'guide_pass-it-on_1': 'La página comprueba que esta billetera tenga monedas que pueda gastar.',
   'guide_pass-it-on_2':
     'En la pantalla Enviar, toca "Pásala" para llenar una dirección del fondo común, elige un monto y envíalo. La página ve salir el pago.',
@@ -726,11 +790,6 @@ export const es: Record<keyof typeof en, string> = {
   confirmations: '{count} de {total} confirmaciones',
 
   check: 'Comprobar',
-  blockLabel: '¿Qué bloque incluyó tu moneda?',
-  blockHint: 'El número del bloque, en cifras, como lo muestra el explorador de práctica.',
-  blockExplorer: 'Tu moneda en el explorador de práctica',
-  blockWrong:
-    'Ese no es el bloque. En el explorador de práctica, la página de la transacción de tu moneda dice qué bloque la contiene.',
   coinsLabel: '¿Cuántas monedas separadas tiene esta billetera?',
   coinsHint: 'El número de filas, en cifras.',
   coinsWrong: 'No es eso. Cuenta las filas de la pantalla Monedas: cada fila es una moneda.',
@@ -770,7 +829,7 @@ export const es: Record<keyof typeof en, string> = {
 
   doneOn: 'Hecho el {date}.',
   'done_hold-some':
-    'Recibiste monedas de práctica, y dijiste qué bloque incluyó la primera de ellas. Un explorador de bloques le muestra una cadena a quien pregunte, sin ninguna billetera, así que nadie tiene que creerle a una billetera lo que hay en la cadena. En Bitcoin funciona igual: verifica, no confíes.',
+    'Recibiste monedas de práctica, y un bloque las incluyó: esa fue su primera confirmación. Las monedas nunca están dentro de una billetera: la cadena lleva el registro de ellas, y una billetera guarda las claves que pueden gastarlas.',
   'done_pass-it-on':
     'Tu pago entró en un bloque, y el fondo común recibió tus monedas para pasarlas a alguien que viene después de ti. La comisión fue lo que entró menos lo que salió.',
   'done_no-balances':
@@ -781,6 +840,10 @@ export const es: Record<keyof typeof en, string> = {
     'Dijiste que escribiste tus 12 palabras en papel, y tres de ellas coincidieron. Tres palabras correctas no comprueban las otras nueve: eso lo hace "Comprueba el respaldo".',
   'done_prove-the-backup':
     'La billetera volvió desde sus 12 palabras, con sus monedas. La cadena las conservó todo el tiempo, y las palabras solo las desbloquearon: tienes claves, no monedas.',
+  coinBlock: 'El bloque {height} de la cadena de práctica incluyó una moneda que llegó a esta billetera.',
+  coinCheck:
+    'Puedes buscar la misma moneda en el explorador de bloques de práctica, un sitio web que le muestra la cadena a quien pregunte, sin ninguna billetera. Ese explorador también lo mantenemos nosotros, igual que esta billetera y su red, así que mirar ahí muestra cómo se hace esa comprobación y no demuestra nada por sí solo.',
+  coinExplorer: 'Esta moneda en el explorador de práctica',
   potCount: 'Hasta ahora se han pasado {count} pagos al fondo común.',
   potCountOne: 'Hasta ahora se ha pasado un pago al fondo común.',
   seedChecked: 'Las tres palabras se comprobaron para la billetera con la huella de la billetera {fingerprint}.',
@@ -793,6 +856,7 @@ export const es: Record<keyof typeof en, string> = {
   sparrow: 'Una comprobación más: abre la misma billetera en Sparrow',
   next: 'Siguiente paso: {step}',
   backTo: 'Volver a "{step}"',
+  homeRestore: '"{step}" sigue con una restauración: trae de vuelta la billetera que quitaste, desde las 12 palabras de tu papel.',
 
   stripLabel: 'El paso que estás siguiendo',
   stripPart: 'parte {n} de {m}',
@@ -867,7 +931,5 @@ export const es: Record<keyof typeof en, string> = {
   term_wallet: 'billetera',
   term_address: 'dirección',
   term_seed: 'las 12 palabras (frase semilla)',
-  term_explorer: 'explorador de bloques',
-  term_height: 'altura de bloque',
   term_faucet: 'faucet (en inglés)',
 };

@@ -125,20 +125,38 @@ test('send text: sentences that stay true in every state they are shown in', () 
   assert.match(es.potFilled, /fondo común/);
 });
 
-test('send text: the review says to compare the whole address', () => {
+test('send text: the review says to check the whole address', () => {
   // Look-alike addresses are made to share their first and last characters with the one a reader means to
   // pay. So the check is of the whole address, which stands right under the sentence, never cut short.
   assert.equal(
     strings.send.en.reviewCheck,
-    'Compare the whole address with the one you were given. A payment cannot be called back once it is sent, here or on Bitcoin.',
+    'Check the whole address, every character of it, before you send. A payment cannot be called back once it is sent, here or on Bitcoin.',
   );
   assert.equal(
     strings.send.es.reviewCheck,
-    'Compara la dirección completa con la que te dieron. Un pago enviado no se puede deshacer, ni aquí ni en Bitcoin.',
+    'Revisa la dirección completa, cada uno de sus caracteres, antes de enviar. Un pago enviado no se puede deshacer, ni aquí ni en Bitcoin.',
   );
+  // The sentence names no address the reader "was given". The review shows it for every payment: for an
+  // address they typed or pasted, for one from a payment link, for an address of their own wallet, and for the
+  // pot's address, which the wallet's own button fills in. Nobody gave the reader that last one, and under it
+  // the review says whose it is. So the sentence asks for the address to be checked, and holds in every case.
+  for (const lang of LANGS) {
+    assert.doesNotMatch(strings.send[lang].reviewCheck, /\bwere given\b|\bgave you\b|\bthe one you\b|\bte dieron\b|\bque te (dio|pasaron)\b|\bcon la que\b/i, lang);
+    assert.doesNotMatch(strings.send[lang].reviewCheck, /\bcompare\b|\bcompara\b/i, lang);
+    assert.equal(sentencesOf(strings.send[lang].reviewCheck).length, 2, lang);
+    assert.deepEqual(slotNames(strings.send[lang].reviewCheck), [], lang);
+  }
+  assert.match(strings.send.en.reviewCheck, /^Check the whole address, every character of it, before you send\. /);
+  assert.match(strings.send.es.reviewCheck, /^Revisa la dirección completa, cada uno de sus caracteres, antes de enviar\. /);
+  assert.deepEqual([strings.send.en.toPot, strings.send.es.toPot], ['This is an address of the pot.', 'Esta es una dirección del fondo común.']);
   const review = readFileSync(new URL('../src/screens/send/Review.svelte', import.meta.url), 'utf8');
   assert.match(review, /<p>\{t\.reviewCheck\}<\/p>/);
   assert.match(review, /<Row name=\{t\.planTo\} data-testid="review-to">\s*<Mono value=\{facts\.to\} \/>/);
+  // Under the address, where the wallet filled it in or it is the wallet's own: whose it is.
+  assert.match(review, /\{#if pot\}<p class="[^"]*">\{t\.toPot\}<\/p>\{\/if\}/);
+  // On the first review of a signed payment, and not after a refusal: there the reason stands in its place.
+  assert.match(review, /\{#if refusal !== null\}[\s\S]*?\{:else\}\s*<Prose>\s*<p>\{t\.reviewLead\}<\/p>\s*<p>\{t\.reviewCheck\}<\/p>\s*<\/Prose>\s*\{\/if\}/);
+  assert.equal(review.match(/t\.reviewCheck\b/g)?.length, 1);
   // And no text of any table gives the old advice.
   let texts = 0;
   for (const [area, tables] of Object.entries(strings)) {

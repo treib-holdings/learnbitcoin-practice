@@ -15,10 +15,13 @@
 //   /do/hold-some?state=no-coins      part 2 is open: "Get practice coins"
 //   /do/hold-some?state=scanning      part 2 is not known yet: the coins are being looked up
 //   /do/hold-some?state=scan-failed   the same, after a look that failed
-//   /do/hold-some?state=funded        part 4 is open: the question about the block
+//   /do/hold-some?state=funded        the step is done as the page loads: its three parts are states of the
+//                                     wallet, and the wallet holds a confirmed coin. The done card, and under
+//                                     its buttons the block that took a coin of the wallet in
 //   /do/hold-some?state=unreadable    part 1 cannot be done: the stored wallet cannot be read (also newer, broken)
-//   /do/pass-it-on?state=none         needs a wallet: leads to "Hold some"
-//   /do/pass-it-on?state=no-coins     needs coins
+//   /do/pass-it-on?state=none         needs a wallet: from the list it leads to "Hold some"; with
+//                                     &from=/journey/how-bitcoin-works (by its card) straight to Create
+//   /do/pass-it-on?state=no-coins     needs coins: from the list "Hold some", by its card the faucet
 //   /do/pass-it-on?state=funded       part 2 is open: "Open Send"
 //   /do/no-balances?state=funded      part 1 is open: "Open Coins"
 //   /do/waiting-room?state=funded     part 1 is open: "Open Send"
@@ -43,13 +46,20 @@
 //                         stored where the note goes, and that the page cannot read it)
 //
 //   Hold some (/do/hold-some)
-//     do-unconfirmed      one coin, not in a block yet: part 3 waits (also: Pass it on, "not spendable yet")
-//     do-hold-done        done
-//     do-detour           under way, for a reader whom "Pass it on" sent here, and who had pressed the card
-//                         of "Pass it on" in the payment chapter: "Back to the chapter" on the step's
-//                         screen leads to that card, and so does the strip (on /wallet/receive: both links)
-//     do-led-on           done, in the same detour: the card's main button leads back to "Pass it on",
-//                         and "Back to the chapter", second, to the payment chapter
+//     do-unconfirmed      one coin, not in a block yet: part 3 waits, with no link to the explorer
+//                         (also: Pass it on, "not spendable yet")
+//     do-hold-done        done on an earlier day: the card, and under its buttons the block of a coin
+//                         that was paid to the wallet that is here
+//     do-detour           a note as an earlier version of the page left it: under way, for a reader whom
+//                         "Pass it on" sent here, and who had pressed the card of "Pass it on" in the
+//                         payment chapter. "Back to the chapter" on the step's screen leads to that card,
+//                         and so does the strip (on /wallet/receive: both links). This version sends no
+//                         step that came from a chapter here, and still reads such a note
+//     do-led-on           the same note with "Hold some" done: the card's main button leads back to
+//                         "Pass it on", and "Back to the chapter", second, to the payment chapter
+//     do-receive-done     on /wallet/receive: the faucet's coin is in a block, and "Hold some" was followed
+//                         and is done by it. The faucet's result says "Step done: Hold some." above the
+//                         button back to the step
 //
 //   Pass it on (/do/pass-it-on)
 //     do-pass-waiting     the payment was sent 12 seconds ago and waits for its block
@@ -86,14 +96,29 @@
 //     do-prove-remove     part 2 is open: the warnings, and "Open Settings"
 //     do-prove-unchecked  part 2: the wallet here is not the one whose words were checked
 //     do-prove-gone       part 2: no wallet is here, and none was removed while the step was followed
-//     do-prove-restore    part 3 is open, with no wallet here: "Restore from the 12 words"
-//                         (the same preset on / and /restore shows the strip without a wallet)
+//     do-prove-restore    part 3 is open, with no wallet here: "Restore from the 12 words". The same
+//                         preset on / shows Home in the middle of the drill: the restore first, as the
+//                         main button, straight under the heading, with the sentence that names the
+//                         step, and "Create a practice wallet" as a second button. On /wallet (or any
+//                         wallet screen's address) it shows the gate for the same reader: the restore
+//                         first there too, and "Open with my passkey" as a second button. On /restore:
+//                         the strip without a wallet
 //     do-prove-passkey    part 3: the wallet came back through its passkey
 //     do-prove-other      part 3: another wallet was restored
 //     do-prove-looking    part 4: the restored wallet's coins are being looked up
 //     do-prove-empty      part 4: the restored wallet holds no coins
 //     do-prove-done       done, for a wallet that was opened with a passkey before: "What the restore changed"
 //     do-prove-done-words done, for a wallet that was kept with its words all along
+//
+//   the wallet's own screens, for a reader who follows a step
+//     do-made-step        on /wallet/backup: "Wallet made" straight after a create, for a reader who came by
+//                         the card of "Pass it on". Under the 12 words: the line on real money, and the
+//                         button that leads back to the step by its name
+//     do-seed-said        on /wallet/backup#play:reveal-words: the 12 words shown, with the way back to
+//                         "The seed" beside "Hide them"
+//     do-strip-done       on the screen of a payment of the wallet's own: under "What just happened", the
+//                         line that says the followed step is done, and the way back to it
+//     do-receive-done, do-prove-restore   (above)
 //
 //   the strip (any screen but the followed step's own: /wallet, /wallet/send, /)
 //     do-count, do-read, do-seed-said ...   the part's name
@@ -233,7 +258,7 @@ export const presets: Record<string, Preset> = {
     keep(
       wallet,
       {
-        'hold-some': done(4, now - EARLIER, { from: '/journey/what-bitcoin-actually-is' }),
+        'hold-some': done(3, now - EARLIER, { from: '/journey/what-bitcoin-actually-is' }),
         'pass-it-on': done(3, now - 3_600_000),
         'no-balances': started(1),
       },
@@ -245,7 +270,7 @@ export const presets: Record<string, Preset> = {
     funded(wallet);
     const now = Date.now();
     keep(wallet, {
-      'hold-some': done(4, now - 3 * EARLIER),
+      'hold-some': done(3, now - 3 * EARLIER),
       'pass-it-on': done(3, now - 2 * EARLIER),
       'no-balances': done(3, now - 2 * EARLIER),
       'waiting-room': done(3, now - EARLIER),
@@ -271,12 +296,13 @@ export const presets: Record<string, Preset> = {
 
   'do-hold-done': (wallet) => {
     funded(wallet);
-    keep(wallet, { 'hold-some': done(4, Date.now() - EARLIER, { from: '/journey/what-bitcoin-actually-is' }) });
+    keep(wallet, { 'hold-some': done(3, Date.now() - EARLIER, { from: '/journey/what-bitcoin-actually-is' }) });
   },
 
   'do-detour': (wallet) => {
-    // A wallet with no coins yet. The reader pressed the card of "Pass it on" in the payment chapter; its
-    // need (no coins) sent them here, and the press of that link was remembered.
+    // A note as an earlier version of the page left it, in a browser whose wallet holds no coins yet. The
+    // reader had pressed the card of "Pass it on" in the payment chapter; its need (no coins) sent them
+    // here, and the press of that link was remembered. (This version sends that reader to the faucet.)
     wallet.haveWallet('words');
     wallet.haveCoins(emptyState(), []);
     keep(wallet, { 'hold-some': started(1, { cameFor: 'pass-it-on' }), 'pass-it-on': started(0, { from: '/journey/how-bitcoin-works' }) }, 'hold-some');
@@ -284,11 +310,32 @@ export const presets: Record<string, Preset> = {
 
   'do-led-on': (wallet) => {
     funded(wallet);
-    // The same detour, with "Hold some" done: "Pass it on" is still to do, so the memory stands.
+    // The same detour, with "Hold some" done: "Pass it on" is still to do, so the memory stands. Four ticks,
+    // as the earlier version wrote them for a step that then had a fourth part: a read drops the fourth.
     keep(wallet, {
       'hold-some': done(4, Date.now() - 60_000, { cameFor: 'pass-it-on' }),
       'pass-it-on': started(1, { from: '/journey/how-bitcoin-works' }),
     });
+  },
+
+  'do-receive-done': (wallet) => {
+    // The reader followed "Hold some" to Receive and asked the faucet; the coin came and a block took it in
+    // while they waited there, which finished the step. The wallet's coins, and the faucet's last word.
+    funded(wallet);
+    if (wallet.receive !== null) wallet.receive = { ...wallet.receive, arrived: BigInt(wallet.config.faucetSats) };
+    wallet.faucet = { phase: 'confirmed', payment: { txid: TXID.faucetNew, amountSats: wallet.config.faucetSats, potTxid: null }, failure: null, retryAt: null };
+    keep(wallet, { 'hold-some': done(3, Date.now() - 4_000, { from: '/journey/what-bitcoin-actually-is' }) }, 'hold-some');
+  },
+
+  // -- the wallet's own screens, for a reader who follows a step ----------------------------------
+
+  'do-made-step': (wallet) => {
+    // Straight after "Create without a passkey", for a reader who pressed the card of "Pass it on" with no
+    // wallet in the browser: the step sent them to Create, and "Wallet made" leads back to it.
+    wallet.haveWallet('words', true);
+    wallet.haveCoins(emptyState(), []);
+    wallet.justCreated('words');
+    keep(wallet, { 'pass-it-on': started(0, { from: '/journey/how-bitcoin-works' }) }, 'pass-it-on');
   },
 
   // -- Pass it on ------------------------------------------------------------------------

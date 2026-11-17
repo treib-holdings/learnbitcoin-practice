@@ -29,8 +29,8 @@
   // "waiting for a block, sent 12 seconds ago". The narrow form has no room
   // for both, so there those words take the place of "2 of 3" (stripSpeaks
   // in strip.ts says when), on a second line if they need one: a reader on
-  // a phone must not be left with "3 of 4" over a screen whose main button
-  // would lead them astray. (The wait is said on the
+  // a phone must not be left with "3 of 4" over a screen that offers to
+  // make a new wallet, when the step goes on with a restore. (The wait is said on the
   // screens where the wallet goes on reading what the wait is read from,
   // its coins or its list of transactions: on the others the strip names
   // the part. So it does for what is missing, where that is read off the

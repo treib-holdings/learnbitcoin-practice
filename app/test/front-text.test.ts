@@ -549,3 +549,129 @@ test('Home keeps the fixed document title, and shows the shared pieces for the s
   assert.match(text, /wallet\.config\.blockSeconds/);
   assert.match(text, /wallet\.config\.faucetSats/);
 });
+
+test('Home puts the restore first for a reader in the middle of the drill, and is as it was for everyone else', () => {
+  const text = source('Home.svelte');
+
+  // -- The condition. The step the note of the "Do it" steps follows, when its open part waits for a removed
+  //    wallet to come back from the 12 words: the drill of "Prove the backup" between its removal and its
+  //    restore. It is the note's followed step, with no limit of time, and not the step the strip shows, which
+  //    stops after 24 hours: days after the removal the note is still all that says which wallet has to come back. --
+  assert.match(
+    text,
+    /let restoring = \$derived\.by\(\(\) => \{\s*const step = doit\.progress\.following;\s*return step !== null && awaitsRestore\(doit\.view\(step, Date\.now\(\)\)\) \? step : null;\s*\}\);/,
+  );
+  assert.match(text, /import \{ awaitsRestore, progressKept \} from '\.\/doit\/view\.ts';/);
+  assert.doesNotMatch(text, /stripStep|STRIP_MS|doneFollowed|setInterval\(/, 'neither the strip\'s rule nor a clock');
+  // What the rule itself gives for each state of the note and the wallet is held in test/doit-view.test.ts.
+
+  // -- Where it stands: with no wallet in the browser and in no other state of the screen, first under the
+  //    heading. Before the lines that say a wallet was removed (on the visit that shows them), before "Create a
+  //    practice wallet", and before the card for a reader who has a wallet already. --
+  const from = text.indexOf("{:else if status === 'none'}");
+  const none = text.slice(from, text.indexOf("{:else if status === 'unreadable'"));
+  assert.match(none, /^\{:else if status === 'none'\}\s*\{#if restoring !== null\}/);
+  const marks = ['data-testid="home-step"', 'data-testid="home-step-restore"', 'id="{uid}-step"', 'data-testid="home-removed"', 'data-testid="home-create"', 'data-testid="home-have"', 'data-testid="home-restore"'];
+  const order = marks.map((mark) => none.indexOf(mark));
+  assert.ok(order.every((at) => at > 0) && order.join() === [...order].sort((a, b) => a - b).join(), `in the order ${marks.join(', ')}: ${order.join()}`);
+  for (const hook of ['home-step', 'home-step-restore']) assert.equal(text.split(`data-testid="${hook}"`).length, 2, `${hook} is drawn in one place`);
+  assert.ok(text.indexOf('data-testid="home-step"') > from, 'and only where the storage was read and holds no wallet');
+
+  // -- The markup: a main button, a link to Restore in Home's own words for it, and under it one sentence
+  //    that names the step. The button names the sentence as its description. --
+  assert.match(
+    none,
+    /\{#if restoring !== null\}\s*<!--[\s\S]*?-->\s*<div class="space-y-3" data-testid="home-step">\s*<div>\s*<Button\s+variant="primary"\s+class="w-full sm:w-auto"\s+data-testid="home-step-restore"\s+aria-describedby="\{uid\}-step"\s+href=\{router\.link\(\{ name: 'restore' \}\)\}\s*>\s*\{w\.gateRestore\}\s*<\/Button>\s*<\/div>\s*<p id="\{uid\}-step" class="text-pretty text-base leading-relaxed text-ink-700">\{fill\(d\.homeRestore, \{ step: stepTitle\(restoring, router\.lang\) \}\)\}<\/p>\s*<\/div>\s*\{\/if\}/,
+  );
+  assert.match(text, /const uid = \$props\.id\(\);/);
+  // The words on the button are the ones on the button in the card below it: one name for one thing on one screen.
+  assert.equal(text.match(/\{w\.gateRestore\}/g)?.length, 2);
+  assert.deepEqual([strings.wallet.en.gateRestore, strings.wallet.es.gateRestore], ['Restore from the 12 words', 'Restaurar con las 12 palabras']);
+
+  // -- "Create a practice wallet" is drawn as a second button while the restore shows, and is the screen's main
+  //    button otherwise: one main button in either state. The card under it is as it was. --
+  assert.match(
+    none,
+    /<Button variant=\{restoring === null \? 'primary' : 'secondary'\} class="w-full sm:w-auto" data-testid="home-create" href=\{router\.link\(\{ name: 'new' \}\)\}>\s*\{w\.gateCreate\}\s*<\/Button>/,
+  );
+  assert.equal(none.match(/variant="primary"/g)?.length, 1, 'the restore; "Create" is main only without it');
+  assert.match(none, /<Card tone="grey" title=\{w\.gateAlreadyHave\} data-testid="home-have">/);
+  assert.match(none, /<Button class=\{PAIRED\} data-testid="home-restore" href=\{router\.link\(\{ name: 'restore' \}\)\}>\s*\{w\.gateRestore\}\s*<\/Button>/);
+
+  // -- Straight under the heading: for this reader the screen's two sentences on what the practice wallet is
+  //    are left out. They know what this is, and with the sentences in place the restore stood under the edge
+  //    of a short phone's window in Spanish, whose sentences are the longer ones. Every other reader, and the
+  //    one page a search engine may list, has them as before. --
+  assert.match(text, /<Page title=\{c\.appName\} documentTitle=\{c\.homeTitle\} lede=\{restoring === null \? t\.lede : undefined\}>/);
+  assert.equal(text.match(/\bt\.lede\b/g)?.length, 1);
+  // The page's frame draws no line for a lede it is not handed.
+  assert.match(readFileSync(new URL('../src/components/Page.svelte', import.meta.url), 'utf8'), /\{#if lede\}\s*<p class="mt-6 text-pretty text-xl text-ink-500">\{lede\}<\/p>\s*\{\/if\}/);
+  // The Spanish sentences are the longer ones: that is why the rule is made for both languages alike.
+  assert.ok(strings.home.es.lede.length > strings.home.en.lede.length);
+
+  // -- The sentence, in both languages: it names the step and says what the restore is from. --
+  assert.equal(strings.doit.en.homeRestore, '"{step}" goes on with a restore: bring the wallet you removed back from the 12 words on your paper.');
+  assert.equal(strings.doit.es.homeRestore, '"{step}" sigue con una restauración: trae de vuelta la billetera que quitaste, desde las 12 palabras de tu papel.');
+  for (const lang of LANGS) assert.deepEqual(slotNames(strings.doit[lang].homeRestore), ['step'], lang);
+  assert.equal(
+    fill(strings.doit.en.homeRestore, { step: strings.doit.en['title_prove-the-backup'] }),
+    '"Prove the backup" goes on with a restore: bring the wallet you removed back from the 12 words on your paper.',
+  );
+  assert.equal(
+    fill(strings.doit.es.homeRestore, { step: strings.doit.es['title_prove-the-backup'] }),
+    '"Comprueba el respaldo" sigue con una restauración: trae de vuelta la billetera que quitaste, desde las 12 palabras de tu papel.',
+  );
+  // A wallet is removed, never deleted; and the sentence promises nothing about what the restore will find.
+  assert.doesNotMatch(strings.doit.en.homeRestore, /\bdelet|\bcoins?\b|\bwill\b/i);
+  assert.doesNotMatch(strings.doit.es.homeRestore, /\belimin|\bmonedas?\b/i);
+});
+
+test('the gate of a wallet screen puts the restore first for the same reader, by Home\'s rule and in Home\'s words, and is as it was for everyone else', () => {
+  const gate = readFileSync(new URL('../src/components/wallet/NoWallet.svelte', import.meta.url), 'utf8');
+  const home = source('Home.svelte');
+
+  // -- The same condition as Home's, character for character: the step the note follows, when its open part
+  //    waits for a removed wallet to come back from the 12 words. No strip's rule, and no clock. --
+  const rule = /let restoring = \$derived\.by\(\(\) => \{\s*const step = doit\.progress\.following;\s*return step !== null && awaitsRestore\(doit\.view\(step, Date\.now\(\)\)\) \? step : null;\s*\}\);/;
+  assert.match(gate, rule);
+  assert.equal(rule.exec(gate)?.[0].replace(/\s+/g, ' '), rule.exec(home)?.[0].replace(/\s+/g, ' '));
+  assert.match(gate, /import \{ awaitsRestore \} from '\.\.\/\.\.\/screens\/doit\/view\.ts';/);
+  assert.match(gate, /const doit = useDoit\(\);/);
+  assert.doesNotMatch(gate, /stripStep|STRIP_MS|doneFollowed|setInterval\(/);
+  // The gate with no wallet is the only gate that draws this piece (the others say what is wrong with what is stored).
+  const frame = readFileSync(new URL('../src/components/wallet/WalletGate.svelte', import.meta.url), 'utf8');
+  assert.equal(frame.match(/<NoWallet \/>/g)?.length, 1);
+  assert.match(frame, /\{:else if gate === 'none'\}\s*<Page title=\{t\.gateNoneTitle\} titleName=\{t\.gateNoneName\}>\s*<NoWallet \/>/);
+
+  // -- Where it stands, and its markup: first in the gate's body, straight under its heading. A main button, a
+  //    link to Restore in the gate's own words for it, and under it Home's sentence, which names the step. The
+  //    button names that sentence as its description. --
+  const markup = gate.slice(gate.indexOf('</script>'));
+  assert.match(
+    markup,
+    /^<\/script>\s*<div class=\{\['space-y-6', extra\]\}>\s*\{#if restoring !== null\}\s*<!--[\s\S]*?-->\s*<div class="space-y-3" data-testid="gate-step">\s*<div>\s*<Button\s+variant="primary"\s+class="w-full sm:w-auto"\s+data-testid="gate-step-restore"\s+aria-describedby="\{uid\}-step"\s+href=\{router\.link\(\{ name: 'restore' \}\)\}\s*>\s*\{t\.gateRestore\}\s*<\/Button>\s*<\/div>\s*<p id="\{uid\}-step" class="text-pretty text-base leading-relaxed text-ink-700">\{fill\(d\.homeRestore, \{ step: stepTitle\(restoring, router\.lang\) \}\)\}<\/p>\s*<\/div>\s*\{\/if\}\s*<p class="text-pretty leading-relaxed text-ink-700">\{why\}<\/p>/,
+  );
+  assert.match(gate, /const uid = \$props\.id\(\);/);
+  for (const hook of ['gate-step', 'gate-step-restore']) assert.equal(gate.split(`data-testid="${hook}"`).length, 2, `${hook} is drawn in one place`);
+  // The sentence is Home's, from the same key: one sentence for one state, wherever the reader meets it.
+  assert.equal(gate.match(/\bd\.homeRestore\b/g)?.length, 1);
+  assert.equal(home.match(/\bd\.homeRestore\b/g)?.length, 1);
+
+  // -- The three ways in under it. "Open with my passkey" is the gate's first choice for every other reader, and
+  //    a second button for this one: for a wallet made with a passkey it is the way the step warns against,
+  //    since it proves the passkey and not the paper. The restore is not drawn twice. Create is as it was. --
+  assert.match(markup, /<OpenWithPasskey variant=\{restoring === null \? 'primary' : 'secondary'\} \{onopened\} buttonClass="w-full sm:w-auto" \/>/);
+  assert.match(
+    markup,
+    /<Actions>\s*\{#if restoring === null\}\s*<Button class="w-full sm:w-auto" href=\{router\.link\(\{ name: 'restore' \}\)\}>\{t\.gateRestore\}<\/Button>\s*\{\/if\}\s*<Button class="w-full sm:w-auto" href=\{router\.link\(\{ name: 'new' \}\)\}>\{t\.gateCreate\}<\/Button>\s*<\/Actions>/,
+  );
+  // One main button in either state: the restore, or the passkey button.
+  assert.equal(markup.match(/variant="primary"/g)?.length, 1);
+  assert.equal(markup.match(/\{t\.gateRestore\}/g)?.length, 2, 'the two places are drawn under the two halves of one condition');
+  assert.equal(markup.match(/\{#if restoring (!|=)== null\}/g)?.length, 2);
+  // The step's own words on why the passkey is not the way, which the gate goes by.
+  assert.match(strings.doit.en['guide_prove-the-backup_3'], /Opening it with a passkey would prove the passkey, not the paper\.$/);
+  assert.match(strings.doit.es['guide_prove-the-backup_3'], /comprobaría la llave de acceso, no el papel\.$/);
+  // No string is new for it, and nothing but the note is asked: no request, no storage of its own.
+  assert.doesNotMatch(gate.replace(/^\s*(\/\/|<!--).*$/gm, ''), /localStorage|sessionStorage|\bfetch\(|readProgress|writeProgress/);
+});

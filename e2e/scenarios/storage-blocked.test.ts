@@ -243,7 +243,7 @@ const NOTE = noteFor({
   following: 'pass-it-on',
   followedAt: Date.now(),
   steps: {
-    'hold-some': { started: true, doneAt: Date.now() - 86_400_000, parts: { 1: true, 2: true, 3: true, 4: true } },
+    'hold-some': { started: true, doneAt: Date.now() - 86_400_000, parts: { 1: true, 2: true, 3: true } },
     'pass-it-on': { started: true, parts: { 1: true } },
   },
 });

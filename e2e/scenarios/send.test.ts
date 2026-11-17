@@ -266,9 +266,13 @@ scenario('a payment to the pot: the plan, the signed review and the transaction 
   // The review is the payment as signed, and its figures are the plan's.
   const review = await figures(page, 'send-review');
   assert.deepEqual(review, plan);
-  // It says to compare the whole address, and the whole address stands under the sentence: every character
-  // of the one in the To field, with none left out and nothing put in its place.
+  // It says to check the whole address, and the whole address stands under the sentence: every character
+  // of the one in the To field, with none left out and nothing put in its place. The wallet filled this
+  // address in itself, so the sentence does not speak of an address the reader was given: it is as true here
+  // as over an address they typed.
   assert.ok((await page.text('send-review')).includes(en.reviewCheck), en.reviewCheck);
+  assert.equal(en.reviewCheck, 'Check the whole address, every character of it, before you send. A payment cannot be called back once it is sent, here or on Bitcoin.');
+  assert.doesNotMatch(await page.text('send-review'), /you were given|Compare/);
   assert.equal(await textOf(page, `${hook('send-review')} ${hook('review-to')} dd [translate="no"]`), pot);
   assert.ok((await page.text('send-review')).indexOf(en.reviewCheck) < (await page.text('send-review')).indexOf(pot));
   const inputs = await page.texts('tx-input');
@@ -351,7 +355,7 @@ scenario('a payment to an ordinary address, made with the keyboard alone', LOCAL
   await keys.press('Enter');
   assert.equal(await headingInFocus(page), 'Signed, not sent yet');
   assert.equal(await row(page, hook('send-review'), 'review-amount'), '5,000 practice sats');
-  // The address that was typed stands whole in the review, under the sentence that says to compare it.
+  // The address that was typed stands whole in the review, under the same sentence, which says to check it.
   assert.equal(await row(page, hook('send-review'), 'review-to'), SOMEBODY);
   assert.ok((await page.text('send-review')).includes(en.reviewCheck), en.reviewCheck);
 
@@ -681,6 +685,9 @@ scenario('the Spanish route: the same screen in Spanish, from the form to "Pago 
   await page.waitFor('send-review');
   assert.equal(await headingInFocus(page), 'Firmado, aún sin enviar');
   assert.equal(await page.text('send-broadcast'), 'Enviarlo');
+  // The review says to check the whole address, in Spanish, over the address as it was typed.
+  assert.ok((await page.text('send-review')).includes(es.reviewCheck), es.reviewCheck);
+  assert.equal(es.reviewCheck, 'Revisa la dirección completa, cada uno de sus caracteres, antes de enviar. Un pago enviado no se puede deshacer, ni aquí ni en Bitcoin.');
 
   await page.click('send-broadcast');
   const txid = await sentTxid(page, '/es');

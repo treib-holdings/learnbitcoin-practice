@@ -6,7 +6,17 @@
   //   - how long ago it was sent, where the step's note says when;
   //   - how high the practice chain stands;
   //   - how often a block comes here;
-  //   - a link to the payment on the practice explorer.
+  //   - a link to the payment on the practice explorer, unless the part
+  //     that waits asks for the display without it (`explorer`).
+  //
+  // The link opens a new tab. Two steps wait for a payment of the wallet's
+  // own ("Pass it on" and "The waiting room"), and show it. "Hold some"
+  // waits for the block of a coin the wallet holds (one that was paid to
+  // it or, for a wallet that has paid already, the change of a payment of
+  // its own), and does not: it is the first step a newcomer does, this is
+  // the one idle moment on its road, and the link's words say nothing of
+  // who runs the explorer. Its done card offers the explorer, beside the
+  // words on who runs it.
   //
   // The reader has nothing to do but wait, so there is no action here. The
   // part ticks by itself when the block comes: the step's screen reads the
@@ -36,11 +46,13 @@
     waiting: Waiting;
     /** The time, in ms since 1970. */
     now: number;
+    /** False for a display without the link to the practice explorer. Left out, the link is drawn. */
+    explorer?: boolean;
     /** "Send another" was pressed. */
     onagain: () => void;
   }
 
-  let { waiting, now, onagain }: Props = $props();
+  let { waiting, now, explorer = true, onagain }: Props = $props();
 
   const wallet = useWallet();
 
@@ -65,7 +77,7 @@
       {#if tip !== null}<p data-testid="step-waiting-tip">{fill(t.waitTip, { height: formatSats(tip) })}</p>{/if}
       <p>{fill(t.waitEvery, { seconds: formatSats(wallet.config.blockSeconds) })}</p>
     </div>
-    {#if waiting.txid !== null}
+    {#if explorer && waiting.txid !== null}
       <p class="text-sm">
         <OutLink href={explorerTxUrl(wallet.config.explorerUrl, waiting.txid)} text={t.waitExplorer} data-testid="step-waiting-explorer" />
       </p>
