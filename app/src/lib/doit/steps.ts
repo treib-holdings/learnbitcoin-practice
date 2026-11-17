@@ -139,20 +139,20 @@ interface ChapterRow extends Chapter {
 
 const BITCOIN: ChapterRow = {
   key: 'bitcoin',
-  number: { en: 2, es: 2 },
-  title: { en: 'What Bitcoin Actually Is', es: 'Qué es Bitcoin en realidad' },
+  number: { en: 1, es: 1 },
+  title: { en: 'What Bitcoin Is', es: 'Qué es Bitcoin' },
   path: { en: '/journey/what-bitcoin-actually-is', es: '/es/recorrido/que-es-bitcoin-en-realidad' },
 };
 const PAYMENT: ChapterRow = {
   key: 'payment',
-  number: { en: 3, es: 3 },
-  title: { en: 'How Bitcoin Works', es: 'Cómo funciona Bitcoin' },
+  number: { en: 4, es: 4 },
+  title: { en: 'How a Payment Works', es: 'Cómo funciona un pago' },
   path: { en: '/journey/how-bitcoin-works', es: '/es/recorrido/como-funciona-bitcoin' },
 };
 const KEYS: ChapterRow = {
   key: 'keys',
-  number: { en: 4, es: 4 },
-  title: { en: 'Be Your Own Bank', es: 'Sé tu propio banco' },
+  number: { en: 5, es: 5 },
+  title: { en: 'Keys: What You Actually Hold', es: 'Las claves: lo que tienes en realidad' },
   path: { en: '/journey/be-your-own-bank', es: '/es/recorrido/se-tu-propio-banco' },
 };
 
