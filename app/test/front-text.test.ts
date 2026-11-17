@@ -21,6 +21,12 @@ function source(name: string): string {
   return readFileSync(new URL(`../src/screens/${name}`, import.meta.url), 'utf8');
 }
 
+/** The sentences of a text, split where a full stop is followed by a capital. */
+const sentences = (text: string): string[] => text.split(/(?<=\.) (?=[A-ZÁÉÍÓÚÑ¿])/);
+
+/** How many words a text has. */
+const wordCount = (text: string): number => text.trim().split(/\s+/).length;
+
 /** The three screens and every file of their own folder. */
 const FILES = [
   'Home.svelte',
@@ -79,23 +85,40 @@ test('the words the spec gives are the words on the screens', () => {
   assert.equal(create.es.cancelledNothing, 'No se guardó ninguna llave de acceso y no se creó ninguna billetera.');
 });
 
-test('restore carries the exception paragraph, the line about real money and the box, as the notes word them', () => {
+test('restore carries the exception paragraph, the line about real money and the box, word for word', () => {
   const { en, es } = strings.restore;
+  // {keysNumber} is the keys chapter's number, from the table of chapters. The paragraph also stands above
+  // the three word fields of a step, where the page asks for three words: so "the words", not "the 12 words".
+  // And it says "a wallet's words" from its first sentence to its last: the word every version of the chapter
+  // and every screen of the wallet share.
   assert.equal(
     en.exception,
-    'Chapter 4 of the Journey says never to type your seed into a website, and that a page asking for it is a scam. This page is the one exception, because the 12 words it asks for only guard play money, practice coins that are worth nothing. The words of a wallet that holds real bitcoin never go into a web page, this one included.',
+    "Chapter {keysNumber} of the Journey says never to type a wallet's words into a website, and to treat a page that asks for them as a scam. This page is the one exception, because the words it asks for only guard play money, practice coins that are worth nothing. The words of any wallet that is not a practice wallet never go into a web page, this one included. That includes the words of a wallet for real bitcoin, even an empty one.",
   );
   assert.equal(
     es.exception,
-    'El capítulo 4 del Recorrido dice que nunca escribas tu frase semilla en un sitio web, y que una página que te la pide es una estafa. Esta página es la única excepción, porque las 12 palabras que pide solo protegen dinero de juguete, monedas de práctica que no valen nada. Las palabras de una billetera con bitcoin de verdad nunca van en una página web, incluida esta.',
+    'El capítulo {keysNumber} del Recorrido dice que nunca escribas las palabras de una billetera en un sitio web, y que trates como una estafa a cualquier página que te las pida. Esta página es la única excepción, porque las palabras que pide solo protegen dinero de juguete, monedas de práctica que no valen nada. Las palabras de una billetera que no sea de práctica nunca van en una página web, incluida esta. Eso incluye las de una billetera para bitcoin de verdad, aunque esté vacía.',
   );
   assert.equal(
     en.never,
     'Never put real money on these 12 words. Words that have been on a web page are for practice only: a real wallet should make its own.',
   );
   assert.match(es.never, /^Nunca pongas dinero de verdad en estas 12 palabras\./);
-  assert.equal(en.check, 'These 12 words are from a practice wallet, not from a wallet with real bitcoin.');
-  assert.equal(es.check, 'Estas 12 palabras son de una billetera de práctica, no de una billetera con bitcoin de verdad.');
+  assert.equal(en.check, 'These 12 words are from a practice wallet and from no other: not from a wallet for real bitcoin, even an empty one.');
+  assert.equal(
+    es.check,
+    'Estas 12 palabras son de una billetera de práctica y de ninguna otra: no son de una billetera para bitcoin de verdad, ni siquiera de una que esté vacía.',
+  );
+  // The paragraph and its link name the keys chapter, so the screen draws both through the table of chapters.
+  const screen = source('Restore.svelte');
+  assert.match(
+    screen,
+    /<Notice kind="caution" text=\{withChapters\(t\.exception, router\.lang\)\} data-testid="restore-exception">\s*<OutLink class=\{LONE_LINK\} href=\{keysChapterUrl\(wallet\.config\.siteUrl, router\.lang\)\} text=\{withChapters\(t\.chapter, router\.lang\)\} \/>/,
+  );
+  // The link names the chapter by its number and, in quotation marks, its title. No colon stands before the
+  // title: a title may hold a colon of its own.
+  assert.equal(en.chapter, 'Chapter {keysNumber} of the Journey, "{keysTitle}"');
+  assert.equal(es.chapter, 'Capítulo {keysNumber} del Recorrido, "{keysTitle}"');
   // The reason is about the words, never about the page: no sentence argues that this page can be trusted.
   for (const lang of LANGS) {
     for (const [key, text] of Object.entries(strings.restore[lang])) {
@@ -141,10 +164,28 @@ test('both ways to a wallet whose words are kept here say that a browser can era
   assert.match(source('Restore.svelte'), /fill\(t\.kept, \{ days: String\(SAFARI_KEEPS_DAYS\) \}\)/);
 });
 
-test('the step after a restore that found nothing says what to do with a real wallet\'s words', () => {
+test('the step after a restore that found nothing says what to do with words that are not practice words', () => {
   const { en, es } = strings.restore;
-  // Not stored; close the page; that wallet is not affected (SPEC section 6).
-  assert.match(en.emptyReal, /real wallet/);
+  // Not stored; close the page; that wallet is not affected (SPEC section 6). The text is for the words of
+  // any wallet that is not a practice wallet, and names the case a scam page plays on: a wallet for real
+  // bitcoin that is empty.
+  assert.equal(
+    en.emptyReal,
+    'If they belong to a wallet that is not a practice wallet, erase them and close this page. That includes a wallet for real bitcoin, even an empty one. They have not been stored, and that wallet is not affected.',
+  );
+  assert.equal(
+    es.emptyReal,
+    'Si son de una billetera que no es de práctica, bórralas y cierra esta página. Eso incluye una billetera para bitcoin de verdad, aunque esté vacía. No se guardaron, y esa billetera no se ve afectada.',
+  );
+  // This is the one screen where a reader who typed such words is told what to do. So the first sentence
+  // ends in the instruction, with no bracket in front of it, and the named case has a sentence of its own.
+  assert.ok((sentences(en.emptyReal)[0] ?? '').endsWith(', erase them and close this page.'));
+  assert.ok((sentences(es.emptyReal)[0] ?? '').endsWith(', bórralas y cierra esta página.'));
+  for (const text of [en.emptyReal, es.emptyReal]) {
+    assert.equal(sentences(text).length, 3, text);
+    assert.doesNotMatch(text, /[()]/, text);
+    assert.ok(wordCount(sentences(text)[0] ?? '') <= 20, text);
+  }
   assert.match(en.emptyReal, /close this page/);
   assert.match(en.emptyReal, /have not been stored/);
   assert.match(en.emptyReal, /not affected/);
@@ -159,6 +200,87 @@ test('the step after a restore that found nothing says what to do with a real wa
   assert.match(es.emptyBody, /en las direcciones que dan estas 12 palabras/);
   assert.match(es.emptyBody, /Las palabras no salieron de este navegador\./);
   assert.doesNotMatch(es.emptyBody, /registro de estas 12 palabras/);
+});
+
+test('wherever the wallet says which words never go into a web page, it covers every wallet that is not a practice wallet, and names an empty wallet for real bitcoin', () => {
+  const { backup, restore, wallet } = strings;
+  // Five texts say which words may be typed here and which never go into a web page: the two exception
+  // paragraphs, the short form (also printed on the practice sheet), the box on Restore, and the sentence after
+  // a restore that found nothing. A wallet for real bitcoin guards nothing on the day it is made, so "a wallet
+  // that holds real bitcoin" would let a page through that says "your new wallet is empty, check it here".
+  for (const [where, text] of [
+    ['backup.exception', backup.en.exception],
+    ['restore.exception', restore.en.exception],
+    ['restore.emptyReal', restore.en.emptyReal],
+    ['wallet.wordsException', wallet.en.wordsException],
+  ] as const) {
+    assert.ok(text.includes('wallet that is not a practice wallet'), where);
+    assert.ok(text.includes('a wallet for real bitcoin, even an empty one'), where);
+  }
+  assert.ok(restore.en.check.includes('from a practice wallet and from no other'));
+  assert.ok(restore.en.check.includes('a wallet for real bitcoin, even an empty one'));
+
+  for (const [where, text] of [
+    ['backup.exception', backup.es.exception],
+    ['restore.exception', restore.es.exception],
+    ['wallet.wordsException', wallet.es.wordsException],
+  ] as const) {
+    assert.ok(text.includes('billetera que no sea de práctica'), where);
+    assert.ok(text.includes('una billetera para bitcoin de verdad, aunque esté vacía'), where);
+  }
+  assert.ok(restore.es.emptyReal.includes('billetera que no es de práctica'));
+  assert.ok(restore.es.emptyReal.includes('una billetera para bitcoin de verdad, aunque esté vacía'));
+  // The box says "not even of one that is empty", which can only be read of the wallet for real bitcoin.
+  assert.ok(restore.es.check.includes('de una billetera de práctica y de ninguna otra'));
+  assert.ok(restore.es.check.includes('una billetera para bitcoin de verdad, ni siquiera de una que esté vacía'));
+
+  // No text of any table speaks of a wallet that "holds" or "has" real bitcoin, or of "a real wallet", where
+  // it says whose words they are: each of those covers less than every wallet that is not a practice wallet.
+  const holds = /wallet (that|which) (holds|has)\b[^.]*real (bitcoin|money)|wallet with real (bitcoin|money)|(words of|belong to) a real wallet/i;
+  const tiene = /billetera (que (tiene|guarda)|con) (bitcoin|dinero) de verdad|(palabras|son) de una billetera de verdad/i;
+  let texts = 0;
+  for (const [area, tables] of Object.entries(strings)) {
+    for (const lang of LANGS) {
+      for (const [key, text] of Object.entries(tables[lang] as Table)) {
+        texts += 1;
+        assert.doesNotMatch(text, holds, `${area}.${lang}.${key}`);
+        assert.doesNotMatch(text, tiene, `${area}.${lang}.${key}`);
+      }
+    }
+  }
+  assert.ok(texts > 1000, `${texts} texts were read`);
+
+  // The two paragraphs and the short form end in the same two sentences, word for word: the rule, and the
+  // case it names.
+  const shared = {
+    en: 'The words of any wallet that is not a practice wallet never go into a web page, this one included. That includes the words of a wallet for real bitcoin, even an empty one.',
+    es: 'Las palabras de una billetera que no sea de práctica nunca van en una página web, incluida esta. Eso incluye las de una billetera para bitcoin de verdad, aunque esté vacía.',
+  };
+  for (const lang of LANGS) {
+    for (const [where, text] of [
+      ['backup.exception', backup[lang].exception],
+      ['restore.exception', restore[lang].exception],
+      ['wallet.wordsException', wallet[lang].wordsException],
+    ] as const) {
+      assert.ok(text.endsWith(` ${shared[lang]}`), `${lang} ${where}`);
+    }
+  }
+  assert.equal(wallet.en.wordsException, `Practice words only. ${shared.en}`);
+  assert.equal(wallet.es.wordsException, `Solo palabras de práctica. ${shared.es}`);
+
+  // A reader meets these words just before typing some. So they are two plain sentences: neither is long,
+  // neither hangs a clause without a verb on a colon, and together they say "not" or "never" twice, once for
+  // the wallets the rule covers and once for the rule.
+  const negations = { en: /\b(?:not|never|no|nor|neither)\b/gi, es: /(?<![a-záéíóúñ])(?:no|nunca|ni|tampoco|jamás)(?![a-záéíóúñ])/gi };
+  for (const lang of LANGS) {
+    const both = sentences(shared[lang]);
+    assert.equal(both.length, 2, lang);
+    for (const sentence of both) {
+      assert.ok(wordCount(sentence) <= 20, `${lang}: ${wordCount(sentence)} words in "${sentence}"`);
+      assert.ok(!sentence.includes(':'), `${lang}: ${sentence}`);
+    }
+    assert.equal(shared[lang].match(negations[lang])?.length, 2, lang);
+  }
 });
 
 test('home says what this is: a working wallet, on the practice network, with play money, before real money is at stake', () => {

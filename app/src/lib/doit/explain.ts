@@ -15,10 +15,10 @@
 //   - A sentence about change is only ever about this wallet's own change.
 //     A wallet knows which outputs are its own; of anybody else's outputs
 //     it can only say that they are not, and the sentence says no more.
-//   - The fee is given first the way chapter 3 gives it, with the figures:
-//     what went in, less what came out. Then as a rate, the fee divided by
-//     the size. When that does not divide evenly the sentence says "about":
-//     no product that does not multiply out is ever shown.
+//   - The fee is given first with the figures: what went in, less what
+//     came out. Then as a rate, the fee divided by the size. When that does
+//     not divide evenly the sentence says "about": no product that does not
+//     multiply out is ever shown.
 //
 // Pure: the same transaction gives the same sentences.
 

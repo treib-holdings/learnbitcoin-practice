@@ -2,6 +2,10 @@
 // belongs to, its parts in order, and what kind of proof each part takes.
 // Held to the table of the phase's spec, to the contract's list of steps,
 // and to the site's own content where the chapter paths come from.
+//
+// And the table of chapters in the same file. A chapter's number and its
+// title are written there and nowhere else, so no test here knows which
+// they are: the tests hold their shape, and that a sentence can take them.
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
@@ -10,6 +14,8 @@ import {
   CHAPTERS,
   STEP_DEFS,
   allSteps,
+  chapterOf,
+  chapterSlots,
   nextStep,
   partCount,
   partDef,
@@ -29,22 +35,81 @@ test('the six steps of the contract, each under its chapter', () => {
     assert.equal(stepDef(id), STEP_DEFS[id]);
     assert.equal(stepDef(id).title, `title_${id}`, 'the title is a key of the string table, never a text');
   }
-  // The table of the spec: one step for chapter 2, three for chapter 3, two for chapter 4.
+  // The table of the spec: one step for the bitcoin chapter, three for the payment chapter, two for the keys
+  // chapter. A chapter is known by its key, which is never shown and never changes.
   assert.deepEqual(
-    STEPS.map((id) => [id, STEP_DEFS[id].chapter.number]),
+    STEPS.map((id) => [id, STEP_DEFS[id].chapter.key]),
     [
-      ['hold-some', 2],
-      ['pass-it-on', 3],
-      ['no-balances', 3],
-      ['waiting-room', 3],
-      ['the-seed', 4],
-      ['prove-the-backup', 4],
+      ['hold-some', 'bitcoin'],
+      ['pass-it-on', 'payment'],
+      ['no-balances', 'payment'],
+      ['waiting-room', 'payment'],
+      ['the-seed', 'keys'],
+      ['prove-the-backup', 'keys'],
     ],
   );
-  assert.deepEqual(stepsOf(2), ['hold-some']);
-  assert.deepEqual(stepsOf(3), ['pass-it-on', 'no-balances', 'waiting-room']);
-  assert.deepEqual(stepsOf(4), ['the-seed', 'prove-the-backup']);
-  assert.deepEqual(CHAPTERS.map((chapter) => chapter.number), [2, 3, 4]);
+  assert.deepEqual(stepsOf('bitcoin'), ['hold-some']);
+  assert.deepEqual(stepsOf('payment'), ['pass-it-on', 'no-balances', 'waiting-room']);
+  assert.deepEqual(stepsOf('keys'), ['the-seed', 'prove-the-backup']);
+  assert.deepEqual(CHAPTERS.map((chapter) => chapter.key), ['bitcoin', 'payment', 'keys']);
+  for (const chapter of CHAPTERS) assert.equal(chapterOf(chapter.key), chapter, chapter.key);
+  for (const id of STEPS) assert.ok(CHAPTERS.includes(STEP_DEFS[id].chapter), id);
+});
+
+/** Printable ASCII, and the same plus the letters and marks Spanish adds: the two alphabets of the string tables (test/strings.test.ts). */
+const ALPHABET = { en: /^[\x20-\x7e]*$/, es: /^[\x20-\x7eáéíóúüñÁÉÍÓÚÜÑ¿¡]*$/ } as const;
+
+test('the table of chapters: in each language the numbers rise and the titles are clean, and no test knows which they are', () => {
+  for (const lang of LANGS) {
+    let before = 0;
+    const titles: string[] = [];
+    for (const chapter of CHAPTERS) {
+      const where = `${chapter.key}, ${lang}`;
+      // The one way to read them: as the texts a sentence is given.
+      const { number, title } = chapterSlots(lang, chapter);
+      assert.ok(number !== undefined && title !== undefined, where);
+
+      // A number as the main site prints it, and larger than the one before it: the table is in reading order.
+      assert.match(number, /^[1-9][0-9]*$/, where);
+      assert.ok(Number(number) > before, `${where}: ${number} does not come after ${before}`);
+      before = Number(number);
+
+      // A title that can stand in a sentence of a string table, and keeps that table's rules.
+      assert.notEqual(title, '', where);
+      assert.equal(title, title.trim(), where);
+      assert.ok(!title.includes('  '), where);
+      assert.ok(!/[{}!¡]/.test(title), where);
+      assert.equal(title, title.normalize('NFC'), where);
+      assert.match(title, ALPHABET[lang], where);
+      assert.ok(!/^[0-9]/.test(title), where);
+      titles.push(title);
+    }
+    assert.equal(new Set(titles).size, CHAPTERS.length, `${lang}: two chapters share a title`);
+  }
+});
+
+test('a sentence takes a chapter\'s number and title from the table', () => {
+  const pairs = CHAPTERS.flatMap((chapter) => [`${chapter.key}Number`, `${chapter.key}Title`]);
+  for (const lang of LANGS) {
+    // With no chapter in hand: one pair for every chapter, and nothing else.
+    const bare = chapterSlots(lang);
+    assert.deepEqual(Object.keys(bare).sort(), [...pairs].sort(), lang);
+    for (const [name, value] of Object.entries(bare)) {
+      assert.equal(typeof value, 'string', `${lang} ${name}`);
+      assert.notEqual(value, '', `${lang} ${name}`);
+    }
+    // With a chapter handed in: the same, and that chapter's own pair under the two plain names.
+    for (const chapter of CHAPTERS) {
+      const own = chapterSlots(lang, chapter);
+      assert.deepEqual(Object.keys(own).sort(), [...pairs, 'number', 'title'].sort(), `${lang} ${chapter.key}`);
+      assert.equal(own.number, own[`${chapter.key}Number`], `${lang} ${chapter.key}`);
+      assert.equal(own.title, own[`${chapter.key}Title`], `${lang} ${chapter.key}`);
+      for (const name of pairs) assert.equal(own[name], bare[name], `${lang} ${chapter.key} ${name}`);
+      for (const value of Object.values(own)) assert.equal(typeof value, 'string');
+    }
+    // A new object each time: what one screen does with it reaches no other.
+    assert.notEqual(chapterSlots(lang), chapterSlots(lang));
+  }
 });
 
 test('the three chapter pages, in both languages, as the main site has them', () => {
@@ -120,7 +185,7 @@ test('each part: its kind, and the one fact it rests on', () => {
 });
 
 test('the next step is offered only inside the same chapter', () => {
-  assert.equal(nextStep('hold-some'), null, 'chapter 3 has not been read yet');
+  assert.equal(nextStep('hold-some'), null, 'the chapter that follows has not been read yet');
   assert.equal(nextStep('pass-it-on'), 'no-balances');
   assert.equal(nextStep('no-balances'), 'waiting-room');
   assert.equal(nextStep('waiting-room'), null);

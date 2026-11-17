@@ -29,6 +29,7 @@ import { SAFARI_KEEPS_DAYS } from '../../app/src/components/wallet/frame.ts';
 import { fill, formatSats } from '../../app/src/lib/format.ts';
 import { RECORD_KEY, type WalletRecord } from '../../app/src/lib/keystore.ts';
 import { strings } from '../../app/src/strings/index.ts';
+import { named } from './doit-helpers.ts';
 import { TEST_WORDS, freshRecord, fundTestWallet, scenario, testRecord, type OpenedPage, type Scenario } from './helpers.ts';
 
 const en = {
@@ -888,7 +889,14 @@ scenario('the word fields carry the attributes of the spec, with no name and no 
     order.filter((hook) => hook !== 'word-input'),
     ['restore-exception', 'restore-kept', 'restore-words', 'restore-check', 'restore-go'],
   );
-  assert.ok((await page.text('restore-exception')).includes(en.restore.exception));
+  // The paragraph and its link name the keys chapter: by the number and the title the app's table of chapters
+  // gives (doit-helpers.ts, named), with no slot left on screen.
+  assert.ok((await page.text('restore-exception')).includes(named(en.restore.exception)));
+  assert.doesNotMatch(await page.text('restore-exception'), /[{}]/);
+  assert.equal(
+    await page.page.$eval('[data-testid="restore-exception"] a', (link) => (link.textContent ?? '').replace(/\s+/g, ' ').trim()),
+    `${named(en.restore.chapter)} ${en.common.opensNewTab}`,
+  );
   const chapter = await page.page.$eval('[data-testid="restore-exception"] a', (link) => ({
     href: link.getAttribute('href'),
     target: link.getAttribute('target'),
@@ -1304,7 +1312,12 @@ scenario('the Spanish routes: Home, Create and Restore in Spanish, links that st
   await page.click('home-restore');
   await arrivesAt(page, '/es/restore');
   assert.equal(await headingOf(page), es.common.screen_restore);
-  assert.ok((await page.text('restore-exception')).includes(es.restore.exception));
+  assert.ok((await page.text('restore-exception')).includes(named(es.restore.exception, 'es')));
+  assert.doesNotMatch(await page.text('restore-exception'), /[{}]/);
+  assert.equal(
+    await page.page.$eval('[data-testid="restore-exception"] a', (link) => (link.textContent ?? '').replace(/\s+/g, ' ').trim()),
+    `${named(es.restore.chapter, 'es')} ${es.common.opensNewTab}`,
+  );
   assert.equal(
     await page.page.$eval('[data-testid="restore-exception"] a', (link) => link.getAttribute('href')),
     `${s.stack.config.siteUrl}/es/recorrido/se-tu-propio-banco`,

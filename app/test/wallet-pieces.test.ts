@@ -648,9 +648,16 @@ test('wallet text: the sentences SPEC section 3 and 4 give word for word', () =>
   assert.match(noCoins, /text=\{used \? t\.noCoinsLeft : t\.noCoins\}/);
   assert.match(noCoins, /state\.receive\.some\(\(address\) => address\.used\) \|\| state\.change\.some\(\(address\) => address\.used\)/);
   assert.equal(en.getCoins, 'Get practice coins');
-  // The short form of the exception paragraph (notes/06 section 3.5), in both languages.
-  assert.equal(en.wordsException, 'Practice words only. The words of a real wallet never go into a web page, this one included.');
-  assert.match(strings.wallet.es.wordsException, /incluida esta\.$/);
+  // The short form of the exception paragraph, in both languages: its last two sentences are the
+  // paragraph's own (test/front-text.test.ts holds them together).
+  assert.equal(
+    en.wordsException,
+    'Practice words only. The words of any wallet that is not a practice wallet never go into a web page, this one included. That includes the words of a wallet for real bitcoin, even an empty one.',
+  );
+  assert.equal(
+    strings.wallet.es.wordsException,
+    'Solo palabras de práctica. Las palabras de una billetera que no sea de práctica nunca van en una página web, incluida esta. Eso incluye las de una billetera para bitcoin de verdad, aunque esté vacía.',
+  );
 });
 
 test('wallet text: facts are slots, never numbers written into a sentence', () => {

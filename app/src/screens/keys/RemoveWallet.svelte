@@ -41,7 +41,7 @@
   import { navigate, router } from '../../lib/router.svelte.ts';
   import { useWallet } from '../../lib/wallet-context.ts';
   import { strings } from '../../strings/index.ts';
-  import { progressKept } from '../doit/view.ts';
+  import { progressKept, withChapters } from '../doit/view.ts';
   import { afterRemove, removeBackKey, sameWallet } from './settings-flow.ts';
   import { answerCounts } from './taps.ts';
 
@@ -141,7 +141,7 @@
   <div bind:this={root} class="space-y-4">
     <Prose>
       <p>{t.removeLead}</p>
-      <p>{t.removeDrill}</p>
+      <p>{withChapters(t.removeDrill, router.lang)}</p>
     </Prose>
 
     {#if gone}

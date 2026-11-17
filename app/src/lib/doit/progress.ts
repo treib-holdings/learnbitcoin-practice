@@ -709,8 +709,8 @@ export function endingIds<Id extends string>(ids: readonly Id[]): Id[] {
  * brings the first card named into view, and marks each card named.
  */
 export function doneWith(progress: Progress, id: StepId): StepId[] {
-  const chapter = STEP_DEFS[id].chapter.number;
-  const others = STEPS.filter((other) => other !== id && STEP_DEFS[other].chapter.number === chapter && progress.steps[other]?.doneAt !== undefined);
+  const chapter = STEP_DEFS[id].chapter.key;
+  const others = STEPS.filter((other) => other !== id && STEP_DEFS[other].chapter.key === chapter && progress.steps[other]?.doneAt !== undefined);
   return endingIds([id, ...others]);
 }
 
@@ -740,10 +740,10 @@ export function doneWith(progress: Progress, id: StepId): StepId[] {
  *                       chapter (doneWith).
  *
  * A step that is done and belongs to another chapter than the one the link
- * leads to ("Hold some", when a need of a step of chapter 3 or 4 sent the
- * reader to it) keeps the first ending until the detour is over: that page
- * holds no card for it, so a done ending would mark nothing there and open
- * the page at its top.
+ * leads to ("Hold some", when a need of a step of the payment chapter or of
+ * the keys chapter sent the reader to it) keeps the first ending until the
+ * detour is over: that page holds no card for it, so a done ending would
+ * mark nothing there and open the page at its top.
  *
  * That is all the address holds: the main site's own address, one of a
  * chapter's two paths, and the ending. The ending names one step and says
@@ -765,7 +765,7 @@ export function chapterLink(siteUrl: string, id: StepId, lang: Lang, progress: P
   const start = roadStart(progress, id);
   // One of the two pages of the chapter the road began in, whatever the note holds: the one the reader came from, or this page's language.
   const path = validFrom(start, progress.steps[start]?.from) ?? STEP_DEFS[start].chapter.path[lang];
-  const marked = progress.steps[id]?.doneAt !== undefined && STEP_DEFS[id].chapter.number === STEP_DEFS[start].chapter.number;
+  const marked = progress.steps[id]?.doneAt !== undefined && STEP_DEFS[id].chapter.key === STEP_DEFS[start].chapter.key;
   const ending = marked ? `#done=${doneWith(progress, id).join(',')}` : `#do-${start}`;
   return onSite(site, `${site}${path}${ending}`);
 }

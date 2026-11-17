@@ -21,8 +21,9 @@
   //       The main button leads back to that step, by name: it is the step
   //       the reader came for. The link back to the chapter is second, and
   //       leads to the chapter the reader left, which need not be this
-  //       step's own ("Hold some" belongs to chapter 2, and the steps that
-  //       send a reader to it to chapters 3 and 4).
+  //       step's own ("Hold some" belongs to the bitcoin chapter, and the
+  //       steps that send a reader to it to the payment chapter and the
+  //       keys chapter).
   //   from the wallet's own list of steps
   //       The link back to the chapter, then the next step where it
   //       belongs to the same chapter: a reader who has finished a

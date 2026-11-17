@@ -145,10 +145,9 @@ export function afterChoose(result: UnlockResult): ChooseOutcome {
  * looked up in the site's content, English and Spanish, before it was put
  * here). "What just happened" on the transaction screen links the five
  * terms a newcomer meets there: a coin (utxo), change, the fee, a block and
- * the waiting room (mempool). The first "Do it" step, which belongs to a
- * chapter that has not taught a wallet yet, links five more: a wallet, an
- * address, the 12 words (the seed phrase), a block explorer and a block's
- * height.
+ * the waiting room (mempool). The first "Do it" step, which explains each
+ * new thing itself, links five more: a wallet, an address, the 12 words
+ * (the seed phrase), a block explorer and a block's height.
  */
 const GLOSSARY = {
   utxo: { en: 'utxo-unspent-transaction-output', es: 'utxo' },

@@ -19,13 +19,13 @@
   // where any script in the page could read it back. On paper the fields
   // are left out, and when the piece leaves the screen it empties them.
   //
-  // Above them stands the paragraph the Restore screen carries: the main
-  // site's chapter 4 says never to type a seed into a website, and this
-  // page is the one exception, because its words guard play money. One
-  // more sentence follows it here. A real wallet does ask for a few words
-  // back, once, on its own screen, straight after it has shown them, and a
-  // reader who has done that here must not take the next page that asks
-  // for "only three words" for the same thing.
+  // Above them stands the paragraph the Restore screen carries: the keys
+  // chapter of the main site's Journey says never to type a seed into a
+  // website, and this page is the one exception, because its words guard
+  // play money. One more sentence follows it here. A real wallet does ask
+  // for a few words back, once, on its own screen, straight after it has
+  // shown them, and a reader who has done that here must not take the next
+  // page that asks for "only three words" for the same thing.
   //
   // A wallet opened with a passkey has to be unlocked first: comparing
   // words needs the wallet's keys. The shared unlock step does that, with a
@@ -55,6 +55,7 @@
   import { useWallet } from '../../lib/wallet-context.ts';
   import { strings } from '../../strings/index.ts';
   import { positionsAnswered, positionsFor } from './ask.ts';
+  import { withChapters } from './view.ts';
 
   interface Props {
     /** The step whose paper is checked. */
@@ -180,8 +181,8 @@
   <div class="space-y-4">
     <!-- Why this page may ask for words at all, before any field. The group of fields names it as its description. -->
     <div id="{uid}-rules">
-      <Notice kind="caution" text={r.exception} data-testid="step-words-exception">
-        <p>{t.wordsOnce}</p>
+      <Notice kind="caution" text={withChapters(r.exception, lang)} data-testid="step-words-exception">
+        <p>{withChapters(t.wordsOnce, lang)}</p>
       </Notice>
     </div>
 

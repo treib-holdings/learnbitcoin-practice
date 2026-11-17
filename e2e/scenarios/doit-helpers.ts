@@ -32,8 +32,9 @@ import assert from 'node:assert/strict';
 import type { EventBody, Lang, StepId } from '@learnbitcoin/practice-contract';
 import { ENGLISH_WORDS } from '@learnbitcoin/practice-wallet';
 import { PROGRESS_KEY, type Progress } from '../../app/src/lib/doit/progress.ts';
-import { CHAPTERS, STEPS, partCount, partKey, stepDef } from '../../app/src/lib/doit/steps.ts';
+import { CHAPTERS, STEPS, chapterOf, partCount, partKey, stepDef, type ChapterKey } from '../../app/src/lib/doit/steps.ts';
 import { fill } from '../../app/src/lib/format.ts';
+import { ledeKey, withChapters } from '../../app/src/screens/doit/view.ts';
 import { strings } from '../../app/src/strings/index.ts';
 import type { OpenOptions, OpenedPage, Scenario } from './helpers.ts';
 import {
@@ -99,6 +100,22 @@ export const saidTicked = (id: StepId, part: number, lang: Lang = 'en'): string 
 
 /** What the status region says when a step is done. */
 export const saidDone = (id: StepId, lang: Lang = 'en'): string => fill(DOIT[lang].saidDone, { step: titleOf(id, lang) });
+
+// A chapter's number and its title are in the app's table of chapters and nowhere else, so no scenario holds
+// one. Where a screen shows them, a scenario expects what the app's own withChapters() makes of the sentence.
+
+/** A chapter's heading, as the list of steps and a step's screen show it. The chapter is named by its key. */
+export const chapterName = (key: ChapterKey, lang: Lang = 'en'): string => withChapters(DOIT[lang].chapterHeading, lang, chapterOf(key));
+
+/** A step's lede as its screen shows it: with the step's own chapter filled in. */
+export const ledeOf = (id: StepId, lang: Lang = 'en'): string => withChapters(DOIT[lang][ledeKey(id)], lang, stepDef(id).chapter);
+
+/** A sentence that names the keys chapter, as a screen shows it. */
+export const named = (text: string, lang: Lang = 'en'): string => withChapters(text, lang);
+
+/** True when the screen says `text` somewhere in <main>: for a sentence with no hook of its own, such as a step's lede. */
+export const mainSays = async (page: OpenedPage, text: string): Promise<boolean> =>
+  (await page.page.$eval('main', (main) => (main.textContent ?? '').replace(/\s+/g, ' '))).includes(text);
 
 // -- a step's screen ----------------------------------------------------------------------------------
 

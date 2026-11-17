@@ -1,11 +1,11 @@
 <script lang="ts">
   // One "Do it" step: /do/<id>, /es/do/<id>.
   //
-  // A step is something a chapter of the main site's Journey taught, done
-  // by the reader in their own practice wallet and checked against the
-  // practice chain. Its screen says what the step is for, in a sentence or
-  // two, and then lists its parts (doit/StepBody.svelte): which are ticked,
-  // which one is open, and what to do in it.
+  // A step goes with a chapter of the main site's Journey: something the
+  // reader does in their own practice wallet, checked by the page as they
+  // go. Its screen says what the step is for, in a sentence or two, and
+  // then lists its parts (doit/StepBody.svelte): which are ticked, which one
+  // is open, and what to do in it.
   //
   // Nobody needs a wallet to read it: the first part of the first step is
   // "make one". The router shows this screen only for one of the six steps
@@ -28,7 +28,7 @@
   import { strings } from '../strings/index.ts';
   import ProgressNotice from './doit/ProgressNotice.svelte';
   import StepBody from './doit/StepBody.svelte';
-  import { ledeKey } from './doit/view.ts';
+  import { ledeKey, withChapters } from './doit/view.ts';
 
   // Asked for here so that a page without the steps fails when it is made, not when a part is opened.
   useDoit();
@@ -40,7 +40,7 @@
   let title = $derived(t[stepDef(id).title]);
 </script>
 
-<Page eyebrow={t.name} {title} titleHook="step-title" lede={t[ledeKey(id)]}>
+<Page eyebrow={t.name} {title} titleHook="step-title" lede={withChapters(t[ledeKey(id)], router.lang, stepDef(id).chapter)}>
   <!-- Progress that cannot be read or kept is said first: it changes what every part below can do. -->
   <ProgressNotice />
   {#key id}

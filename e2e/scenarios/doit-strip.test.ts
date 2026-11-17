@@ -97,7 +97,7 @@ scenario(
     const documents = documentsOf(page);
 
     // -- Into the wallet by the step's action: the strip names the step, how far it is, the part, and the things to do.
-    //    The reader came by the step's card in chapter 3, so the way back to the chapter stands beside the way back to the step. --
+    //    The reader came by the step's card in the payment chapter, so the way back to the chapter stands beside the way back to the step. --
     await act(page, '/wallet/send');
     const onSend = await untilStrip(page, STEP, 'part');
     assert.equal(onSend.words, partName(STEP, 1));
@@ -199,7 +199,7 @@ scenario(
     assert.equal(await page.waitForStatus(saidDone(STEP)), saidDone(STEP));
     assert.equal(await page.text('strip'), `${en.name} ${fill(en.stripDone, { step: titleOf(STEP) })} ${en.stripBack} ${en.back} ${en.stripClose}`);
     // The way back to the chapter, which now says that the step is done (and would name the other done steps
-    // of chapter 3 after it: there are none): the chapter's page the reader came from.
+    // of the payment chapter after it: there are none): the chapter's page the reader came from.
     // It stays in this tab, and nothing on it asks for a referrer to be sent: the page's own policy sends none.
     assert.equal(await hrefOf(page, 'strip-chapter'), `${site}${FROM}#done=${STEP}`);
     assert.deepEqual(

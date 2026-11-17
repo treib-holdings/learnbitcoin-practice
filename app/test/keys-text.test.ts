@@ -87,19 +87,54 @@ test('every key of the two tables is used by the screens, and the screens use no
 
 // -- the exception paragraph ---------------------------------------------------------
 
-test('the exception paragraph is the one of notes/06 section 3.5, word for word, in both languages', () => {
+test('the exception paragraph, word for word, in both languages', () => {
+  // {keysNumber} is the keys chapter's number, from the table of chapters (src/lib/doit/steps.ts). The first
+  // sentence says of the chapter only what every version of it says, in the word the chapter and the wallet
+  // share: a wallet's words. Nothing is typed on this screen, so the second says what the page does that
+  // makes a rule about typing its business.
   assert.equal(
     strings.backup.en.exception,
-    'Chapter 4 of the Journey says never to type your seed into a website, and to keep it only on your wallet device and on backups you made yourself. This page is the one exception, because the 12 words here only guard play money, practice coins that are worth nothing. The words of a wallet that holds real bitcoin never go into a web page, this one included.',
+    "Chapter {keysNumber} of the Journey says never to type a wallet's words into a website. This page, which shows 12 words and on other screens asks you to type them, is the one exception, because the 12 words here only guard play money, practice coins that are worth nothing. The words of any wallet that is not a practice wallet never go into a web page, this one included. That includes the words of a wallet for real bitcoin, even an empty one.",
   );
   assert.equal(
     strings.backup.es.exception,
-    'El capítulo 4 del Recorrido dice que nunca escribas tu frase semilla en un sitio web, y que solo debe vivir en tu dispositivo de billetera y en los respaldos que tú hiciste. Esta página es la única excepción, porque sus 12 palabras solo protegen dinero de juguete, monedas de práctica que no valen nada. Las palabras de una billetera con bitcoin de verdad nunca van en una página web, incluida esta.',
+    'El capítulo {keysNumber} del Recorrido dice que nunca escribas las palabras de una billetera en un sitio web. Esta página, que muestra 12 palabras y en otras pantallas te pide escribirlas, es la única excepción, porque sus 12 palabras solo protegen dinero de juguete, monedas de práctica que no valen nada. Las palabras de una billetera que no sea de práctica nunca van en una página web, incluida esta. Eso incluye las de una billetera para bitcoin de verdad, aunque esté vacía.',
   );
-  // Three sentences, and the last closes the loophole the word "exception" opens.
-  for (const lang of LANGS) assert.equal(sentences(strings.backup[lang].exception).length, 3, lang);
-  assert.match(strings.backup.en.exception, /this one included\.$/);
-  assert.match(strings.backup.es.exception, /incluida esta\.$/);
+  // What the second sentence says the page does is the same in both languages, and it is so. This screen
+  // shows the words and has no field of its own for them. The pieces that ask for them are others: the
+  // Restore screen, the paper check of two steps, and the shared unlock step. Neither language says that the
+  // page asks for the words "back" or "again": for a wallet made here it has not asked before.
+  assert.ok(strings.backup.en.exception.includes('This page, which shows 12 words and on other screens asks you to type them, is the one exception'));
+  assert.ok(strings.backup.es.exception.includes('Esta página, que muestra 12 palabras y en otras pantallas te pide escribirlas, es la única excepción'));
+  assert.doesNotMatch(strings.backup.en.exception, /\b(?:back|again)\b/i);
+  assert.doesNotMatch(strings.backup.es.exception, /vuelve|de vuelta|de nuevo|otra vez/i);
+  assert.doesNotMatch(code(source('Backup.svelte')), /<WordsInput\b|<TextInput\b|<input\b/);
+  for (const asks of ['../src/screens/Restore.svelte', '../src/screens/doit/AskWords.svelte', '../src/components/wallet/Unlock.svelte']) {
+    assert.match(readFileSync(new URL(asks, import.meta.url), 'utf8'), /<WordsInput\b|<TextInput\b/, asks);
+  }
+  // Four sentences. The last two close the loophole the word "exception" opens: the rule, and the case it
+  // names. They are the two the Restore screen's paragraph and the short form end in (test/front-text.test.ts
+  // holds the three together).
+  for (const lang of LANGS) assert.equal(sentences(strings.backup[lang].exception).length, 4, lang);
+  assert.deepEqual(sentences(strings.backup.en.exception).slice(-2), [
+    'The words of any wallet that is not a practice wallet never go into a web page, this one included.',
+    'That includes the words of a wallet for real bitcoin, even an empty one.',
+  ]);
+  assert.deepEqual(sentences(strings.backup.es.exception).slice(-2), [
+    'Las palabras de una billetera que no sea de práctica nunca van en una página web, incluida esta.',
+    'Eso incluye las de una billetera para bitcoin de verdad, aunque esté vacía.',
+  ]);
+  // The link under it, and the sentence on Settings that names the same chapter's drill.
+  assert.equal(strings.backup.en.chapterLink, 'Chapter {keysNumber} of the Journey');
+  assert.equal(strings.backup.es.chapterLink, 'Capítulo {keysNumber} del Recorrido');
+  assert.equal(
+    strings.settings.en.removeDrill,
+    'This is the first half of the drill in chapter {keysNumber} of the Journey: wipe, then restore from your words, to know the backup works.',
+  );
+  assert.equal(
+    strings.settings.es.removeDrill,
+    'Es la primera mitad del ejercicio del capítulo {keysNumber} del Recorrido: borrar y luego restaurar desde tus palabras, para saber que el respaldo funciona.',
+  );
 });
 
 test('the exception gives one reason, about the words, and never argues that this page can be trusted', () => {

@@ -391,7 +391,7 @@ test('the six steps, from a browser that holds nothing to all six done, on the r
     const done = readProgress(page.storage as Storage).progress;
     assert.deepEqual(done.steps['hold-some'], { started: true, doneAt: s.clock.ms, from: '/journey/what-bitcoin-actually-is', parts: { 1: true, 2: true, 3: true, 4: true } });
     // Done: the way back now ends in what the chapter marks its card on. It names this step, and would name the
-    // other done steps of chapter 2 after it: there are none. The step is followed until the reader has seen that.
+    // other done steps of its chapter after it: there are none. The step is followed until the reader has seen that.
     assert.equal(chapterLink(SITE, 'hold-some', 'en', done), `${SITE}/journey/what-bitcoin-actually-is#done=hold-some`);
     assert.deepEqual([done.following, stripStep(done, s.clock.ms)], ['hold-some', 'hold-some']);
     doit.go(holdSome);

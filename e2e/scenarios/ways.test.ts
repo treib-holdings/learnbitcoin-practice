@@ -242,7 +242,7 @@ scenario(
     const made = await createFrom(page, 'create-passkey');
     await page.click('words-written');
     await arrivesAt(page, '/wallet');
-    // The drill of chapter 4: removed, and restored from the 12 words. (The practice network knows no history
+    // The keys chapter's drill: removed, and restored from the 12 words. (The practice network knows no history
     // of this new wallet, so the reader chooses to keep the words here.)
     await toSection(page, '/wallet/settings');
     await page.click('remove-wallet');

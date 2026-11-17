@@ -20,7 +20,7 @@ import { EXPLAIN_SLOTS, explain } from '../src/lib/doit/explain.ts';
 import { DEFAULT_CONFIG } from '../src/lib/config.ts';
 import { judge, type BlockedReason, type PartView, type StepView, type WalletTrouble } from '../src/lib/doit/judge.ts';
 import { applyChange, chapterLink, type Progress, type StepNote } from '../src/lib/doit/progress.ts';
-import { CHAPTERS, STEP_DEFS, nextStep, partCount, partDef } from '../src/lib/doit/steps.ts';
+import { CHAPTERS, STEP_DEFS, chapterOf, chapterSlots, nextStep, partCount, partDef } from '../src/lib/doit/steps.ts';
 import { fill, slotNames } from '../src/lib/format.ts';
 import { answerKey, positionsAnswered, positionsFor } from '../src/screens/doit/ask.ts';
 import { bitsText, sentenceBits } from '../src/screens/doit/bits.ts';
@@ -45,6 +45,7 @@ import {
   waitedOf,
   waitedText,
   waysOn,
+  withChapters,
 } from '../src/screens/doit/view.ts';
 import { ADDRESS_SLOTS, explainSlots, explained, explainedTerms } from '../src/screens/read/explained.ts';
 import { faucetGlossaryUrl, glossaryUrl } from '../src/screens/read/read.ts';
@@ -369,22 +370,72 @@ test('the pot count is asked for under a done "Pass it on" alone, and only when 
 });
 
 test('a chapter\'s heading and its address on the main site, in the page\'s language', () => {
-  assert.deepEqual(
-    CHAPTERS.map((chapter) => chapterHeading(chapter, 'en')),
-    ['Chapter 2: What Bitcoin Actually Is', 'Chapter 3: How Bitcoin Works', 'Chapter 4: Be Your Own Bank'],
-  );
-  assert.deepEqual(
-    CHAPTERS.map((chapter) => chapterHeading(chapter, 'es')),
-    ['Capítulo 2: Qué es Bitcoin en realidad', 'Capítulo 3: Cómo funciona Bitcoin', 'Capítulo 4: Sé tu propio banco'],
-  );
-  const [two] = CHAPTERS;
-  assert.ok(two);
-  assert.equal(chapterUrl(SITE, two, 'en'), `${SITE}/journey/what-bitcoin-actually-is`);
-  assert.equal(chapterUrl(`${SITE}/`, two, 'es'), `${SITE}/es/recorrido/que-es-bitcoin-en-realidad`);
+  // How a heading is arranged is the string table's. What goes into it is the table of chapters'
+  // (lib/doit/steps.ts), and no test knows a number or a title: the heading is the arrangement, filled.
+  // The title stands in quotation marks, with no colon before it: a title may hold a colon of its own, and
+  // a heading with two colons in a row stutters.
+  assert.equal(en.chapterHeading, 'Chapter {number}, "{title}"');
+  assert.equal(es.chapterHeading, 'Capítulo {number}, "{title}"');
+  for (const lang of LANGS) {
+    const headings = CHAPTERS.map((chapter) => chapterHeading(chapter, lang));
+    assert.equal(new Set(headings).size, CHAPTERS.length, `${lang}: every chapter has a heading of its own`);
+    for (const chapter of CHAPTERS) {
+      const { number, title } = chapterSlots(lang, chapter);
+      assert.ok(number !== undefined && title !== undefined, `${lang} ${chapter.key}`);
+      const heading = chapterHeading(chapter, lang);
+      assert.equal(heading, fill(strings.doit[lang].chapterHeading, { number, title }), `${lang} ${chapter.key}`);
+      assert.ok(heading.includes(number) && heading.includes(title) && !heading.includes('{'), heading);
+      // Whatever the title holds, the heading has no colon but the title's own.
+      assert.ok(heading.endsWith(`, "${title}"`), heading);
+      assert.equal(heading.split(':').length, title.split(':').length, heading);
+    }
+  }
+  const [first] = CHAPTERS;
+  assert.ok(first);
+  assert.equal(chapterUrl(SITE, first, 'en'), `${SITE}/journey/what-bitcoin-actually-is`);
+  assert.equal(chapterUrl(`${SITE}/`, first, 'es'), `${SITE}/es/recorrido/que-es-bitcoin-en-realidad`);
   // No site to build it from: no link, and never a guess.
-  assert.equal(chapterUrl('', two, 'en'), null);
-  assert.equal(chapterUrl('javascript:alert(1)', two, 'en'), null);
-  assert.equal(chapterUrl('not an address', two, 'en'), null);
+  assert.equal(chapterUrl('', first, 'en'), null);
+  assert.equal(chapterUrl('javascript:alert(1)', first, 'en'), null);
+  assert.equal(chapterUrl('not an address', first, 'en'), null);
+});
+
+test('withChapters fills a sentence from the table of chapters', () => {
+  const keys = chapterOf('keys');
+  for (const lang of LANGS) {
+    // Every chapter's pair, by the chapter's key, as the table gives it with no chapter in hand.
+    const table = chapterSlots(lang);
+    for (const chapter of CHAPTERS) {
+      // The chapter handed in fills {number} and {title}: with its own pair, and no other chapter's.
+      const number = table[`${chapter.key}Number`];
+      const title = table[`${chapter.key}Title`];
+      assert.ok(number !== undefined && title !== undefined, `${lang} ${chapter.key}`);
+      assert.equal(withChapters('{number} | {title}', lang, chapter), `${number} | ${title}`, `${lang} ${chapter.key}`);
+      assert.equal(withChapters('Steps of chapter {number}', lang, chapter), `Steps of chapter ${number}`);
+      // A slot of the keys chapter is filled wherever the sentence stands: with another chapter in hand, or none.
+      const said = `${table.keysNumber} | ${table.keysTitle}`;
+      assert.equal(withChapters('{keysNumber} | {keysTitle}', lang, chapter), said, `${lang} ${chapter.key}`);
+      assert.equal(withChapters('{keysNumber} | {keysTitle}', lang), said, lang);
+      // Both kinds in one sentence: each from its own chapter.
+      assert.equal(withChapters('{number}, {keysNumber}', lang, chapter), `${number}, ${table.keysNumber}`);
+    }
+    // The three chapters do not share a number: so the lines above tell one chapter from another.
+    assert.equal(new Set(CHAPTERS.map((chapter) => table[`${chapter.key}Number`])).size, CHAPTERS.length, lang);
+    // A text with no slot comes back as it is.
+    assert.equal(withChapters('Back to the chapter', lang), 'Back to the chapter');
+    assert.equal(withChapters('Back to the chapter', lang, keys), 'Back to the chapter');
+    assert.equal(withChapters('', lang), '');
+    // A slot of the chapter in hand, and no chapter in hand: the screen and its text have drifted apart.
+    assert.throws(() => withChapters('Chapter {number}, "{title}"', lang), /no value for \{number\}/);
+    assert.throws(() => withChapters('{title}', lang), /no value for \{title\}/);
+    // A slot that is no chapter's: a misspelling, or a key the table does not have.
+    assert.throws(() => withChapters('{keyNumber}', lang, keys), /no value for \{keyNumber\}/);
+    assert.throws(() => withChapters('{keysnumber}', lang, keys), /no value for \{keysnumber\}/);
+    assert.throws(() => withChapters('{seedNumber}', lang, keys), /no value for \{seedNumber\}/);
+    // A chapter's slot beside any other slot: withChapters() fills from the table and from nothing else.
+    assert.throws(() => withChapters('{keysNumber} and {seconds}', lang, keys), /no value for \{seconds\}/);
+    assert.throws(() => withChapters('{number} of {total}', lang, keys), /no value for \{total\}/);
+  }
 });
 
 // -- a done step's ways on ------------------------------------------------------------------------
@@ -453,7 +504,7 @@ test('a done step\'s ways on: back to the step the reader came for, or back to t
   assert.deepEqual(waysOn('hold-some', progress), { led: 'pass-it-on', next: null });
   for (const part of [1, 2, 3]) progress = applyChange(progress, { kind: 'tick', step: 'pass-it-on', part, at: NOW + 4 });
   // "Pass it on" was reached by its card: no "Next step". And "Hold some", which no card ever led to, is a
-  // step from the list again: it leads back to no step, and chapter 2 has no next one to offer.
+  // step from the list again: it leads back to no step, and its chapter has no next one to offer.
   assert.deepEqual(waysOn('pass-it-on', progress), { led: null, next: null });
   assert.deepEqual(waysOn('hold-some', progress), { led: null, next: null });
   assert.equal(progress.steps['hold-some']?.cameFor, undefined);
@@ -886,7 +937,7 @@ test('a payment this wallet sent, read out in the order the spec gives: spent, w
   assert.equal(texts[0], 'One coin of this wallet was spent. It held 48,782 practice sats, and a coin is always spent whole.');
   assert.equal(texts[1], `30,000 practice sats went to ${POT_ADDRESS}, the address that was paid.`);
   assert.match(texts[2] ?? '', /^18,500 practice sats came back as change, to bcrt1q[a-z0-9]+, a fresh address of this wallet\. The change is a new coin\.$/);
-  // The fee as the chapter gives it, with the figures, and then as a rate that multiplies out.
+  // The fee with the figures first, and then as a rate that multiplies out.
   assert.equal(
     texts[3],
     'The fee is what went in less what came out: 48,782 less 48,500 leaves 282 practice sats. Spread over the 141 vB of the transaction, that is 2 sat/vB.',

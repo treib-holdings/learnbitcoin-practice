@@ -1,6 +1,6 @@
-// "Prove the backup", the last step of chapter 4, through the real screens:
-// check the paper copy, remove the wallet from this browser, restore it
-// from the 12 words, and find its coins again.
+// "Prove the backup", the last step of the keys chapter, through the real
+// screens: check the paper copy, remove the wallet from this browser,
+// restore it from the 12 words, and find its coins again.
 //
 // It is the one step that takes something away, and the one whose note has
 // to outlive the wallet: after the removal the note alone says which wallet
@@ -62,7 +62,10 @@ import {
   doIt,
   ends,
   hrefOf,
+  ledeOf,
   listState,
+  mainSays,
+  named,
   noteOf,
   noteText,
   partName,
@@ -131,10 +134,14 @@ scenario(
     // -- Part 1: the paper the wallet has to come back from. The check of "The seed", for the wallet that is here. --
     await untilParts(page, ['now', 'later', 'later', 'later']);
     assert.equal(await page.text('step-title'), en['title_prove-the-backup']);
+    // The lede names the step's own chapter by the number the app's table of chapters gives.
+    assert.ok(await mainSays(page, ledeOf(STEP)), ledeOf(STEP));
     assert.equal(await page.text('step-guide'), en['guide_prove-the-backup_1']);
     assert.equal(await hrefOf(page, 'step-back'), `${site}${CHAPTER}#do-${STEP}`);
     const rules = await page.text('step-words-exception');
-    assert.ok(rules.includes(strings.restore.en.exception) && rules.includes(en.wordsOnce), rules);
+    // Both sentences name the keys chapter, and stand on screen with its number filled in.
+    assert.ok(rules.includes(named(strings.restore.en.exception)) && rules.includes(named(en.wordsOnce)), rules);
+    assert.doesNotMatch(rules, /[{}]/);
     assert.deepEqual(await wordFieldRules(page), [WORD_FIELD_RULES, WORD_FIELD_RULES, WORD_FIELD_RULES]);
     // A wrong word first: named by its place, and the step is where it was.
     const places = await placesAsked(page);
@@ -157,7 +164,8 @@ scenario(
     // -- Part 2: said plainly before anything is taken away --
     assert.equal(await page.text('step-guide'), en['guide_prove-the-backup_2']);
     const warning = await page.text('step-remove-warning');
-    for (const sentence of [en.removeWarnTitle, en.removeWarnFunded, en.removeWarnNine, en.removeWarnKept]) assert.ok(warning.includes(sentence), sentence);
+    for (const sentence of [en.removeWarnTitle, named(en.removeWarnFunded), en.removeWarnNine, en.removeWarnKept]) assert.ok(warning.includes(sentence), sentence);
+    assert.doesNotMatch(warning, /[{}]/);
     assert.equal(await page.text('step-action'), en.actSettings);
     await act(page, '/wallet/settings');
     assert.equal((await untilStrip(page, STEP, 'part')).words, partName(STEP, 2));

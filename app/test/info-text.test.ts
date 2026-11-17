@@ -825,7 +825,7 @@ test('About, "what our server sees": a link back to a chapter stays in this tab,
   const SITE = 'https://www.learnbitcoin.com';
   const doneAt = Date.UTC(2026, 10, 15, 12);
   const pagesOf = (id: (typeof STEPS)[number]): string[] => Object.values(STEP_DEFS[id].chapter.path);
-  const chapterOf = (id: (typeof STEPS)[number]): number => STEP_DEFS[id].chapter.number;
+  const chapterKeyOf = (id: (typeof STEPS)[number]): string => STEP_DEFS[id].chapter.key;
   /** A link's address in its parts, held to what it may hold: the site, one path, an ending, and nothing else. */
   const partsOf = (link: string | null, where: string): { page: string; ending: string } => {
     const address = new URL(link ?? '');
@@ -854,7 +854,7 @@ test('About, "what our server sees": a link back to a chapter stays in this tab,
       const named = marked.ending.slice('#done='.length).split(',');
       assert.equal(marked.page, page);
       assert.equal(named[0], id, 'the step the link is shown for comes first');
-      assert.deepEqual([...named].sort(), STEPS.filter((each) => chapterOf(each) === chapterOf(id)).sort(), `${id}: the done steps of its own chapter, and of no other`);
+      assert.deepEqual([...named].sort(), STEPS.filter((each) => chapterKeyOf(each) === chapterKeyOf(id)).sort(), `${id}: the done steps of its own chapter, and of no other`);
       assert.ok(named.length <= DONE_MOST && marked.ending.length <= DONE_LONGEST);
 
       // During a detour: "a step that the note of your progress holds as the one you came for". A need of
@@ -871,7 +871,7 @@ test('About, "what our server sees": a link back to a chapter stays in this tab,
         // 4. and 5. Done: marked where the reader's page holds this step's card (the two are steps of one
         //    chapter), and else the card they pressed, still.
         const over: Progress = { v: 1, following: null, steps: { [id]: full({ doneAt, cameFor }), [cameFor]: full({ from }) } };
-        const expected = chapterOf(id) === chapterOf(cameFor) ? `#done=${id}` : `#do-${cameFor}`;
+        const expected = chapterKeyOf(id) === chapterKeyOf(cameFor) ? `#done=${id}` : `#do-${cameFor}`;
         assert.deepEqual(partsOf(chapterLink(SITE, id, lang, over), where), { page: from, ending: expected }, where);
       }
     }

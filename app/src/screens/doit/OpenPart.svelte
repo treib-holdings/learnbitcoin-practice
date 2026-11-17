@@ -40,7 +40,7 @@
   import StoredTrouble from '../../components/wallet/StoredTrouble.svelte';
   import { useDoit } from '../../lib/doit/doit-context.ts';
   import { SIX_BLOCKS, isWalletTrouble, type PartView } from '../../lib/doit/judge.ts';
-  import { partDef, stepDef, type StepId } from '../../lib/doit/steps.ts';
+  import { chapterSlots, partDef, stepDef, type StepId } from '../../lib/doit/steps.ts';
   import { fill, formatSats } from '../../lib/format.ts';
   import { router } from '../../lib/router.svelte.ts';
   import { useWallet } from '../../lib/wallet-context.ts';
@@ -51,7 +51,7 @@
   import ChainLines from './ChainLines.svelte';
   import GlossaryLinks from './GlossaryLinks.svelte';
   import Sentence from './Sentence.svelte';
-  import { actionOf, askOf, fillFrom, guideKey, needOf, paperHelp, sixBlocks, slotsFor, termsOf, type Action } from './view.ts';
+  import { actionOf, askOf, fillFrom, guideKey, needOf, paperHelp, sixBlocks, slotsFor, termsOf, withChapters, type Action } from './view.ts';
   import WaitingBlock from './WaitingBlock.svelte';
 
   interface Props {
@@ -80,11 +80,13 @@
 
   /**
    * The facts a sentence of this part can name. Each sentence takes the
-   * ones it has a slot for. {seconds} is the time between two practice
+   * ones it has a slot for. First what the table of chapters gives, for a
+   * guide that names a chapter. {seconds} is the time between two practice
    * blocks, except in the one sentence that says how long six of them take
    * on a network so fast that six take under a minute.
    */
   let values = $derived({
+    ...chapterSlots(lang, stepDef(id).chapter),
     seconds: formatSats(fact === 'six-blocks' && six.unit === 'seconds' ? six.count : blockSeconds),
     minutes: formatSats(six.count),
     here: wallet.record?.fingerprint ?? '',
@@ -234,7 +236,7 @@
       <!-- Said plainly, before the one part of any step that takes something away. -->
       <Notice kind="caution" label={t.removeWarnTitle} data-testid="step-remove-warning">
         <div class="space-y-2">
-          <p>{t.removeWarnFunded}</p>
+          <p>{withChapters(t.removeWarnFunded, lang)}</p>
           <p>{t.removeWarnNine}</p>
           <p>{t.removeWarnKept}</p>
         </div>

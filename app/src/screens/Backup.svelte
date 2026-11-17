@@ -19,8 +19,8 @@
   //           straight back to that step: they made the wallet because the
   //           step asked for one (keys/backup-flow.ts, afterWritten).
   //   ask     At any other time: why this page is the one exception to
-  //           chapter 4's rule, what to know before the words are on
-  //           screen, and "Show the 12 words".
+  //           the keys chapter's rule, what to know before the words are
+  //           on screen, and "Show the 12 words".
   //   unlock  A passkey wallet that is locked gets the shared unlock step
   //           first, and then its words. "Back" under the step returns to
   //           the screen's first view: a reader who does not want to
@@ -63,6 +63,7 @@
   import { focusHeading, navigate, router } from '../lib/router.svelte.ts';
   import { useWallet } from '../lib/wallet-context.ts';
   import { strings } from '../strings/index.ts';
+  import { withChapters } from './doit/view.ts';
   import PracticeCard from './keys/PracticeCard.svelte';
   import { afterUnlock, afterWritten, backupView, chapterUrl, mustDropWords, showPlan, takenByAnotherTab } from './keys/backup-flow.ts';
   import { siteHost } from './keys/card-form.ts';
@@ -264,12 +265,12 @@
 {#snippet exception(strict: boolean)}
   <Notice kind="caution" data-testid="backup-exception">
     <div class="space-y-3">
-      <p>{t.exception}</p>
+      <p>{withChapters(t.exception, lang)}</p>
       {#if strict}
         <p class="font-semibold text-ink-800" data-testid="never-real-money">{t.neverRealMoney}</p>
       {/if}
       <p class="text-sm">
-        <OutLink href={chapterUrl(wallet.config.siteUrl, lang)} text={t.chapterLink} />
+        <OutLink href={chapterUrl(wallet.config.siteUrl, lang)} text={withChapters(t.chapterLink, lang)} />
       </p>
     </div>
   </Notice>

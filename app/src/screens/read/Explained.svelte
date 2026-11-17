@@ -7,9 +7,8 @@
   // The table of inputs and outputs under it shows the transaction as it
   // is. This says what that means for this wallet, with the transaction's
   // own figures: the coin that was used up whole, the change that came back
-  // as a new coin, the fee as what went in less what came out. A reader of
-  // chapter 3 has read all of that about Alice and Bob; here it is their
-  // own payment.
+  // as a new coin, the fee as what went in less what came out. Here the
+  // figures are those of the reader's own payment.
   //
   // Every sentence is worked out from the transaction and from nothing
   // else (lib/doit/explain.ts, read/explained.ts): nothing is fetched and

@@ -142,7 +142,7 @@ test('a way back that is not the step\'s own chapter is ignored without a word, 
   p.runner.watch(HOME, '');
   p.runner.watch(step('hold-some'), '?from=/journey/be-your-own-bank');
   assert.equal(p.note().steps['hold-some']?.from, '/journey/what-bitcoin-actually-is');
-  // The same address names the way back of the step it opens, and of no other: chapter 4's page is "The seed"'s own.
+  // The same address names the way back of the step it opens, and of no other: the keys chapter's page is "The seed"'s own.
   p.runner.watch(step('the-seed'), '?from=/journey/be-your-own-bank');
   assert.equal(p.note().steps['the-seed']?.from, '/journey/be-your-own-bank');
   assert.equal(p.note().steps['hold-some']?.from, '/journey/what-bitcoin-actually-is');
@@ -429,8 +429,8 @@ test('"Stop following" and the step\'s action link: only the followed step chang
 
 test('a detour is written through the one write, and not under a newer note or a storage that refuses', () => {
   const CARD = '?from=/journey/how-bitcoin-works';
-  // A reader with no wallet arrives on "Pass it on" by its card in chapter 3, and presses the link of its need,
-  // which leads to "Hold some".
+  // A reader with no wallet arrives on "Pass it on" by its card in the payment chapter, and presses the link of
+  // its need, which leads to "Hold some".
   const p = page();
   p.runner.release();
   p.runner.watch(step('pass-it-on'), CARD);

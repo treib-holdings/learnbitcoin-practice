@@ -7,14 +7,15 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { LANGS } from '@learnbitcoin/practice-contract';
+import { chapterOf } from '../src/lib/doit/steps.ts';
 import { fill } from '../src/lib/format.ts';
 import type { CreateResult, KeepResult, RestoreResult, WalletStatus } from '../src/lib/wallet-api.ts';
 import {
   addsUnderTrouble,
-  chapterFourUrl,
   createView,
   frontGate,
   keepView,
+  keysChapterUrl,
   passkeyFace,
   passkeyNameStart,
   restoreHeldBy,
@@ -331,11 +332,15 @@ test('the way in leads to the "Wallet made" step until that step has been seen, 
   assert.equal(wayIn(null), 'wallet');
 });
 
-// -- chapter 4 ------------------------------------------------------------------------
+// -- the keys chapter -----------------------------------------------------------------
 
-test('chapter 4 is linked in the language of the page, with no slash at the end', () => {
+test('the keys chapter is linked in the language of the page, with no slash at the end', () => {
   const site = 'https://www.learnbitcoin.com';
-  assert.equal(chapterFourUrl(site, 'en'), 'https://www.learnbitcoin.com/journey/be-your-own-bank');
-  assert.equal(chapterFourUrl(site, 'es'), 'https://www.learnbitcoin.com/es/recorrido/se-tu-propio-banco');
-  for (const lang of LANGS) assert.ok(!chapterFourUrl(site, lang).endsWith('/'), lang);
+  assert.equal(keysChapterUrl(site, 'en'), 'https://www.learnbitcoin.com/journey/be-your-own-bank');
+  assert.equal(keysChapterUrl(site, 'es'), 'https://www.learnbitcoin.com/es/recorrido/se-tu-propio-banco');
+  for (const lang of LANGS) {
+    assert.ok(!keysChapterUrl(site, lang).endsWith('/'), lang);
+    // The path is the table of chapters': this screen keeps no copy of it.
+    assert.equal(keysChapterUrl(site, lang), site + chapterOf('keys').path[lang], lang);
+  }
 });

@@ -28,9 +28,9 @@
 //
 // and any of them with &storage=no (progress cannot be kept), with
 // &from=<the step's own chapter page> (the way back the reader came by: for
-// a step of chapter 3, /journey/how-bitcoin-works or its Spanish twin; any
-// other value is ignored), or in Spanish under /es. The history loads a
-// moment after the page: give the gallery tool --wait 900.
+// a step of the payment chapter, /journey/how-bitcoin-works or its Spanish
+// twin; any other value is ignored), or in Spanish under /es. The history
+// loads a moment after the page: give the gallery tool --wait 900.
 //
 // THE PRESETS HERE, by the screen they are for:
 //
@@ -46,10 +46,10 @@
 //     do-unconfirmed      one coin, not in a block yet: part 3 waits (also: Pass it on, "not spendable yet")
 //     do-hold-done        done
 //     do-detour           under way, for a reader whom "Pass it on" sent here, and who had pressed the card
-//                         of "Pass it on" in chapter 3: "Back to the chapter" on the step's screen leads
-//                         to that card, and so does the strip (on /wallet/receive: both links)
+//                         of "Pass it on" in the payment chapter: "Back to the chapter" on the step's
+//                         screen leads to that card, and so does the strip (on /wallet/receive: both links)
 //     do-led-on           done, in the same detour: the card's main button leads back to "Pass it on",
-//                         and "Back to the chapter", second, to chapter 3
+//                         and "Back to the chapter", second, to the payment chapter
 //
 //   Pass it on (/do/pass-it-on)
 //     do-pass-waiting     the payment was sent 12 seconds ago and waits for its block
@@ -58,8 +58,8 @@
 //     do-pass-done        done (add potStats=none or potStats=unavailable for no pot line)
 //     do-pass-ticking     the block has come while the page was away: the step is done as the
 //                         page loads, with the line "It waited 9 seconds. Block ... took it in."
-//     do-card-done        done, for a reader who came by its card in chapter 3, with "The waiting room"
-//                         done too: no "Next step", and a link back that names both steps
+//     do-card-done        done, for a reader who came by its card in the payment chapter, with "The
+//                         waiting room" done too: no "Next step", and a link back that names both steps
 //
 //   There are no balances (/do/no-balances)
 //     do-received-only    a wallet that has sent nothing: leads to "Pass it on"
@@ -105,8 +105,8 @@
 //                         transactions is read; on /wallet/receive, where it is not, the part's name
 //     do-pass-lost        "the network does not know the payment"
 //     do-strip-done       the step is done: both ways back, and "Close"
-//     do-strip-card       a step under way that was reached by its card in chapter 3: both ways back
-//                         on the strip from the start (look at it at 320 and 375 px, also under /es)
+//     do-strip-card       a step under way that was reached by its card in the payment chapter: both
+//                         ways back on the strip from the start (look at it at 320 and 375 px, also under /es)
 //     do-detour           the strip of a step that a need sent the reader to: the link leads to the
 //                         chapter they left
 //     do-strip-old        followed more than 24 hours ago: no strip
@@ -275,8 +275,8 @@ export const presets: Record<string, Preset> = {
   },
 
   'do-detour': (wallet) => {
-    // A wallet with no coins yet. The reader pressed the card of "Pass it on" in chapter 3; its need (no
-    // coins) sent them here, and the press of that link was remembered.
+    // A wallet with no coins yet. The reader pressed the card of "Pass it on" in the payment chapter; its
+    // need (no coins) sent them here, and the press of that link was remembered.
     wallet.haveWallet('words');
     wallet.haveCoins(emptyState(), []);
     keep(wallet, { 'hold-some': started(1, { cameFor: 'pass-it-on' }), 'pass-it-on': started(0, { from: '/journey/how-bitcoin-works' }) }, 'hold-some');
@@ -483,7 +483,7 @@ export const presets: Record<string, Preset> = {
 
   'do-strip-card': (wallet) => {
     funded(wallet);
-    // Under way, and reached by its card in chapter 3: the strip carries the link back from the start.
+    // Under way, and reached by its card in the payment chapter: the strip carries the link back from the start.
     keep(wallet, { 'no-balances': started(1, { from: '/journey/how-bitcoin-works' }) }, 'no-balances');
   },
 

@@ -50,7 +50,7 @@
   import { useWallet } from '../lib/wallet-context.ts';
   import { strings } from '../strings/index.ts';
   import ProgressNotice from './doit/ProgressNotice.svelte';
-  import { chapterHeading, chapterUrl } from './doit/view.ts';
+  import { chapterHeading, chapterUrl, withChapters } from './doit/view.ts';
 
   const wallet = useWallet();
   const doit = useDoit();
@@ -151,18 +151,18 @@
   {/if}
 
   <div class="space-y-10" data-testid="do-list">
-    {#each CHAPTERS as chapter (chapter.number)}
+    {#each CHAPTERS as chapter (chapter.key)}
       {@const url = chapterUrl(wallet.config.siteUrl, chapter, lang)}
-      <section aria-labelledby="{uid}-chapter-{chapter.number}">
-        <h2 id="{uid}-chapter-{chapter.number}" class="text-balance text-xl font-bold tracking-tight text-ink-800 sm:text-2xl">
+      <section aria-labelledby="{uid}-chapter-{chapter.key}">
+        <h2 id="{uid}-chapter-{chapter.key}" class="text-balance text-xl font-bold tracking-tight text-ink-800 sm:text-2xl">
           {#if url !== null}
             <ChapterLink look="heading" href={url} data-testid="do-chapter">{chapterHeading(chapter, lang)}</ChapterLink>
           {:else}
             {chapterHeading(chapter, lang)}
           {/if}
         </h2>
-        <ul aria-label={fill(t.listSteps, { number: String(chapter.number) })} class="mt-4 divide-y divide-ink-100 border-y border-ink-100">
-          {#each stepsOf(chapter.number) as id (id)}
+        <ul aria-label={withChapters(t.listSteps, lang, chapter)} class="mt-4 divide-y divide-ink-100 border-y border-ink-100">
+          {#each stepsOf(chapter.key) as id (id)}
             {@const here = stateOf(id)}
             <!-- On a phone a step's state stands under its name, in every row alike: side by side, a long
                  state ("Done on November 15, 2026") went under the name in some rows and not in others. -->

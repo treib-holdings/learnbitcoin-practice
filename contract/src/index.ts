@@ -179,10 +179,11 @@ export function isErrorCode(value: unknown): value is ErrorCode {
 // -- the "Do it" steps --------------------------------------------------------
 
 /**
- * The guided steps, in the order the chapters teach them: one for chapter 2,
- * three for chapter 3, two for chapter 4. An ID is part of an address
- * (/do/<id>), of a counted event and of the link back to the main site, so
- * it is lower-case letters and hyphens and nothing else.
+ * The guided steps, in the order of their chapters: one for the bitcoin
+ * chapter, three for the payment chapter, two for the keys chapter (the
+ * app's table of chapters has their numbers and titles). An ID is part of
+ * an address (/do/<id>), of a counted event and of the link back to the
+ * main site, so it is lower-case letters and hyphens and nothing else.
  */
 export const STEPS = ['hold-some', 'pass-it-on', 'no-balances', 'waiting-room', 'the-seed', 'prove-the-backup'] as const;
 export type StepId = (typeof STEPS)[number];

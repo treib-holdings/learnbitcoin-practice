@@ -12,7 +12,7 @@ import type { AppConfig, Lang } from '@learnbitcoin/practice-contract';
 import { fill, formatSats, slotNames } from '../../lib/format.ts';
 import { SIX_BLOCKS, type BlockedReason, type PartView, type StepView, type Waited, type WalletTrouble } from '../../lib/doit/judge.ts';
 import { cameFromChapter, ledBackTo, type Progress, type Read } from '../../lib/doit/progress.ts';
-import { STEP_DEFS, nextStep, partCount, partDef, partKey, type Chapter, type Fact, type StepId } from '../../lib/doit/steps.ts';
+import { STEP_DEFS, chapterSlots, nextStep, partCount, partDef, partKey, type Chapter, type Fact, type StepId } from '../../lib/doit/steps.ts';
 import type { Route } from '../../lib/router.ts';
 import { strings } from '../../strings/index.ts';
 import type { GlossaryTerm } from '../read/read.ts';
@@ -45,6 +45,17 @@ export function slotsFor(template: string, values: SlotValues): Record<string, s
  */
 export function fillFrom(template: string, values: SlotValues): string {
   return fill(template, slotsFor(template, values));
+}
+
+/**
+ * A sentence of a string table with the chapters it names filled in from the
+ * table of chapters (lib/doit/steps.ts). `own` is the chapter the sentence is
+ * shown for, for a sentence that has {number} or {title}. It throws, as
+ * fill() does, for a slot the table of chapters does not fill: that is a
+ * screen and its text drifting apart.
+ */
+export function withChapters(template: string, lang: Lang, own?: Chapter): string {
+  return fillFrom(template, chapterSlots(lang, own));
 }
 
 // -- whether anything is kept -----------------------------------------------------------
@@ -94,15 +105,9 @@ export function doneKey(id: StepId): DoitKey {
   return `done_${id}`;
 }
 
-/** The key of a chapter's title. */
-export function chapterKey(chapter: Chapter): DoitKey {
-  return `chapter_${chapter.number}`;
-}
-
-/** A chapter's heading: "Chapter 3: How Bitcoin Works". */
+/** A chapter's heading: the word for a chapter, its number and its title, as the string table arranges them. */
 export function chapterHeading(chapter: Chapter, lang: Lang): string {
-  const t = strings.doit[lang];
-  return fill(t.chapterHeading, { number: String(chapter.number), title: t[chapterKey(chapter)] });
+  return withChapters(strings.doit[lang].chapterHeading, lang, chapter);
 }
 
 /**
@@ -434,9 +439,9 @@ export function termKey(term: Term): DoitKey {
 
 /**
  * The new things each part of "Hold some" names, by their glossary entry.
- * Chapter 2 has taught none of them, so the part that first says the word
- * links what it means. No other step links the glossary from its parts:
- * their chapters have taught their words.
+ * The step explains each new thing itself, so the part that first says the
+ * word links what it means. No other step links the glossary from its
+ * parts.
  */
 const PART_TERMS: Partial<Record<StepId, readonly (readonly Term[])[]>> = {
   'hold-some': [

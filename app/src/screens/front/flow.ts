@@ -12,6 +12,7 @@
 
 import type { Lang } from '@learnbitcoin/practice-contract';
 import type { ApiFailure } from '../../lib/api.ts';
+import { chapterOf } from '../../lib/doit/steps.ts';
 import type {
   CeremonyFailure,
   CreateResult,
@@ -274,15 +275,15 @@ export function restoreHeldBy(wordsGood: boolean, ticked: boolean): 'words' | 'b
   return ticked ? null : 'box';
 }
 
-// -- chapter 4 --------------------------------------------------------------------------
+// -- the keys chapter --------------------------------------------------------------------
 
-/** Chapter 4 of the main site's Journey, which holds the rule this app's Restore screen is the one exception to. */
-const CHAPTER_FOUR: Record<Lang, string> = {
-  en: '/journey/be-your-own-bank',
-  es: '/es/recorrido/se-tu-propio-banco',
-};
-
-/** Its address in the page's language. `siteUrl` comes without a slash at its end (the contract says so). */
-export function chapterFourUrl(siteUrl: string, lang: Lang): string {
-  return siteUrl + CHAPTER_FOUR[lang];
+/**
+ * The address, in the page's language, of the keys chapter of the main
+ * site's Journey, which holds the rule this app's Restore screen is the one
+ * exception to. The chapter's two paths are in the table of chapters
+ * (lib/doit/steps.ts). `siteUrl` comes without a slash at its end (the
+ * contract says so).
+ */
+export function keysChapterUrl(siteUrl: string, lang: Lang): string {
+  return siteUrl + chapterOf('keys').path[lang];
 }

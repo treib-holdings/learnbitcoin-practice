@@ -183,7 +183,7 @@ test('a link that leaves the site: the hidden words keep their space, and the ar
     const cut = text.lastIndexOf(' ') + 1;
     return [text.slice(0, cut), text.slice(cut)];
   };
-  assert.deepEqual(parts('Chapter 4 of the Journey'), ['Chapter 4 of the ', 'Journey']);
+  assert.deepEqual(parts('A chapter of the Journey'), ['A chapter of the ', 'Journey']);
   assert.deepEqual(parts('LearnBitcoin.com'), ['', 'LearnBitcoin.com']);
   assert.deepEqual(parts('Código fuente (en inglés)'), ['Código fuente (en ', 'inglés)']);
 

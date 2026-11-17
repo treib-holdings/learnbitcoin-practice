@@ -1,6 +1,6 @@
-// "The waiting room", the last step of chapter 3, through the real screens:
-// send a payment, watch a block take it in, and watch six blocks pile up on
-// top of it.
+// "The waiting room", the last step of the payment chapter, through the
+// real screens: send a payment, watch a block take it in, and watch six
+// blocks pile up on top of it.
 //
 // Its first part is an event: a payment sent while the step is followed.
 // The same page may have sent a payment a moment before, for another step,
@@ -33,7 +33,9 @@ import {
   doIt,
   ends,
   hrefOf,
+  ledeOf,
   listState,
+  mainSays,
   marked,
   noteFor,
   noteOf,
@@ -75,6 +77,9 @@ scenario(
 
     await untilParts(page, ['now', 'later', 'later']);
     assert.equal(await page.text('step-title'), en['title_waiting-room']);
+    // This step's lede names no chapter. It is drawn the way the other five are, and stands whole.
+    assert.equal(ledeOf(STEP), en['lede_waiting-room']);
+    assert.ok(await mainSays(page, ledeOf(STEP)), ledeOf(STEP));
     assert.equal(await page.text('step-guide'), en['guide_waiting-room_1']);
     assert.equal(await hrefOf(page, 'step-back'), `${site}${CHAPTER}#do-${STEP}`);
 

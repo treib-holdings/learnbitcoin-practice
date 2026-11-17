@@ -1,13 +1,14 @@
 // The six "Do it" steps, as data.
 //
-// The site's Journey promises that every chapter ends in something the
-// reader does. A step is that something: a short list of parts, each of
-// which the reader carries out in their own practice wallet, and each of
-// which the page checks. This file says what the steps are: which chapter
-// a step belongs to, and for every part what kind of proof it takes and the
-// one fact it rests on. It decides nothing. judge.ts reads a fact off the
-// wallet, advance.ts notices the moment one comes true, and the screens say
-// it all in words.
+// Some chapters of the site's Journey have steps: things the reader does in
+// their own practice wallet. A step is a short list of parts, each of which
+// the reader carries out there, and each of which the page checks. This
+// file says what the steps are: which chapter a step belongs to, and for
+// every part what kind of proof it takes and the one fact it rests on. It
+// also holds the table of chapters, the one place in the repository where a
+// chapter's number and its title are written. It decides nothing. judge.ts
+// reads a fact off the wallet, advance.ts notices the moment one comes true,
+// and the screens say it all in words.
 //
 // The four kinds of part:
 //
@@ -80,9 +81,17 @@ export interface PartDef {
   on: Fact;
 }
 
-/** A chapter of the main site's Journey that has steps: its number, and its page in each language. */
+/** What the code knows a chapter by. A key is never shown, stored or sent, and it never changes. */
+export type ChapterKey = 'bitcoin' | 'payment' | 'keys';
+
+/**
+ * A chapter of the main site's Journey that has steps, as the code sees it:
+ * its key, and its page in each language. Its number and its title are not
+ * part of this type on purpose. They are for showing only, and a sentence
+ * takes them from chapterSlots().
+ */
 export interface Chapter {
-  number: 2 | 3 | 4;
+  key: ChapterKey;
   /**
    * The page's path on the main site, by language, as the main site itself
    * writes its address: with no slash at the end. For a step of this
@@ -109,22 +118,80 @@ export interface StepDef {
 }
 
 // -- the chapters -------------------------------------------------------------
+//
+// THE TABLE. A chapter's number and its title are written here, and nowhere
+// else in the repository: no string table, no screen, no test and no scenario
+// holds one. When the main site renumbers or retitles its chapters, the
+// `number` and `title` lines below are the whole edit: the `en` half of a line
+// when the English chapters change, the `es` half when the Spanish ones do.
+// A chapter's `key` and its two paths never change: the code tells chapters
+// apart by the key, and readers' browsers hold the paths (progress.ts).
 
-const CHAPTER_2: Chapter = {
-  number: 2,
+/** A row of the table: a chapter with what a reader is shown of it. Not exported: chapterSlots() alone reads the two fields. */
+interface ChapterRow extends Chapter {
+  /** Its number in the Journey, by language: the number the main site prints on that language's page of the chapter. */
+  number: Readonly<Record<Lang, number>>;
+  /**
+   * Its title, by language, as the main site prints it. Written in the string
+   * tables' alphabet: a plain apostrophe, quotation mark or hyphen where the
+   * main site prints a typographic one.
+   */
+  title: Readonly<Record<Lang, string>>;
+}
+
+const BITCOIN: ChapterRow = {
+  key: 'bitcoin',
+  number: { en: 2, es: 2 },
+  title: { en: 'What Bitcoin Actually Is', es: 'Qué es Bitcoin en realidad' },
   path: { en: '/journey/what-bitcoin-actually-is', es: '/es/recorrido/que-es-bitcoin-en-realidad' },
 };
-const CHAPTER_3: Chapter = {
-  number: 3,
+const PAYMENT: ChapterRow = {
+  key: 'payment',
+  number: { en: 3, es: 3 },
+  title: { en: 'How Bitcoin Works', es: 'Cómo funciona Bitcoin' },
   path: { en: '/journey/how-bitcoin-works', es: '/es/recorrido/como-funciona-bitcoin' },
 };
-const CHAPTER_4: Chapter = {
-  number: 4,
+const KEYS: ChapterRow = {
+  key: 'keys',
+  number: { en: 4, es: 4 },
+  title: { en: 'Be Your Own Bank', es: 'Sé tu propio banco' },
   path: { en: '/journey/be-your-own-bank', es: '/es/recorrido/se-tu-propio-banco' },
 };
 
+/** The rows, in reading order. */
+const TABLE: readonly ChapterRow[] = [BITCOIN, PAYMENT, KEYS];
+
 /** The chapters that have steps, in reading order. */
-export const CHAPTERS: readonly Chapter[] = [CHAPTER_2, CHAPTER_3, CHAPTER_4];
+export const CHAPTERS: readonly Chapter[] = TABLE;
+
+/** The same rows by key. The compiler refuses a key that has no row here. */
+const BY_KEY: Readonly<Record<ChapterKey, ChapterRow>> = { bitcoin: BITCOIN, payment: PAYMENT, keys: KEYS };
+
+/** A chapter by its key. */
+export function chapterOf(key: ChapterKey): Chapter {
+  return BY_KEY[key];
+}
+
+/**
+ * What a sentence may take from the table to name a chapter, in one language:
+ * "<key>Number" and "<key>Title" for every chapter ("keysNumber", "keysTitle"),
+ * and "number" and "title" for `own`, when one is handed in: the chapter the
+ * sentence is shown for (a step's own, or the one a heading names). This is
+ * the one function that reads a chapter's number or its title.
+ */
+export function chapterSlots(lang: Lang, own?: Chapter): Record<string, string> {
+  const slots: Record<string, string> = {};
+  for (const row of TABLE) {
+    slots[`${row.key}Number`] = String(row.number[lang]);
+    slots[`${row.key}Title`] = row.title[lang];
+  }
+  if (own !== undefined) {
+    const row = BY_KEY[own.key];
+    slots.number = String(row.number[lang]);
+    slots.title = row.title[lang];
+  }
+  return slots;
+}
 
 // -- the steps ----------------------------------------------------------------
 
@@ -135,11 +202,11 @@ const part = (kind: PartKind, on: Fact): PartDef => ({ kind, on });
  * of steps: a step added there has no screen until it has its parts here.
  */
 export const STEP_DEFS: Readonly<Record<StepId, StepDef>> = {
-  // Chapter 2 has taught what bitcoin is, and nothing yet about wallets: this step is the first coin.
+  // The bitcoin chapter: the first coin. The step explains a wallet, an address and the faucet itself.
   'hold-some': {
     id: 'hold-some',
     title: 'title_hold-some',
-    chapter: CHAPTER_2,
+    chapter: BITCOIN,
     parts: [
       part('state', 'wallet-here'),
       part('state', 'coins-seen'),
@@ -147,39 +214,39 @@ export const STEP_DEFS: Readonly<Record<StepId, StepDef>> = {
       part('ask', 'block-height'),
     ],
   },
-  // Chapter 3, the send button: a payment to the pot, and its first confirmation.
+  // The payment chapter, the send button: a payment to the pot, and its first confirmation.
   'pass-it-on': {
     id: 'pass-it-on',
     title: 'title_pass-it-on',
-    chapter: CHAPTER_3,
+    chapter: PAYMENT,
     parts: [part('state', 'spendable'), part('event', 'sent-to-pot'), part('state', 'payment-confirmed')],
   },
-  // Chapter 3, "there are no balances": coins, counted one by one, and what a payment did to them.
+  // The payment chapter, "there are no balances": coins, counted one by one, and what a payment did to them.
   'no-balances': {
     id: 'no-balances',
     title: 'title_no-balances',
-    chapter: CHAPTER_3,
+    chapter: PAYMENT,
     parts: [part('event', 'coins-opened'), part('ask', 'coin-count'), part('event', 'payment-read')],
   },
-  // Chapter 3, the waiting room and confirmations: one payment, watched from sent to six blocks deep.
+  // The payment chapter, the waiting room and confirmations: one payment, watched from sent to six blocks deep.
   'waiting-room': {
     id: 'waiting-room',
     title: 'title_waiting-room',
-    chapter: CHAPTER_3,
+    chapter: PAYMENT,
     parts: [part('event', 'sent'), part('state', 'payment-confirmed'), part('state', 'six-blocks')],
   },
-  // Chapter 4: the 12 words, on paper, and checked.
+  // The keys chapter: the 12 words, on paper, and checked.
   'the-seed': {
     id: 'the-seed',
     title: 'title_the-seed',
-    chapter: CHAPTER_4,
+    chapter: KEYS,
     parts: [part('event', 'words-shown'), part('say-so', 'written'), part('ask', 'three-words')],
   },
-  // Chapter 4: the drill. The wallet is removed and comes back from the paper copy alone.
+  // The keys chapter: the drill. The wallet is removed and comes back from the paper copy alone.
   'prove-the-backup': {
     id: 'prove-the-backup',
     title: 'title_prove-the-backup',
-    chapter: CHAPTER_4,
+    chapter: KEYS,
     parts: [
       part('ask', 'three-words'),
       part('event', 'wallet-removed'),
@@ -215,8 +282,8 @@ export function partKey(id: StepId, part: number): PartKey {
 }
 
 /** The steps of one chapter, in order: what the list of steps shows under the chapter's name. */
-export function stepsOf(chapter: Chapter['number']): StepId[] {
-  return STEPS.filter((id) => STEP_DEFS[id].chapter.number === chapter);
+export function stepsOf(chapter: ChapterKey): StepId[] {
+  return STEPS.filter((id) => STEP_DEFS[id].chapter.key === chapter);
 }
 
 /**
@@ -226,7 +293,7 @@ export function stepsOf(chapter: Chapter['number']): StepId[] {
  */
 export function nextStep(id: StepId): StepId | null {
   const next = STEPS[STEPS.indexOf(id) + 1];
-  return next !== undefined && STEP_DEFS[next].chapter.number === STEP_DEFS[id].chapter.number ? next : null;
+  return next !== undefined && STEP_DEFS[next].chapter.key === STEP_DEFS[id].chapter.key ? next : null;
 }
 
 /**

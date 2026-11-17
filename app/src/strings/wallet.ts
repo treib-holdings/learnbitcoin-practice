@@ -190,7 +190,8 @@ export const en = {
   wordsInvalid:
     'These 12 words do not pass their checksum. At least one of them is wrong or out of order. Compare them with your paper copy.',
   /** The short form of the exception paragraph, above any field that takes the words. */
-  wordsException: 'Practice words only. The words of a real wallet never go into a web page, this one included.',
+  wordsException:
+    'Practice words only. The words of any wallet that is not a practice wallet never go into a web page, this one included. That includes the words of a wallet for real bitcoin, even an empty one.',
   /**
    * Shown on Spanish pages only: the words are English in every language.
    * The English lines are their translations, kept so that both tables have
@@ -465,7 +466,7 @@ export const es: Record<keyof typeof en, string> = {
   wordsInvalid:
     'Estas 12 palabras no pasan su suma de verificación. Al menos una está mal escrita o fuera de orden. Compáralas con tu copia en papel.',
   wordsException:
-    'Solo palabras de práctica. Las palabras de una billetera de verdad nunca van en una página web, incluida esta.',
+    'Solo palabras de práctica. Las palabras de una billetera que no sea de práctica nunca van en una página web, incluida esta. Eso incluye las de una billetera para bitcoin de verdad, aunque esté vacía.',
   wordsEnglishType:
     'Las 12 palabras están en inglés a propósito: salen de una lista fija. Escríbelas tal como están, sin traducirlas.',
   wordsEnglishCopy:

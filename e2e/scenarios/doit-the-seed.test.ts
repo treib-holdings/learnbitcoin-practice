@@ -1,5 +1,5 @@
-// "The seed", the first step of chapter 4, through the real screens: show
-// the wallet's 12 words, write them on paper, and check three of them.
+// "The seed", the first step of the keys chapter, through the real screens:
+// show the wallet's 12 words, write them on paper, and check three of them.
 //
 // Its three parts are three kinds of proof. The first is something the
 // page sees happen (the words were put on screen while the step was
@@ -53,6 +53,9 @@ import {
   ends,
   focusedPlace,
   hrefOf,
+  ledeOf,
+  mainSays,
+  named,
   noteOf,
   noteText,
   partName,
@@ -141,6 +144,8 @@ scenario(
     // -- The step's screen: three parts, the first one open --
     await untilParts(page, ['now', 'later', 'later']);
     assert.equal(await page.text('step-title'), en['title_the-seed']);
+    // The lede names the step's own chapter by the number the app's table of chapters gives.
+    assert.ok(await mainSays(page, ledeOf(STEP)), ledeOf(STEP));
     assert.deepEqual(await partWords(page), [en.partNow, en.partLater, en.partLater]);
     assert.equal(await page.text('step-guide'), en['guide_the-seed_1']);
     assert.equal(await hrefOf(page, 'step-back'), `${site}${CHAPTER}#do-${STEP}`);
@@ -171,7 +176,9 @@ scenario(
     // -- Part 3: three words, by their place. Above them, why this page may ask at all, and that nothing else may. --
     assert.equal(await page.text('step-guide'), en['guide_the-seed_3']);
     const rules = await page.text('step-words-exception');
-    assert.ok(rules.includes(strings.restore.en.exception) && rules.includes(en.wordsOnce), rules);
+    // Both sentences name the keys chapter, and stand on screen with its number filled in.
+    assert.ok(rules.includes(named(strings.restore.en.exception)) && rules.includes(named(en.wordsOnce)), rules);
+    assert.doesNotMatch(rules, /[{}]/);
     assert.deepEqual(await wordFieldRules(page), [WORD_FIELD_RULES, WORD_FIELD_RULES, WORD_FIELD_RULES]);
     const places = await placesAsked(page);
     assert.equal(new Set(places).size, 3);
@@ -503,6 +510,7 @@ scenario(
     await untilParts(page, ['now', 'later', 'later']);
     assert.equal(await page.page.evaluate(() => document.documentElement.lang), 'es');
     assert.equal(await page.text('step-title'), es['title_the-seed']);
+    assert.ok(await mainSays(page, ledeOf(STEP, 'es')), ledeOf(STEP, 'es'));
     assert.deepEqual(await partWords(page), [es.partNow, es.partLater, es.partLater]);
     assert.equal(await page.text('step-guide'), es['guide_the-seed_1']);
     assert.equal(await hrefOf(page, 'step-back'), `${site}${CAPITULO}#do-${STEP}`);
@@ -530,7 +538,8 @@ scenario(
 
     // -- Part 3: the fields, one under the other on a phone, with the line that the words are English --
     const rules = await page.text('step-words-exception');
-    assert.ok(rules.includes(strings.restore.es.exception) && rules.includes(es.wordsOnce), rules);
+    assert.ok(rules.includes(named(strings.restore.es.exception, 'es')) && rules.includes(named(es.wordsOnce, 'es')), rules);
+    assert.doesNotMatch(rules, /[{}]/);
     assert.ok((await page.text('step-open')).includes(strings.wallet.es.wordsEnglishType));
     assert.deepEqual(await wordFieldRules(page), [WORD_FIELD_RULES, WORD_FIELD_RULES, WORD_FIELD_RULES]);
     const places = await placesAsked(page);
@@ -555,7 +564,7 @@ scenario(
     assert.equal(await page.text('step-seed-wallet'), fill(es.seedChecked, { fingerprint: record.fingerprint }));
     assert.equal(await page.text('step-back'), es.back);
     assert.equal(await hrefOf(page, 'step-back'), `${site}${CAPITULO}#done=${STEP}`);
-    // The reader came by the step's card in chapter 4: the card offers no "Next step". Its main button is the
+    // The reader came by the step's card in the keys chapter: the card offers no "Next step". Its main button is the
     // way back to the chapter, where the next card stands. (A reader who opened the step from the wallet's
     // own list is offered the next step: doit-handover.test.ts.)
     assert.equal(await countOf(page, 'step-next'), 0);

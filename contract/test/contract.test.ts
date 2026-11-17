@@ -50,7 +50,7 @@ test('event paths are fixed per screen and language', () => {
   assert.equal(eventPaths(), all, 'the list is built once');
 });
 
-test('the six steps, in the order the chapters teach them', () => {
+test('the six steps, in the order of their chapters', () => {
   assert.deepEqual([...STEPS], ['hold-some', 'pass-it-on', 'no-balances', 'waiting-room', 'the-seed', 'prove-the-backup']);
   assert.equal(new Set(STEPS).size, STEPS.length);
   // An ID is part of an address, of a counted event and of a link to the main site.

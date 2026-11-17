@@ -126,7 +126,7 @@ export const en = {
   reviewTitle: 'Signed, not sent yet',
   reviewLead: 'This payment is signed with your keys, and it is still on this page only. Nothing has been sent.',
   reviewCheck:
-    'Compare the first and last characters of the address with the one you were given. A payment cannot be called back once it is sent, here or on Bitcoin.',
+    'Compare the whole address with the one you were given. A payment cannot be called back once it is sent, here or on Bitcoin.',
   reviewParts: 'What goes in and what comes out',
   send: 'Send it',
   sending: 'Sending...',
@@ -236,7 +236,7 @@ export const es: Record<keyof typeof en, string> = {
   reviewTitle: 'Firmado, aún sin enviar',
   reviewLead: 'Este pago está firmado con tus claves y sigue solo en esta página. No se ha enviado nada.',
   reviewCheck:
-    'Compara los primeros y los últimos caracteres de la dirección con la que te dieron. Un pago enviado no se puede deshacer, ni aquí ni en Bitcoin.',
+    'Compara la dirección completa con la que te dieron. Un pago enviado no se puede deshacer, ni aquí ni en Bitcoin.',
   reviewParts: 'Lo que entra y lo que sale',
   send: 'Enviarlo',
   sending: 'Enviando...',

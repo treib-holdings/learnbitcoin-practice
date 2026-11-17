@@ -10,12 +10,18 @@
 // content repo. What it has to keep when it does:
 //
 //   - It is short. A step's lede is two sentences at most, a part's
-//     guidance one or two. The chapter did the teaching: the reader is told
-//     what to do and what the page will see. Two exceptions. "Hold some"
-//     belongs to chapter 2, which has not taught a wallet, an address, the
-//     faucet or the 12 words, so each of its parts carries one plain
-//     sentence for each new thing. And a warning before a part that removes
-//     something says all it has to.
+//     guidance one or two. A step does not teach: the reader is told what
+//     to do and what the page will see. Two exceptions. "Hold some" is
+//     the first step, and does not lean on what its chapter has taught: each
+//     of its parts carries one plain sentence for each new thing (a wallet,
+//     an address, the faucet, the 12 words). And a warning before a part
+//     that removes something says all it has to.
+//   - No sentence holds a chapter's number, a chapter's title or a section's
+//     number as text. A sentence that names a chapter takes {number} and
+//     {title} (the step's own chapter) or {keysNumber} and {keysTitle} from
+//     the table of chapters (lib/doit/steps.ts), and says what the chapter
+//     teaches without saying where in the chapter it stands.
+//     test/chapter-names.test.ts holds every table to it.
 //   - Some keys are built from a step's ID or a reason, so their names are
 //     fixed by the code that looks them up: title_<step>, lede_<step>,
 //     done_<step>, part_<step>_<number>, guide_<step>_<number>,
@@ -47,13 +53,18 @@ export const en = {
   name: 'Do it',
 
   // -- the list of steps (/do) --
+  /**
+   * What a step is, then that it goes with a chapter. "Checked by this page", not "against the practice
+   * chain": "The seed" has no part that reads the chain.
+   */
   listLede:
-    'Each step here is something a chapter of the Journey taught, done in your own practice wallet and checked against the practice chain.',
-  /** A chapter's heading in the list, and the line under a step's lede. {number} is 2, 3 or 4. */
-  chapterHeading: 'Chapter {number}: {title}',
-  chapter_2: 'What Bitcoin Actually Is',
-  chapter_3: 'How Bitcoin Works',
-  chapter_4: 'Be Your Own Bank',
+    'Each step here is something you do in your own practice wallet, checked by this page as you go. Each goes with a chapter of the Journey.',
+  /**
+   * A chapter's heading in the list, and the line under a step's lede. {number} and {title} are the chapter's,
+   * from the table of chapters (lib/doit/steps.ts). The title stands in quotation marks, as a step's title
+   * does in a sentence, and no colon stands before it: a title may hold a colon of its own.
+   */
+  chapterHeading: 'Chapter {number}, "{title}"',
   /** What a screen reader calls the steps of one chapter. */
   listSteps: 'Steps of chapter {number}',
   stateNotStarted: 'Not started',
@@ -115,10 +126,12 @@ export const en = {
     'This browser did not let this page read what it may have stored here, so the page cannot tell whether you have "Do it" progress in this browser, and cannot keep any. That happens when site data is blocked, inside some apps\' built-in browsers, and when the browser\'s own storage is not working. Allow site data for this page, or open this page in your device\'s own browser, then reload.',
 
   // -- Home's short section, and the Overview's one line --
+  // Both are said of the steps, from the wallet's side: a step goes with a chapter. Neither says what the
+  // chapters hold, which the main site can change.
   homeBody:
-    "Short steps that go with the Journey's chapters, each done in your own practice wallet and checked against the practice chain.",
+    "Short steps that go with some of the Journey's chapters, each done in your own practice wallet and checked by this page.",
   homeLink: 'See the steps',
-  overviewLine: "The Journey's chapters end in steps that you do in this wallet.",
+  overviewLine: 'This wallet has steps that go with some chapters of the Journey.',
   overviewLink: 'See the "Do it" steps',
 
   // -- what other screens gain: the progress stays in this browser when the wallet is removed --
@@ -140,17 +153,17 @@ export const en = {
   'title_the-seed': 'The seed',
   'title_prove-the-backup': 'Prove the backup',
   'lede_hold-some':
-    'Chapter 2 said what bitcoin is. Here you get some to hold: practice coins with no value, on a network that works the way Bitcoin does.',
+    'Chapter {number} says what bitcoin is. Here you get some to hold: practice coins with no value, on a network that works the way Bitcoin does.',
   'lede_pass-it-on':
-    'Chapter 3 opens with Alice tapping Send. Here you tap it yourself, and pay a few practice coins into the pot for the learner who comes after you.',
+    'In chapter {number}, Alice taps Send. Here you tap it yourself, and pay a few practice coins into the pot for the learner who comes after you.',
   'lede_no-balances':
-    'Chapter 3 says there are no balances, only coins. Here you count your own, and read what one of your payments did to them.',
+    'Chapter {number} says there are no balances, only coins. Here you count your own, and read what one of your payments did to them.',
   'lede_waiting-room':
     'You send a payment and watch it wait, get into a block, and reach six confirmations. Here the waiting room is almost empty, so the next block takes every payment whatever fee rate it pays; on Bitcoin the fee rate decides the place in line.',
   'lede_the-seed':
-    "Chapter 4 says the 12 words are the root of the whole wallet. Here you put this wallet's words on paper, and check that the paper is right.",
+    "Chapter {number} says every key in the wallet is made from the 12 words. Here you put this wallet's words on paper, and check that the paper is right.",
   'lede_prove-the-backup':
-    "This is chapter 4's drill: remove the wallet, then bring it back from the paper alone. A wallet that comes back with its coins is the only way to know the backup works.",
+    "This is chapter {number}'s drill: remove the wallet, then bring it back from the paper alone. A wallet that comes back with its coins shows that the backup works.",
   /**
    * The link back to the main site. It stands on the step's screen at all times: beside the chapter's name
    * until the step is done, and on the done card from then on, as its main button, or as its second one
@@ -193,9 +206,9 @@ export const en = {
   'part_prove-the-backup_4': 'Find your coins again',
 
   // -- what to do in the part that is open: one or two sentences each --
-  // "Hold some" says more: chapter 2 has taught none of these things yet.
+  // "Hold some" says more: it is the first step, and explains each new thing itself.
   'guide_hold-some_1':
-    'A wallet is software that keeps the keys to your coins. Making one starts with a choice, with a passkey or without, and either is fine for practice. The wallet then shows you 12 words, which chapter 4 explains.',
+    'A wallet is software that keeps the keys to your coins. Making one starts with a choice, with a passkey or without, and either is fine for practice. The wallet then shows you 12 words, which chapter {keysNumber} explains.',
   'guide_hold-some_2':
     'An address is where coins are sent, and your wallet shows one of its own on the Receive screen. The faucet hands practice coins to anyone who asks, so ask it there.',
   /** {seconds} is the time between two practice blocks. */
@@ -330,7 +343,7 @@ export const en = {
   // -- three of the 12 words --
   /** Follows the exception paragraph of the Restore screen (strings/restore.ts), above the three fields. */
   wordsOnce:
-    'A real wallet asks for this once, on its own screen, straight after it has shown you the words. Anything else that asks for your words, even for three of them (a web page, an email, a support chat), is the scam chapter 4 describes.',
+    'A real wallet asks for this once, on its own screen, straight after it has shown you the words. Anything else that asks for your words, even for three of them (a web page, an email, a support chat), is the scam chapter {keysNumber} describes.',
   /** What a screen reader calls the three fields together. */
   wordsGroup: 'Three of the 12 words',
   wordsCheck: 'Check the three words',
@@ -349,7 +362,7 @@ export const en = {
   // -- before the wallet is removed: said plainly, and not counted against the lengths above --
   removeWarnTitle: 'Before you remove it',
   removeWarnFunded:
-    'With real money this drill is done before the wallet is funded (chapter 4, section 7). Here the coins stay in, to show that the chain kept them.',
+    'With real money this drill is done before the wallet is funded (chapter {keysNumber}). Here the coins stay in, to show that the chain kept them.',
   removeWarnNine:
     'Three right words do not prove the other nine. If the restore fails, this wallet and its practice coins are gone, which is what a wrong backup costs.',
   removeWarnKept:
@@ -379,7 +392,7 @@ export const en = {
   'done_no-balances':
     'You counted the coins in your wallet, and opened one of its payments to see what it did to them. A wallet keeps no balance: it holds coins, and its total is what they add up to. A payment uses coins up whole and makes new ones: one for the address paid and, when something is left over, one back to you as change.',
   'done_waiting-room':
-    'Your payment reached six confirmations: its own block and five on top. On Bitcoin, undoing a payment that deep means redoing all six blocks faster than the rest of the network adds new ones. That is why six confirmations is the usual line for "settled".',
+    'Your payment reached six confirmations: its own block and five on top. On Bitcoin, undoing a payment that deep means redoing all six blocks faster than the rest of the network adds new ones. Six confirmations is the usual line for "settled".',
   'done_the-seed':
     'You said you wrote your 12 words on paper, and three of them matched. Three right words do not prove the other nine: "Prove the backup" does that.',
   'done_prove-the-backup':
@@ -524,11 +537,8 @@ export const es: Record<keyof typeof en, string> = {
   name: 'Hazlo',
 
   listLede:
-    'Cada paso de aquí es algo que enseñó un capítulo del Recorrido, hecho en tu propia billetera de práctica y comprobado contra la cadena de práctica.',
-  chapterHeading: 'Capítulo {number}: {title}',
-  chapter_2: 'Qué es Bitcoin en realidad',
-  chapter_3: 'Cómo funciona Bitcoin',
-  chapter_4: 'Sé tu propio banco',
+    'Cada paso de aquí es algo que haces en tu propia billetera de práctica, comprobado por esta página a medida que avanzas. Cada uno acompaña a un capítulo del Recorrido.',
+  chapterHeading: 'Capítulo {number}, "{title}"',
   listSteps: 'Pasos del capítulo {number}',
   stateNotStarted: 'Sin empezar',
   stateStarted: 'Empezado',
@@ -557,9 +567,9 @@ export const es: Record<keyof typeof en, string> = {
     'Este navegador no dejó que esta página leyera lo que pueda tener guardado aquí, así que la página no puede saber si tienes progreso de "Hazlo" en este navegador, y tampoco puede guardarlo. Pasa cuando los datos del sitio están bloqueados, dentro del navegador integrado de algunas apps, y cuando el almacenamiento del propio navegador no funciona. Permite los datos del sitio para esta página, o abre esta página en el navegador propio de tu dispositivo, y después recarga.',
 
   homeBody:
-    'Pasos cortos que acompañan a los capítulos del Recorrido, cada uno hecho en tu propia billetera de práctica y comprobado contra la cadena de práctica.',
+    'Pasos cortos que acompañan a algunos capítulos del Recorrido, cada uno hecho en tu propia billetera de práctica y comprobado por esta página.',
   homeLink: 'Ver los pasos',
-  overviewLine: 'Los capítulos del Recorrido terminan en pasos que haces en esta billetera.',
+  overviewLine: 'Esta billetera tiene pasos que acompañan a algunos capítulos del Recorrido.',
   overviewLink: 'Ver los pasos de "Hazlo"',
 
   staysOnRemove:
@@ -576,17 +586,17 @@ export const es: Record<keyof typeof en, string> = {
   'title_the-seed': 'La semilla',
   'title_prove-the-backup': 'Comprueba el respaldo',
   'lede_hold-some':
-    'El capítulo 2 dijo qué es bitcoin. Aquí recibes algunas monedas para tener: monedas de práctica sin valor, en una red que funciona como Bitcoin.',
+    'El capítulo {number} dice qué es bitcoin. Aquí recibes algunas monedas para tener: monedas de práctica sin valor, en una red que funciona como Bitcoin.',
   'lede_pass-it-on':
-    'El capítulo 3 empieza con Alice tocando Enviar. Aquí lo tocas tú, y dejas unas monedas de práctica en el fondo común para quien viene después de ti.',
+    'En el capítulo {number}, Alice toca Enviar. Aquí lo tocas tú, y dejas unas monedas de práctica en el fondo común para quien viene después de ti.',
   'lede_no-balances':
-    'El capítulo 3 dice que no hay saldos, solo monedas. Aquí cuentas las tuyas, y lees lo que uno de tus pagos hizo con ellas.',
+    'El capítulo {number} dice que no hay saldos, solo monedas. Aquí cuentas las tuyas, y lees lo que uno de tus pagos hizo con ellas.',
   'lede_waiting-room':
     'Envías un pago y lo ves esperar, entrar en un bloque y llegar a seis confirmaciones. Aquí la sala de espera está casi vacía, así que el siguiente bloque se lleva todos los pagos sin importar su tasa de comisión; en Bitcoin, la tasa de comisión decide el lugar en la fila.',
   'lede_the-seed':
-    'El capítulo 4 dice que las 12 palabras son la raíz de toda la billetera. Aquí pasas a papel las palabras de esta billetera, y compruebas que el papel esté bien.',
+    'El capítulo {number} dice que todas las claves de la billetera salen de las 12 palabras. Aquí pasas a papel las palabras de esta billetera, y compruebas que el papel esté bien.',
   'lede_prove-the-backup':
-    'Este es el ejercicio del capítulo 4: quitar la billetera, y luego traerla de vuelta solo con el papel. Una billetera que vuelve con sus monedas es la única forma de saber que el respaldo funciona.',
+    'Este es el ejercicio del capítulo {number}: quitar la billetera, y luego traerla de vuelta solo con el papel. Una billetera que vuelve con sus monedas muestra que el respaldo funciona.',
   back: 'Volver al capítulo',
   allSteps: 'Todos los pasos',
 
@@ -621,7 +631,7 @@ export const es: Record<keyof typeof en, string> = {
   'part_prove-the-backup_4': 'Encuentra tus monedas otra vez',
 
   'guide_hold-some_1':
-    'Una billetera es un programa que guarda las claves de tus monedas. Crearla empieza con una elección, con llave de acceso (passkey) o sin ella, y cualquiera de las dos sirve para practicar. Después la billetera te muestra 12 palabras, que el capítulo 4 explica.',
+    'Una billetera es un programa que guarda las claves de tus monedas. Crearla empieza con una elección, con llave de acceso (passkey) o sin ella, y cualquiera de las dos sirve para practicar. Después la billetera te muestra 12 palabras, que el capítulo {keysNumber} explica.',
   'guide_hold-some_2':
     'Una dirección es adonde se envían las monedas, y tu billetera muestra una suya en la pantalla Recibir. El faucet reparte monedas de práctica a quien las pide, así que pídeselas ahí.',
   'guide_hold-some_3':
@@ -731,7 +741,7 @@ export const es: Record<keyof typeof en, string> = {
   answerClosed: 'Esta pregunta ya no está abierta. Las partes de arriba muestran cómo va el paso ahora.',
 
   wordsOnce:
-    'Una billetera de verdad pide esto una sola vez, en su propia pantalla, justo después de mostrarte las palabras. Cualquier otra cosa que te pida tus palabras, aunque sean tres (una página web, un correo, un chat de soporte), es la estafa que describe el capítulo 4.',
+    'Una billetera de verdad pide esto una sola vez, en su propia pantalla, justo después de mostrarte las palabras. Cualquier otra cosa que te pida tus palabras, aunque sean tres (una página web, un correo, un chat de soporte), es la estafa que describe el capítulo {keysNumber}.',
   wordsGroup: 'Tres de las 12 palabras',
   wordsCheck: 'Comprobar las tres palabras',
   wordsWrong: 'La palabra {n} no coincide.',
@@ -747,7 +757,7 @@ export const es: Record<keyof typeof en, string> = {
 
   removeWarnTitle: 'Antes de quitarla',
   removeWarnFunded:
-    'Con dinero de verdad, este ejercicio se hace antes de poner fondos en la billetera (capítulo 4, sección 7). Aquí las monedas se quedan dentro, para mostrar que la cadena las conservó.',
+    'Con dinero de verdad, este ejercicio se hace antes de poner fondos en la billetera (capítulo {keysNumber}). Aquí las monedas se quedan dentro, para mostrar que la cadena las conservó.',
   removeWarnNine:
     'Tres palabras correctas no comprueban las otras nueve. Si la restauración falla, esta billetera y sus monedas de práctica se pierden, que es lo que cuesta un respaldo equivocado.',
   removeWarnKept:
@@ -766,7 +776,7 @@ export const es: Record<keyof typeof en, string> = {
   'done_no-balances':
     'Contaste las monedas de tu billetera, y abriste uno de sus pagos para ver qué hizo con ellas. Una billetera no lleva ningún saldo: tiene monedas, y su total es lo que suman. Un pago gasta monedas enteras y crea monedas nuevas: una para la dirección de destino y, cuando sobra algo, otra de vuelta para ti como cambio.',
   'done_waiting-room':
-    'Tu pago llegó a seis confirmaciones: su propio bloque y cinco encima. En Bitcoin, deshacer un pago a esa profundidad exige rehacer los seis bloques más rápido de lo que el resto de la red agrega bloques nuevos. Por eso seis confirmaciones son la línea habitual de "liquidado".',
+    'Tu pago llegó a seis confirmaciones: su propio bloque y cinco encima. En Bitcoin, deshacer un pago a esa profundidad exige rehacer los seis bloques más rápido de lo que el resto de la red agrega bloques nuevos. Seis confirmaciones son la línea habitual de "liquidado".',
   'done_the-seed':
     'Dijiste que escribiste tus 12 palabras en papel, y tres de ellas coincidieron. Tres palabras correctas no comprueban las otras nueve: eso lo hace "Comprueba el respaldo".',
   'done_prove-the-backup':

@@ -17,6 +17,8 @@ import { accountDescriptor } from '@learnbitcoin/practice-wallet';
 import { RECORD_KEY } from '../../app/src/lib/keystore.ts';
 import { siteHost } from '../../app/src/screens/keys/card-form.ts';
 import { REMOVE_SETTLE_MS } from '../../app/src/screens/keys/taps.ts';
+import { strings } from '../../app/src/strings/index.ts';
+import { mainSays, named } from './doit-helpers.ts';
 import { OTHER_WORDS, scenario, testRecord, type OpenedPage, type Scenario } from './helpers.ts';
 
 const byTestId = (testid: string): string => `[data-testid="${testid}"]`;
@@ -326,7 +328,14 @@ scenario('Backup: the 12 words show only when asked for, are the stored wallet\'
   assert.equal(await heading(page), 'Backup');
   assert.deepEqual(await page.texts('word'), []);
   assert.doesNotMatch(await seenText(page), /abandon/);
-  assert.match(await page.text('backup-exception'), /This page is the one exception, because the 12 words here only guard play money/);
+  // The whole paragraph, and the link under it. Both name the keys chapter by the number the app's table of
+  // chapters gives (doit-helpers.ts, named), with no slot left on screen.
+  assert.ok((await page.text('backup-exception')).startsWith(named(strings.backup.en.exception)));
+  assert.doesNotMatch(await page.text('backup-exception'), /[{}]/);
+  assert.equal(
+    await page.page.$eval(`${byTestId('backup-exception')} a`, (link) => (link.textContent ?? '').replace(/\s+/g, ' ').trim()),
+    `${named(strings.backup.en.chapterLink)} ${strings.common.en.opensNewTab}`,
+  );
   assert.match(await page.text('spoken-aloud'), /A screen reader will read the 12 words aloud/);
   // Tab passes over that warning, so the button carries it as its description: a screen reader says it
   // when the button takes focus.
@@ -507,7 +516,8 @@ scenario('Backup: on paper the practice sheet shows alone, three cards under its
 
   // The form's own words, and the two things a practice card adds: the stamp and the last line.
   const expected = {
-    heading: `PRACTICE ${site} Recovery Seed Phrases Practice words only. The words of a real wallet never go into a web page, this one included.`,
+    // The short form of the exception paragraph, as the table has it.
+    heading: `PRACTICE ${site} Recovery Seed Phrases ${strings.wallet.en.wordsException}`,
     card: `Recovery Seed Phrases PRACTICE Don't make digital copies Never share with anyone ${ROW_NUMBERS.join(' ')} Restores only on the practice network. ${site}`,
     restores: 'Restores only on the practice network.',
   };
@@ -565,7 +575,7 @@ scenario('Backup in Spanish: on paper the sheet is the same form in the site\'s 
   assertSheetOnPaper(
     paper,
     {
-      heading: `PRÁCTICA ${site} Frases semilla de recuperación Solo palabras de práctica. Las palabras de una billetera de verdad nunca van en una página web, incluida esta.`,
+      heading: `PRÁCTICA ${site} Frases semilla de recuperación ${strings.wallet.es.wordsException}`,
       card: `Frases semilla de recuperación PRÁCTICA No hagas copias digitales No las compartas con nadie ${ROW_NUMBERS.join(' ')} Solo se restaura en la red de práctica. ${site}`,
       restores: 'Solo se restaura en la red de práctica.',
     },
@@ -706,9 +716,12 @@ scenario('Settings: the wallet fingerprint the record holds, and the descriptors
 
 scenario('Remove asks first; "Keep it" keeps; "Remove it" deletes the wallet\'s key and nothing else, and goes Home', async (s) => {
   const record = testRecord();
-  const others = { lb_progress_v1: '{"chapters":[4]}', another_key: 'stays' };
+  const others = { lb_progress_v1: '{"kept":"by another page"}', another_key: 'stays' };
   const page = await s.open('/wallet/settings', { record, storage: others, width: 375 });
   await page.waitFor('remove-wallet');
+  // Why anyone would do this: it is the first half of the keys chapter's drill, named by the number the app's
+  // table of chapters gives.
+  assert.ok(await mainSays(page, named(strings.settings.en.removeDrill)), named(strings.settings.en.removeDrill));
   const keys = (): Promise<string[]> => page.page.evaluate(() => Object.keys(localStorage).sort());
   assert.deepEqual(await keys(), ['another_key', 'lb_progress_v1', 'lbp_wallet_v1']);
 
@@ -803,7 +816,12 @@ scenario('the Spanish routes: Backup and Settings in Spanish, with the 12 words 
   assert.equal(await heading(page), 'Respaldo');
   assert.equal(await page.page.title(), 'Práctica: Respaldo | LearnBitcoin');
   assert.equal(await page.text('reveal-words'), 'Mostrar las 12 palabras');
-  assert.match(await page.text('backup-exception'), /Esta página es la única excepción, porque sus 12 palabras solo protegen dinero de juguete/);
+  assert.ok((await page.text('backup-exception')).startsWith(named(strings.backup.es.exception, 'es')));
+  assert.doesNotMatch(await page.text('backup-exception'), /[{}]/);
+  assert.equal(
+    await page.page.$eval(`${byTestId('backup-exception')} a`, (link) => (link.textContent ?? '').replace(/\s+/g, ' ').trim()),
+    `${named(strings.backup.es.chapterLink, 'es')} ${strings.common.es.opensNewTab}`,
+  );
   assert.match(await page.text('spoken-aloud'), /Un lector de pantalla va a leer las 12 palabras en voz alta/);
   // The chapter the paragraph answers is linked in its Spanish edition.
   assert.equal(

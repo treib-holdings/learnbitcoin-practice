@@ -99,7 +99,7 @@ scenario(
   { localOnly: true, timeout: 180_000 },
   async (s) => {
     // Two keys of other things on this origin: Remove, at the end, must leave them alone.
-    const others = { lb_progress_v1: '{"chapters":[4]}', another_key: 'stays' };
+    const others = { lb_progress_v1: '{"kept":"by another page"}', another_key: 'stays' };
     // A device that could make a passkey: that none is asked for is then this wallet's doing, not the device's.
     const page = await standBy(s, { lang: 'es', width: 375, passkey: 'prf', storage: others, timeout: 30_000 });
     const prompts = await watchPrompts(page);

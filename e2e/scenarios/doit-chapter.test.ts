@@ -263,9 +263,9 @@ scenario(
     sentOnlyThePage(underWayStrip, OWN, 'the strip of a step under way');
     assert.equal(underWayStrip.href, `${main.url}${OWN}#do-${STEP}`);
 
-    // -- 6. "Hold some", which a need of this step sent the reader to. Its own chapter is chapter 2. "Back to
-    //       the chapter" asks the main site for the page the reader left, chapter 3, and for nothing else, and
-    //       the address names the card they pressed there. --
+    // -- 6. "Hold some", which a need of this step sent the reader to. Its own chapter is the bitcoin chapter.
+    //       "Back to the chapter" asks the main site for the page the reader left, the payment chapter's, and
+    //       for nothing else, and the address names the card they pressed there. --
     await standBy();
     await page.store(
       PROGRESS_KEY,

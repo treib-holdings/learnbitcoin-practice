@@ -58,7 +58,7 @@ function sound(view: TxView, sentences: Sentence[]): void {
     assert.equal(sentences.indexOf(fee), sentences.length - 2);
     const { in: went, out: came, fee: paid, size, rate } = fee.slots;
     assert.ok(went !== undefined && came !== undefined && paid !== undefined && size !== undefined && rate !== undefined);
-    // The fee as the chapter gives it: what went in, less what came out.
+    // The fee with the figures: what went in, less what came out.
     assert.equal(went - came, paid);
     assert.deepEqual([went, came, paid, size], [sum(view.inputs), sum(view.outputs), view.fee, view.vsize]);
     // Never a product that does not multiply out: a rate given as it stands is whole and multiplies back to the fee.

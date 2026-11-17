@@ -136,7 +136,8 @@ test('every key the code builds from a step, a part or a reason is in the table,
       const strip = /^stripNeed_(.+)$/.exec(key);
       if (strip !== null) assert.ok((REASONS as string[]).includes(strip[1] ?? ''), key);
     }
-    for (const number of [2, 3, 4]) assert.ok(Object.hasOwn(table, `chapter_${number}`), `chapter_${number}`);
+    // A chapter's title is in the table of chapters (lib/doit/steps.ts), not here: no key holds one.
+    for (const key of Object.keys(table)) assert.ok(!key.startsWith('chapter_'), key);
     for (const term of [...EXPLAIN_TERMS, 'wallet', 'address', 'seed', 'explorer', 'height', 'faucet']) assert.ok(Object.hasOwn(table, `term_${term}`), `term_${term}`);
   }
   // No part, lede or done sentence for a step or a part that does not exist.
@@ -186,14 +187,14 @@ test('"What just happened": one sentence for each key explain() can give, with e
 test('every key of the table is on a screen', () => {
   const where = [...doitSources(), ...GAINED.map((name) => ({ name, text: source(name) }))].map((file) => code(file.text)).join('\n');
   // Keys that are looked up by a name built from a step, a part, a reason, a sentence or a term.
-  const built = /^(title|lede|done|part|guide|chapter|need|stripNeed|explain|term)_/;
+  const built = /^(title|lede|done|part|guide|need|stripNeed|explain|term)_/;
   for (const key of Object.keys(en)) {
     if (built.test(key)) continue;
     const used = new RegExp(`\\.${key}\\b`).test(where) || where.includes(`'${key}'`);
     assert.ok(used, `doit.${key} is in the table and on no screen`);
   }
   // And each family of built keys is built somewhere.
-  for (const made of ['`lede_${id}`', '`done_${id}`', '`guide_${id}_${part}`', '`chapter_${chapter.number}`', '`stripNeed_${says.reason}`', '`term_${term}`', 'partKey(']) {
+  for (const made of ['`lede_${id}`', '`done_${id}`', '`guide_${id}_${part}`', '`stripNeed_${says.reason}`', '`term_${term}`', 'partKey(']) {
     assert.ok(where.includes(made), made);
   }
   assert.match(where, /t\[need\.text\]/);
@@ -230,14 +231,22 @@ test('the reader-facing name is "Do it", in Spanish "Hazlo", and never "lab"', (
 test('the sentence that follows the exception paragraph above the three word fields, word for word', () => {
   assert.equal(
     en.wordsOnce,
-    'A real wallet asks for this once, on its own screen, straight after it has shown you the words. Anything else that asks for your words, even for three of them (a web page, an email, a support chat), is the scam chapter 4 describes.',
+    'A real wallet asks for this once, on its own screen, straight after it has shown you the words. Anything else that asks for your words, even for three of them (a web page, an email, a support chat), is the scam chapter {keysNumber} describes.',
   );
-  assert.match(es.wordsOnce ?? '', /^Una billetera de verdad pide esto una sola vez, .+ es la estafa que describe el capítulo 4\.$/);
-  // It stands under the paragraph the Restore screen carries, in the same notice.
+  assert.equal(
+    es.wordsOnce,
+    'Una billetera de verdad pide esto una sola vez, en su propia pantalla, justo después de mostrarte las palabras. Cualquier otra cosa que te pida tus palabras, aunque sean tres (una página web, un correo, un chat de soporte), es la estafa que describe el capítulo {keysNumber}.',
+  );
+  // It stands under the paragraph the Restore screen carries, in the same notice. Both name the keys chapter,
+  // so both are drawn through the table of chapters.
   const piece = source('src/screens/doit/AskWords.svelte');
-  assert.match(piece, /<Notice kind="caution" text=\{r\.exception\} data-testid="step-words-exception">\s*<p>\{t\.wordsOnce\}<\/p>\s*<\/Notice>/);
+  assert.match(
+    piece,
+    /<Notice kind="caution" text=\{withChapters\(r\.exception, lang\)\} data-testid="step-words-exception">\s*<p>\{withChapters\(t\.wordsOnce, lang\)\}<\/p>\s*<\/Notice>/,
+  );
   assert.match(piece, /let r = \$derived\(strings\.restore\[lang\]\);/);
-  assert.match(strings.restore.en.exception, /^Chapter 4 of the Journey says never to type your seed into a website/);
+  assert.ok(strings.restore.en.exception.startsWith("Chapter {keysNumber} of the Journey says never to type a wallet's words into a website"));
+  assert.ok(strings.restore.es.exception.startsWith('El capítulo {keysNumber} del Recorrido dice que nunca escribas las palabras de una billetera en un sitio web'));
 });
 
 test('the waiting display, and the line a part keeps once its block has come', () => {
@@ -270,12 +279,13 @@ test('the lede of "The waiting room" says why the fee rate does not matter here,
 });
 
 test('"Hold some" says one plain sentence for each new thing, and what is coming', () => {
-  // Chapter 2 has not taught a wallet, an address, the faucet or the 12 words.
+  // "Hold some" explains each new thing itself.
   const [wallet, coins, confirm, outside] = [1, 2, 3, 4].map((part) => en[`guide_hold-some_${part}`] ?? '');
   assert.match(wallet ?? '', /^A wallet is software that keeps the keys to your coins\./);
-  // What is coming: a choice, either way fine for practice, and 12 words that chapter 4 explains.
+  // What is coming: a choice, either way fine for practice, and 12 words that the keys chapter explains.
   assert.match(wallet ?? '', /with a passkey or without, and either is fine for practice/);
-  assert.match(wallet ?? '', /12 words, which chapter 4 explains\.$/);
+  assert.ok((wallet ?? '').endsWith('12 words, which chapter {keysNumber} explains.'));
+  assert.ok((es['guide_hold-some_1'] ?? '').endsWith('12 palabras, que el capítulo {keysNumber} explica.'));
   assert.match(coins ?? '', /^An address is where coins are sent/);
   assert.match(coins ?? '', /The faucet hands practice coins to anyone who asks/);
   assert.match(confirm ?? '', /On Bitcoin a block comes about every 10 minutes; here, about every \{seconds\} seconds\.$/);
@@ -286,14 +296,21 @@ test('"Hold some" says one plain sentence for each new thing, and what is coming
 });
 
 test('before the wallet is removed the screen says plainly what the drill is, and what it costs', () => {
-  assert.match(en.removeWarnFunded ?? '', /^With real money this drill is done before the wallet is funded \(chapter 4, section 7\)\. Here the coins stay in, to show that the chain kept them\.$/);
+  assert.equal(
+    en.removeWarnFunded,
+    'With real money this drill is done before the wallet is funded (chapter {keysNumber}). Here the coins stay in, to show that the chain kept them.',
+  );
+  assert.equal(
+    es.removeWarnFunded,
+    'Con dinero de verdad, este ejercicio se hace antes de poner fondos en la billetera (capítulo {keysNumber}). Aquí las monedas se quedan dentro, para mostrar que la cadena las conservó.',
+  );
   assert.match(en.removeWarnNine ?? '', /^Three right words do not prove the other nine\. If the restore fails, this wallet and its practice coins are gone, which is what a wrong backup costs\.$/);
   assert.match(en.removeWarnKept ?? '', /^A wallet restored from its 12 words is kept in this browser with those words, also when it was opened with a passkey before\.$/);
   // All three stand in one notice, in that order, in the part that removes.
   const part = source('src/screens/doit/OpenPart.svelte');
   assert.match(
     part,
-    /\{#if fact === 'wallet-removed'\}[\s\S]*?<Notice kind="caution" label=\{t\.removeWarnTitle\} data-testid="step-remove-warning">[\s\S]*?<p>\{t\.removeWarnFunded\}<\/p>\s*<p>\{t\.removeWarnNine\}<\/p>\s*<p>\{t\.removeWarnKept\}<\/p>/,
+    /\{#if fact === 'wallet-removed'\}[\s\S]*?<Notice kind="caution" label=\{t\.removeWarnTitle\} data-testid="step-remove-warning">[\s\S]*?<p>\{withChapters\(t\.removeWarnFunded, lang\)\}<\/p>\s*<p>\{t\.removeWarnNine\}<\/p>\s*<p>\{t\.removeWarnKept\}<\/p>/,
   );
 });
 
@@ -577,8 +594,8 @@ test('a done step says what the reader did and saw, in the past tense: its card 
       'Contaste las monedas de tu billetera, y abriste uno de sus pagos para ver qué hizo con ellas. Una billetera no lleva ningún saldo: tiene monedas, y su total es lo que suman. Un pago gasta monedas enteras y crea monedas nuevas: una para la dirección de destino y, cuando sobra algo, otra de vuelta para ti como cambio.',
     ],
     'waiting-room': [
-      'Your payment reached six confirmations: its own block and five on top. On Bitcoin, undoing a payment that deep means redoing all six blocks faster than the rest of the network adds new ones. That is why six confirmations is the usual line for "settled".',
-      'Tu pago llegó a seis confirmaciones: su propio bloque y cinco encima. En Bitcoin, deshacer un pago a esa profundidad exige rehacer los seis bloques más rápido de lo que el resto de la red agrega bloques nuevos. Por eso seis confirmaciones son la línea habitual de "liquidado".',
+      'Your payment reached six confirmations: its own block and five on top. On Bitcoin, undoing a payment that deep means redoing all six blocks faster than the rest of the network adds new ones. Six confirmations is the usual line for "settled".',
+      'Tu pago llegó a seis confirmaciones: su propio bloque y cinco encima. En Bitcoin, deshacer un pago a esa profundidad exige rehacer los seis bloques más rápido de lo que el resto de la red agrega bloques nuevos. Seis confirmaciones son la línea habitual de "liquidado".',
     ],
     'the-seed': [
       'You said you wrote your 12 words on paper, and three of them matched. Three right words do not prove the other nine: "Prove the backup" does that.',
@@ -874,11 +891,104 @@ test('a lede is two sentences at most, a part\'s guidance one or two; "Hold some
   }
 });
 
+test('a lede names its chapter by the table, and says nothing of where in the chapter a thing stands', () => {
+  // The five that name their chapter, word for word. {number} is the step's own chapter's, from the table of
+  // chapters. Each says what the chapter says, in the present tense: a lede is shown in every state of its
+  // step, also to a reader who opened the step from the wallet's own list and has not read the chapter.
+  const ledes: Partial<Record<StepId, [english: string, spanish: string]>> = {
+    'hold-some': [
+      'Chapter {number} says what bitcoin is. Here you get some to hold: practice coins with no value, on a network that works the way Bitcoin does.',
+      'El capítulo {number} dice qué es bitcoin. Aquí recibes algunas monedas para tener: monedas de práctica sin valor, en una red que funciona como Bitcoin.',
+    ],
+    'pass-it-on': [
+      'In chapter {number}, Alice taps Send. Here you tap it yourself, and pay a few practice coins into the pot for the learner who comes after you.',
+      'En el capítulo {number}, Alice toca Enviar. Aquí lo tocas tú, y dejas unas monedas de práctica en el fondo común para quien viene después de ti.',
+    ],
+    'no-balances': [
+      'Chapter {number} says there are no balances, only coins. Here you count your own, and read what one of your payments did to them.',
+      'El capítulo {number} dice que no hay saldos, solo monedas. Aquí cuentas las tuyas, y lees lo que uno de tus pagos hizo con ellas.',
+    ],
+    'the-seed': [
+      "Chapter {number} says every key in the wallet is made from the 12 words. Here you put this wallet's words on paper, and check that the paper is right.",
+      'El capítulo {number} dice que todas las claves de la billetera salen de las 12 palabras. Aquí pasas a papel las palabras de esta billetera, y compruebas que el papel esté bien.',
+    ],
+    'prove-the-backup': [
+      "This is chapter {number}'s drill: remove the wallet, then bring it back from the paper alone. A wallet that comes back with its coins shows that the backup works.",
+      'Este es el ejercicio del capítulo {number}: quitar la billetera, y luego traerla de vuelta solo con el papel. Una billetera que vuelve con sus monedas muestra que el respaldo funciona.',
+    ],
+  };
+  for (const id of STEPS) {
+    const pair = ledes[id];
+    // "The waiting room" names no chapter.
+    assert.equal(pair === undefined, id === 'waiting-room', id);
+    if (pair === undefined) continue;
+    assert.equal(en[`lede_${id}`], pair[0], id);
+    assert.equal(es[`lede_${id}`], pair[1], id);
+  }
+  // No lede says where in its chapter a thing stands: a chapter is rewritten, and its order changes. And none
+  // says that there is only one way to know a backup works (a hardware wallet can check written words without
+  // erasing anything).
+  const where = /opens with|begins with|starts with|only way|empieza con|comienza con|única forma/i;
+  for (const id of STEPS) {
+    assert.doesNotMatch(en[`lede_${id}`] ?? '', where, id);
+    assert.doesNotMatch(es[`lede_${id}`] ?? '', where, id);
+  }
+  // The step's screen draws its lede through the table of chapters, with the step's own chapter.
+  assert.match(source('src/screens/Step.svelte'), /lede=\{withChapters\(t\[ledeKey\(id\)\], router\.lang, stepDef\(id\)\.chapter\)\}/);
+});
+
+test('what the list, Home and the Overview say of the steps and the chapters', () => {
+  // Not every chapter of the Journey has steps that are done in this wallet, and a step is not something its
+  // chapter has taught: "Hold some" explains a wallet, an address and the faucet itself. So the three
+  // sentences are said of the steps, from the wallet's side: a step goes with a chapter. None says what the
+  // chapters hold, which the main site can change without the wallet. The list's lede says what a step is
+  // first, and that it goes with a chapter second: put the other way round, the chapter reads as the thing
+  // that is done.
+  assert.equal(
+    en.listLede,
+    'Each step here is something you do in your own practice wallet, checked by this page as you go. Each goes with a chapter of the Journey.',
+  );
+  assert.equal(
+    es.listLede,
+    'Cada paso de aquí es algo que haces en tu propia billetera de práctica, comprobado por esta página a medida que avanzas. Cada uno acompaña a un capítulo del Recorrido.',
+  );
+  assert.equal(
+    en.homeBody,
+    "Short steps that go with some of the Journey's chapters, each done in your own practice wallet and checked by this page.",
+  );
+  assert.equal(
+    es.homeBody,
+    'Pasos cortos que acompañan a algunos capítulos del Recorrido, cada uno hecho en tu propia billetera de práctica y comprobado por esta página.',
+  );
+  assert.equal(en.overviewLine, 'This wallet has steps that go with some chapters of the Journey.');
+  assert.equal(es.overviewLine, 'Esta billetera tiene pasos que acompañan a algunos capítulos del Recorrido.');
+  for (const key of ['listLede', 'homeBody', 'overviewLine']) {
+    // The steps are the subject, or the wallet is: never the chapters.
+    assert.doesNotMatch(en[key] ?? '', /chapters? (?:of the Journey )?(?:has|have|ends?|teach|taught)\b/i, key);
+    assert.doesNotMatch(es[key] ?? '', /cap[ií]tulos? (?:del Recorrido )?(?:tienen?|terminan?|enseñ)/i, key);
+    // Every step is checked by the page, and not every step against the practice chain: "The seed" has no
+    // part that reads the chain. Its three parts need a wallet in this browser and nothing more (judge.ts).
+    assert.doesNotMatch(en[key] ?? '', /\bchain\b/i, key);
+    assert.doesNotMatch(es[key] ?? '', /\bcadena\b/i, key);
+  }
+  assert.deepEqual(
+    STEP_DEFS['the-seed'].parts.map((part) => part.on),
+    ['words-shown', 'written', 'three-words'],
+  );
+  assert.match(en.listLede ?? '', /checked by this page/);
+  assert.match(en.homeBody ?? '', /checked by this page/);
+  assert.match(es.listLede ?? '', /comprobado por esta página/);
+  assert.match(es.homeBody ?? '', /comprobado por esta página/);
+  // The list's lede is the page's lede, whatever the list shows under it.
+  assert.match(source('src/screens/Do.svelte'), /<Page title=\{t\.name\} lede=\{t\.listLede\}>/);
+});
+
 test('facts are slots: no setting is typed into a sentence, and the few numbers that are typed are Bitcoin\'s or the design\'s', () => {
   const { electrumHost, explorerUrl, siteUrl, sourceUrl, faucetSats, blockSeconds } = DEFAULT_CONFIG;
   const settings = [electrumHost, new URL(explorerUrl).host, new URL(siteUrl).host, new URL(sourceUrl).host, String(faucetSats), faucetSats.toLocaleString('en-US')];
-  // 1 second and 1 confirmation; chapters 2, 3 and 4; section 7 of chapter 4; 10 minutes between Bitcoin's blocks; the 12 words.
-  const typed = new Set(['1', '2', '3', '4', '7', '10', '12']);
+  // 1 second and 1 confirmation; 10 minutes between Bitcoin's blocks; the 12 words. (A chapter's number is a
+  // slot, filled from the table of chapters.)
+  const typed = new Set(['1', '10', '12']);
   for (const { where, text } of everyText()) {
     for (const setting of settings) assert.ok(!text.includes(setting), `${where} spells out ${setting}`);
     assert.doesNotMatch(text, new RegExp(`\\b${blockSeconds} (seconds|segundos|s)\\b`), where);
@@ -970,7 +1080,7 @@ test('About, "what this browser keeps": the note of the steps holds the fields t
   apply({ kind: 'tick', step: 'waiting-room', part: 1, at: NOW, tx: txid('a1'), sentAt: NOW });
   apply({ kind: 'open', step: 'prove-the-backup', at: NOW, from: null });
   apply({ kind: 'tick', step: 'prove-the-backup', part: 1, at: NOW, wallet: FP, was: 'passkey' });
-  // The reader came from chapter 3 for "The waiting room", and a need of that step sends them to "Hold some" first.
+  // The reader came from the payment chapter for "The waiting room", and a need of that step sends them to "Hold some" first.
   apply({ kind: 'detour', step: 'hold-some', cameFor: 'waiting-room' });
   apply({ kind: 'open', step: 'hold-some', at: NOW, from: null });
   for (const part of [1, 2, 3, 4]) apply({ kind: 'tick', step: 'hold-some', part, at: NOW });

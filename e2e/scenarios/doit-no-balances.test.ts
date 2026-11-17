@@ -1,6 +1,6 @@
-// "There are no balances", the second step of chapter 3, through the real
-// screens: open the Coins screen, count the coins, and read what one of the
-// wallet's own payments did to them.
+// "There are no balances", the second step of the payment chapter, through
+// the real screens: open the Coins screen, count the coins, and read what
+// one of the wallet's own payments did to them.
 //
 // The step rests on a payment this wallet has sent: without one no coin
 // was used up whole, and there is no change to see. Two of its parts are
@@ -44,8 +44,10 @@ import {
   doIt,
   ends,
   hrefOf,
+  ledeOf,
   listState,
   loadStep,
+  mainSays,
   noteOf,
   partName,
   partWords,
@@ -111,6 +113,8 @@ scenario(
     // -- The wallet has never sent a payment: the step says so, and names the step that makes one --
     await untilParts(page, ['blocked', 'later', 'later']);
     assert.equal(await page.text('step-title'), en['title_no-balances']);
+    // The lede names the step's own chapter by the number the app's table of chapters gives.
+    assert.ok(await mainSays(page, ledeOf(STEP)), ledeOf(STEP));
     assert.equal(await attributeOf(page, 'step-need', 'data-reason'), 'nothing-sent');
     assert.ok((await page.text('step-need')).startsWith(en.needSentOnce));
     assert.equal(await page.text('step-need-link'), fill(en.actStep, { step: en['title_pass-it-on'] }));

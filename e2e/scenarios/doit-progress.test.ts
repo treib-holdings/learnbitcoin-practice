@@ -54,8 +54,9 @@
 
 import assert from 'node:assert/strict';
 import type { EventBody } from '@learnbitcoin/practice-contract';
-import { STEPS } from '../../app/src/lib/doit/steps.ts';
+import { CHAPTERS, STEPS } from '../../app/src/lib/doit/steps.ts';
 import { fill, formatDate } from '../../app/src/lib/format.ts';
+import { withChapters } from '../../app/src/screens/doit/view.ts';
 import { strings } from '../../app/src/strings/index.ts';
 import { OTHER_WORDS, TEST_WORDS, fundTestWallet, scenario, testRecord } from './helpers.ts';
 import {
@@ -83,6 +84,7 @@ import {
   PROGRESS_KEY,
   act,
   begin,
+  chapterName,
   doIt,
   ends,
   hrefOf,
@@ -113,13 +115,6 @@ const WORDS = TEST_WORDS.split(' ');
 
 /** An address that is neither the wallet's nor the pot's: the first address of the harness's second wallet. */
 const SOMEBODY = testRecord(OTHER_WORDS).firstAddress;
-
-/** The three chapters that have steps: their number, their title and their page on the main site. */
-const CHAPTERS = [
-  { number: 2, title: en.chapter_2, path: '/journey/what-bitcoin-actually-is' },
-  { number: 3, title: en.chapter_3, path: '/journey/how-bitcoin-works' },
-  { number: 4, title: en.chapter_4, path: '/journey/be-your-own-bank' },
-] as const;
 
 scenario(
   'Nothing is noted before a step is opened: Home, the list of steps, About, an address that names no step, every screen of the wallet, the 12 words shown and a payment sent all leave this browser with the wallet and nothing else; and the payment sent before the step was opened does not count for it',
@@ -161,7 +156,12 @@ scenario(
       await page.page.$$eval(hook('do-chapter'), (links) =>
         links.map((link) => [link.getAttribute('href'), (link.textContent ?? '').trim(), link.getAttribute('referrerpolicy'), link.getAttribute('rel'), link.getAttribute('target')]),
       ),
-      CHAPTERS.map((chapter) => [`${site}${chapter.path}`, fill(en.chapterHeading, { number: String(chapter.number), title: chapter.title }), null, null, null]),
+      CHAPTERS.map((chapter) => [`${site}${chapter.path.en}`, chapterName(chapter.key), null, null, null]),
+    );
+    // What a screen reader calls each chapter's list: it names the chapter by the same number.
+    assert.deepEqual(
+      await page.page.$$eval(`${hook('do-list')} section ul`, (lists) => lists.map((list) => list.getAttribute('aria-label'))),
+      CHAPTERS.map((chapter) => withChapters(en.listSteps, 'en', chapter)),
     );
     // Which step stands under which chapter.
     assert.deepEqual(
@@ -424,7 +424,7 @@ scenario(
     }
 
     // -- A step that is done: the same way back, and its ending now says that the step is done (it names no
-    //    other step: no other step of chapter 3 is done here) --
+    //    other step: no other step of the payment chapter is done here) --
     const done = { started: true as const, doneAt: at, parts: { 1: true as const, 2: true as const, 3: true as const } };
     await page.store(PROGRESS_KEY, noteFor({ following: null, steps: { [STEP]: { ...done, from: OWN_ES } } }));
     assert.deepEqual(await arrive('', { fresh: false }), { href: `${site}${OWN_ES}#done=${STEP}`, from: OWN_ES });
@@ -1297,7 +1297,7 @@ scenario(
       'no-balances':
         'You counted the coins in your wallet, and opened one of its payments to see what it did to them. A wallet keeps no balance: it holds coins, and its total is what they add up to. A payment uses coins up whole and makes new ones: one for the address paid and, when something is left over, one back to you as change.',
       'waiting-room':
-        'Your payment reached six confirmations: its own block and five on top. On Bitcoin, undoing a payment that deep means redoing all six blocks faster than the rest of the network adds new ones. That is why six confirmations is the usual line for "settled".',
+        'Your payment reached six confirmations: its own block and five on top. On Bitcoin, undoing a payment that deep means redoing all six blocks faster than the rest of the network adds new ones. Six confirmations is the usual line for "settled".',
       'the-seed': 'You said you wrote your 12 words on paper, and three of them matched. Three right words do not prove the other nine: "Prove the backup" does that.',
       'prove-the-backup': 'The wallet came back from its 12 words, with its coins. The chain kept them the whole time, and the words only unlocked them: you own keys, not coins.',
     };

@@ -1,6 +1,6 @@
-// "Pass it on", the first step of chapter 3, through the real screens: have
-// coins that can be spent, send some to the pot with Send's "Pass it on",
-// and see the payment get its first confirmation.
+// "Pass it on", the first step of the payment chapter, through the real
+// screens: have coins that can be spent, send some to the pot with Send's
+// "Pass it on", and see the payment get its first confirmation.
 //
 // Two of its three parts wait for the chain. A coin that is not in a block
 // yet cannot be spent, and the payment is done only when a block has taken
@@ -71,7 +71,9 @@ import {
   ends,
   endsTwo,
   hrefOf,
+  ledeOf,
   listState,
+  mainSays,
   marked,
   noteFor,
   noteOf,
@@ -152,6 +154,8 @@ scenario(
     // -- Part 1 cannot be done yet: the one coin waits for its block. The page says so, and offers nothing to press. --
     await untilParts(page, ['blocked', 'later', 'later']);
     assert.equal(await page.text('step-title'), en['title_pass-it-on']);
+    // The lede names the step's own chapter by the number the app's table of chapters gives.
+    assert.ok(await mainSays(page, ledeOf(STEP)), ledeOf(STEP));
     assert.deepEqual(await partWords(page), [en.partBlocked, en.partLater, en.partLater]);
     assert.equal(await attributeOf(page, 'step-need', 'data-reason'), 'not-spendable-yet');
     assert.ok((await page.text('step-need')).startsWith(fill(en['need_not-spendable-yet'], { seconds: String(s.stack.config.blockSeconds) })));

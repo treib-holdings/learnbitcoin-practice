@@ -266,6 +266,11 @@ scenario('a payment to the pot: the plan, the signed review and the transaction 
   // The review is the payment as signed, and its figures are the plan's.
   const review = await figures(page, 'send-review');
   assert.deepEqual(review, plan);
+  // It says to compare the whole address, and the whole address stands under the sentence: every character
+  // of the one in the To field, with none left out and nothing put in its place.
+  assert.ok((await page.text('send-review')).includes(en.reviewCheck), en.reviewCheck);
+  assert.equal(await textOf(page, `${hook('send-review')} ${hook('review-to')} dd [translate="no"]`), pot);
+  assert.ok((await page.text('send-review')).indexOf(en.reviewCheck) < (await page.text('send-review')).indexOf(pot));
   const inputs = await page.texts('tx-input');
   const outputs = await page.texts('tx-output');
   assert.equal(inputs.length, 1);
@@ -346,6 +351,9 @@ scenario('a payment to an ordinary address, made with the keyboard alone', LOCAL
   await keys.press('Enter');
   assert.equal(await headingInFocus(page), 'Signed, not sent yet');
   assert.equal(await row(page, hook('send-review'), 'review-amount'), '5,000 practice sats');
+  // The address that was typed stands whole in the review, under the sentence that says to compare it.
+  assert.equal(await row(page, hook('send-review'), 'review-to'), SOMEBODY);
+  assert.ok((await page.text('send-review')).includes(en.reviewCheck), en.reviewCheck);
 
   // From the heading, the first thing the Tab key reaches is "Send it", once the review's first moment is over.
   await armed(page);

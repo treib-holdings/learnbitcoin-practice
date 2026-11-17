@@ -1302,7 +1302,8 @@ const NEED_PAIRS: readonly (readonly [to: StepId, cameFor: StepId])[] = [
 ];
 
 test('the step a reader came for is written by the press of a need\'s link, and only on a road from a chapter', () => {
-  // The reader pressed the card of "Pass it on" in chapter 3 and has no wallet: the need leads to "Hold some".
+  // The reader pressed the card of "Pass it on" in the payment chapter and has no wallet: the need leads to
+  // "Hold some".
   const byCard = note({ 'pass-it-on': started(0, { from: '/journey/how-bitcoin-works' }) }, 'pass-it-on');
   const sent = applyChange(byCard, detour('hold-some', 'pass-it-on'));
   // The one field, in a note that is made for it. Nothing else changes: not who is followed, no time, and
@@ -1369,8 +1370,9 @@ test('the step a reader came for is written by the press of a need\'s link, and 
   assert.deepEqual([twice.following, twice.followedAt], ['the-seed', NOW + 1], 'the press itself follows nothing');
 
   // -- A later press that is not remembered ends what an earlier road left. The reader pressed the card of "The
-  //    seed" in chapter 4 with no wallet, was sent to "Hold some", made a wallet and gave up. On a later day they
-  //    open "Pass it on" from the wallet's own list, and its need (no coins) sends them to "Hold some" as well. --
+  //    seed" in the keys chapter with no wallet, was sent to "Hold some", made a wallet and gave up. On a later
+  //    day they open "Pass it on" from the wallet's own list, and its need (no coins) sends them to "Hold some"
+  //    as well. --
   let earlier = note({ 'the-seed': started(0, { from: '/journey/be-your-own-bank' }) }, 'the-seed');
   earlier = applyChange(earlier, detour('hold-some', 'the-seed'));
   earlier = applyChange(earlier, open('hold-some', NOW + 1));
@@ -1648,10 +1650,10 @@ test('the start of a step\'s road: the step itself when no need sent the reader 
 });
 
 test('the link back leads to the page the reader left: during a detour to the card they pressed, and a done step is marked wherever that page holds its card', () => {
-  const chapterOf = (id: StepId): number => STEP_DEFS[id].chapter.number;
+  const chapterKeyOf = (id: StepId): string => STEP_DEFS[id].chapter.key;
 
   for (const [to, cameFor] of NEED_PAIRS) {
-    const sameChapter = chapterOf(to) === chapterOf(cameFor);
+    const sameChapter = chapterKeyOf(to) === chapterKeyOf(cameFor);
     for (const lang of LANGS) {
       const own = CHAPTER_PAGES[cameFor][lang === 'en' ? 0 : 1];
       // The page the road began on: the one the reader came from, or with no way back noted (a note made by
@@ -1670,8 +1672,8 @@ test('the link back leads to the page the reader left: during a detour to the ca
         assert.equal(chapterLink(SITE, to, lang, pressed), `${SITE}${page}#do-${cameFor}`, what);
 
         // In a detour, done. Where the reader's page holds this step's card too (both are steps of one chapter),
-        // the ending marks it. Where it does not ("Hold some", sent from chapter 3 or 4), a done ending would
-        // mark nothing there: the ending stays the card the reader pressed.
+        // the ending marks it. Where it does not ("Hold some", sent from the payment chapter or the keys
+        // chapter), a done ending would mark nothing there: the ending stays the card the reader pressed.
         const done: Progress = { v: 1, following: null, steps: { [to]: { started: true, doneAt: NOW, cameFor }, [cameFor]: sender } };
         assert.equal(chapterLink(SITE, to, lang, done), sameChapter ? `${SITE}${page}#done=${to}` : `${SITE}${page}#do-${cameFor}`, what);
         // And the step the reader came for is not done: its own link is its card.
@@ -1736,13 +1738,13 @@ test('the link back leads to the page the reader left: during a detour to the ca
   for (const part of [1, 2, 3, 4]) road = applyChange(road, tick('hold-some', part, NOW + 3));
   assert.deepEqual([ledBackTo(road, 'hold-some'), chapterLink(SITE, 'hold-some', 'en', road)], ['pass-it-on', card]);
   // "Pass it on" done: it leads back to "There are no balances" first, and is marked on the same page. The
-  // done "Hold some" is in no detour any more: chapter 2, and its own ending.
+  // done "Hold some" is in no detour any more: its own chapter, and its own ending.
   for (const part of [1, 2, 3]) road = applyChange(road, tick('pass-it-on', part, NOW + 4, part === 2 ? { tx: TX, sentAt: NOW + 4 } : {}));
   assert.equal(ledBackTo(road, 'pass-it-on'), 'no-balances');
   assert.equal(chapterLink(SITE, 'pass-it-on', 'en', road), `${SITE}/journey/how-bitcoin-works#done=pass-it-on`);
   assert.deepEqual([ledBackTo(road, 'hold-some'), road.steps['hold-some']?.cameFor], [null, undefined]);
   assert.equal(chapterLink(SITE, 'hold-some', 'es', road), `${SITE}/es/recorrido/que-es-bitcoin-en-realidad#done=hold-some`);
-  // "There are no balances" done: both steps of chapter 3 are named, the one being left first.
+  // "There are no balances" done: both steps of the payment chapter are named, the one being left first.
   for (const part of [1, 2, 3]) road = applyChange(road, tick('no-balances', part, NOW + 5));
   assert.equal(chapterLink(SITE, 'no-balances', 'es', road), `${SITE}/journey/how-bitcoin-works#done=no-balances,pass-it-on`);
   assert.equal(chapterLink(SITE, 'pass-it-on', 'es', road), `${SITE}/es/recorrido/como-funciona-bitcoin#done=pass-it-on,no-balances`);
@@ -1791,11 +1793,11 @@ test('the link back leads to the page the reader left: during a detour to the ca
           if (hash.startsWith('#done=')) {
             const ids = hash.slice('#done='.length).split(',') as StepId[];
             assert.equal(ids[0], id, link);
-            for (const each of ids) assert.ok(progress.steps[each]?.doneAt !== undefined && chapterOf(each) === chapterOf(start), `${link}: ${each}`);
+            for (const each of ids) assert.ok(progress.steps[each]?.doneAt !== undefined && chapterKeyOf(each) === chapterKeyOf(start), `${link}: ${each}`);
           } else {
             assert.equal(hash, `#do-${start}`, link);
             // A plain ending for a done step only where the page it leads to cannot hold that step's card.
-            if (progress.steps[id]?.doneAt !== undefined) assert.notEqual(chapterOf(id), chapterOf(start), link);
+            if (progress.steps[id]?.doneAt !== undefined) assert.notEqual(chapterKeyOf(id), chapterKeyOf(start), link);
           }
         }
       }
@@ -1806,7 +1808,7 @@ test('the link back leads to the page the reader left: during a detour to the ca
 });
 
 test('a done ending names the step being left first, then the other done steps of its chapter in the contract\'s order', () => {
-  const chapterOf = (id: StepId): number => STEP_DEFS[id].chapter.number;
+  const chapterKeyOf = (id: StepId): string => STEP_DEFS[id].chapter.key;
   const endings = new Set<string>();
   // Each of the 64 sets of done steps, and each step of the six.
   for (let bits = 0; bits < 1 << STEPS.length; bits++) {
@@ -1831,10 +1833,10 @@ test('a done ending names the step being left first, then the other done steps o
       assert.equal(new Set(ids).size, ids.length, `${ending}: no step twice`);
       for (const each of ids) {
         assert.ok(progress.steps[each]?.doneAt !== undefined, `${ending}: ${each} is not done`);
-        assert.equal(chapterOf(each), chapterOf(id), `${ending}: ${each} is a step of another chapter`);
+        assert.equal(chapterKeyOf(each), chapterKeyOf(id), `${ending}: ${each} is a step of another chapter`);
       }
       // Every done step of the chapter is named, and the ones after the first stand in the contract's order.
-      const others = STEPS.filter((each) => each !== id && chapterOf(each) === chapterOf(id) && progress.steps[each] !== undefined);
+      const others = STEPS.filter((each) => each !== id && chapterKeyOf(each) === chapterKeyOf(id) && progress.steps[each] !== undefined);
       assert.deepEqual(ids.slice(1), others, ending);
       endings.add(ending);
     }
@@ -1844,8 +1846,8 @@ test('a done ending names the step being left first, then the other done steps o
   assert.equal(endings.size, 17);
   assert.equal(Math.max(...[...endings].map((ending) => ending.length)), 41, 'the longest of them');
   assert.equal(Math.max(...[...endings].map((ending) => ending.split(',').length)), 3, 'three steps to a chapter at the most');
-  // Three steps of chapter 3 done by "Next step", and the link back taken from the second of them: all three
-  // are named, and the one being left first.
+  // Three steps of the payment chapter done by "Next step", and the link back taken from the second of them:
+  // all three are named, and the one being left first.
   const three = note({ 'pass-it-on': started(3, { doneAt: NOW }), 'no-balances': started(3, { doneAt: NOW + 1 }), 'waiting-room': started(3, { doneAt: NOW + 2 }) });
   assert.equal(chapterLink(SITE, 'no-balances', 'en', three), `${SITE}/journey/how-bitcoin-works#done=no-balances,pass-it-on,waiting-room`);
   assert.deepEqual(doneWith(three, 'waiting-room'), ['waiting-room', 'pass-it-on', 'no-balances']);

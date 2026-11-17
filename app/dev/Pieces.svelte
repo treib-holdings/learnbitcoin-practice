@@ -58,7 +58,7 @@
       sending: 'Sending...',
       newAddress: 'Show a new address',
       address: 'Destination address',
-      addressHint: 'A practice address starts with bcrt1. Compare its first and last characters with the one you were given.',
+      addressHint: 'A practice address starts with bcrt1. Compare the whole address with the one you were given.',
       amount: 'Amount, in practice sats',
       amountError: 'That amount has a period in it. Sats are whole: type 100000 or 100,000.',
       addressError: 'That address is on another test network. A practice address starts with bcrt1.',
@@ -68,7 +68,7 @@
       info: 'Looking and receiving need no passkey. Sending and showing the 12 words do.',
       cautionLabel: 'Practice only',
       caution:
-        'These 12 words guard play money. Never type the words of a real wallet into a web page, this one included.',
+        'These 12 words guard play money. The words of any wallet that is not a practice wallet never go into a web page, this one included. That includes the words of a wallet for real bitcoin, even an empty one.',
       cardLabel: 'Receive',
       cardTitle: 'Your practice address',
       cardBody: 'Give this address to whoever is paying you. It stays the same until you ask for a new one.',
@@ -118,8 +118,7 @@
       sending: 'Enviando...',
       newAddress: 'Mostrar una dirección nueva',
       address: 'Dirección de destino',
-      addressHint:
-        'Una dirección de práctica empieza con bcrt1. Compara sus primeros y sus últimos caracteres con la que te dieron.',
+      addressHint: 'Una dirección de práctica empieza con bcrt1. Compara la dirección completa con la que te dieron.',
       amount: 'Monto, en sats de práctica',
       amountError: 'Ese monto tiene un punto. Los sats son enteros: escribe 100000 o 100,000.',
       addressError: 'Esa dirección es de otra red de pruebas. Una dirección de práctica empieza con bcrt1.',
@@ -129,7 +128,7 @@
       info: 'Para mirar y recibir no hace falta la llave de acceso (passkey). Para enviar y para mostrar las 12 palabras, sí.',
       cautionLabel: 'Solo para practicar',
       caution:
-        'Estas 12 palabras protegen dinero de juguete. Nunca escribas las palabras de una billetera de verdad en una página web, ni siquiera en esta.',
+        'Estas 12 palabras protegen dinero de juguete. Las palabras de una billetera que no sea de práctica nunca van en una página web, incluida esta. Eso incluye las de una billetera para bitcoin de verdad, aunque esté vacía.',
       cardLabel: 'Recibir',
       cardTitle: 'Tu dirección de práctica',
       cardBody: 'Dale esta dirección a quien te vaya a pagar. Se queda igual hasta que pidas una nueva.',

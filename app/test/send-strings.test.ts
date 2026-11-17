@@ -125,6 +125,33 @@ test('send text: sentences that stay true in every state they are shown in', () 
   assert.match(es.potFilled, /fondo común/);
 });
 
+test('send text: the review says to compare the whole address', () => {
+  // Look-alike addresses are made to share their first and last characters with the one a reader means to
+  // pay. So the check is of the whole address, which stands right under the sentence, never cut short.
+  assert.equal(
+    strings.send.en.reviewCheck,
+    'Compare the whole address with the one you were given. A payment cannot be called back once it is sent, here or on Bitcoin.',
+  );
+  assert.equal(
+    strings.send.es.reviewCheck,
+    'Compara la dirección completa con la que te dieron. Un pago enviado no se puede deshacer, ni aquí ni en Bitcoin.',
+  );
+  const review = readFileSync(new URL('../src/screens/send/Review.svelte', import.meta.url), 'utf8');
+  assert.match(review, /<p>\{t\.reviewCheck\}<\/p>/);
+  assert.match(review, /<Row name=\{t\.planTo\} data-testid="review-to">\s*<Mono value=\{facts\.to\} \/>/);
+  // And no text of any table gives the old advice.
+  let texts = 0;
+  for (const [area, tables] of Object.entries(strings)) {
+    for (const lang of LANGS) {
+      for (const [key, text] of Object.entries(tables[lang] as Table)) {
+        texts += 1;
+        assert.doesNotMatch(text, /first and last characters|primeros y los últimos caracteres|primeros y sus últimos caracteres/i, `${area}.${lang}.${key}`);
+      }
+    }
+  }
+  assert.ok(texts > 1000, `${texts} texts were read`);
+});
+
 test('send text: the pot is said in two sentences, and they say whose coins the faucet hands on', () => {
   for (const lang of LANGS) assert.equal(sentencesOf(strings.send[lang].potAbout).length, 2, lang);
   assert.match(strings.send.en.potAbout, /Coins sent there are what the faucet hands to the next learner\.$/);

@@ -253,12 +253,12 @@ app says so on every screen. The most a thief can take is a practice
 session.
 
 A wallet for real money must not do this. Real seed words do not belong in
-web storage, and are never typed into a web page, this one included. Chapter
-4 of the site's Journey says so, and the screens of this app that show or
-take 12 words say why they are the one exception: the words guard play
-money. Real words belong on paper or steel, with the keys in a device made
-to hold them. Words that have been on this page must never guard real
-bitcoin.
+web storage, and are never typed into a web page, this one included. The
+site's Journey says so in its chapter about keys, and the screens of this
+app that show or take 12 words say why they are the one exception: the words
+guard play money. Real words belong on paper or steel, with the keys in a
+device made to hold them. Words that have been on this page must never guard
+real bitcoin.
 
 The same warning stands at the top of `app/src/lib/keystore.ts`. Read it
 before borrowing from that file.

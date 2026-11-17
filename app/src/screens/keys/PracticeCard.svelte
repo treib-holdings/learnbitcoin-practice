@@ -2,7 +2,7 @@
   // The practice sheet: the main site's 12-word backup form, blank and
   // marked for practice, to print and fill in by hand.
   //
-  // Chapter 4 of the Journey offers a form for the words of a real wallet:
+  // The main site has a 12-word backup form for the words of a real wallet:
   // a sheet of three cards to cut out, each with a title, two warnings and
   // twelve numbered rows of eight letter cells. This is that form, drawn
   // again here, so that the rehearsal is on the paper the real thing will

@@ -1,12 +1,13 @@
-// "Hold some", the step of chapter 2, through the real screens: make a
-// practice wallet, ask the faucet for coins, see them confirm, and read the
-// coin's block off the practice explorer.
+// "Hold some", the step of the bitcoin chapter, through the real screens:
+// make a practice wallet, ask the faucet for coins, see them confirm, and
+// read the coin's block off the practice explorer.
 //
-// The reader of chapter 2 has no wallet yet, so the first two scenarios
-// start from an empty browser and go through the real Create screen and the
-// real faucet card. Asking the faucet lets the bot check's script into the
-// page, and from then on every move between screens loads a page: the step
-// and its strip have to be the same on the far side of that load.
+// A reader who comes to this step has no wallet yet, so the first two
+// scenarios start from an empty browser and go through the real Create
+// screen and the real faucet card. Asking the faucet lets the bot check's
+// script into the page, and from then on every move between screens loads
+// a page: the step and its strip have to be the same on the far side of
+// that load.
 //
 //   1. from nothing to done, in English, arriving from the chapter
 //      ("?from="): the part that waits for a block ticks while the step's
@@ -45,7 +46,10 @@ import {
   doIt,
   ends,
   hrefOf,
+  ledeOf,
+  mainSays,
   marked,
+  named,
   noteOf,
   partName,
   partWords,
@@ -93,7 +97,11 @@ scenario(
     assert.equal(await page.text('step-title'), en['title_hold-some']);
     assert.deepEqual(await partsOf(page), ['now', 'later', 'later', 'later']);
     assert.deepEqual(await partWords(page), [en.partNow, en.partLater, en.partLater, en.partLater]);
-    assert.equal(await page.text('step-guide'), en['guide_hold-some_1']);
+    // The lede names the step's own chapter, and the first part's guide the keys chapter: each by the number
+    // the app's table of chapters gives, with no slot left on screen.
+    assert.ok(await mainSays(page, ledeOf(STEP)), ledeOf(STEP));
+    assert.equal(await page.text('step-guide'), named(en['guide_hold-some_1']));
+    assert.doesNotMatch(await page.page.$eval('main', (main) => main.textContent ?? ''), /[{}]/);
     // The way back is the chapter's page the reader came from, with the card's mark and no stamp. It stays in
     // this tab, and nothing on it asks for a referrer to be sent: the page's own policy sends none.
     assert.equal(await hrefOf(page, 'step-back'), `${site}${CHAPTER}#do-${STEP}`);
@@ -108,7 +116,7 @@ scenario(
     assert.deepEqual(await storageKeys(page), [PROGRESS_KEY]);
     // The step's own screen carries no strip.
     assert.equal(await stripOf(page), null);
-    // Chapter 2 has taught no wallet and no 12 words: the part links what they are.
+    // "Hold some" explains a wallet and the 12 words itself: the part links what they are.
     assert.deepEqual(
       await page.page.$$eval(`${hook('step-glossary')} a`, (links) => links.map((link) => link.getAttribute('href'))),
       [`${site}/glossary/wallet`, `${site}/glossary/seed-phrase`],
@@ -242,7 +250,9 @@ scenario(
     assert.equal(await page.text('step-title'), es['title_hold-some']);
     assert.equal(await page.page.title(), fill(strings.common.es.markerTitle, { screen: es['title_hold-some'] }));
     assert.deepEqual(await partWords(page), [es.partNow, es.partLater, es.partLater, es.partLater]);
-    assert.equal(await page.text('step-guide'), es['guide_hold-some_1']);
+    assert.ok(await mainSays(page, ledeOf(STEP, 'es')), ledeOf(STEP, 'es'));
+    assert.equal(await page.text('step-guide'), named(es['guide_hold-some_1'], 'es'));
+    assert.doesNotMatch(await page.page.$eval('main', (main) => main.textContent ?? ''), /[{}]/);
     assert.equal(await hrefOf(page, 'step-back'), `${site}${CAPITULO}#do-${STEP}`);
     assert.deepEqual(
       await page.page.$$eval(`${hook('step-glossary')} a`, (links) => links.map((link) => link.getAttribute('href'))),

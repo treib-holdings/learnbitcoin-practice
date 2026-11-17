@@ -93,9 +93,9 @@ export const en = {
   // -- remove: a step that asks first --
   removeTitle: 'Remove this wallet from this browser',
   removeLead: 'Removing takes the wallet out of this browser. Its coins stay on the practice network.',
-  /** Chapter 4's drill: the reason to try this at all. */
+  /** The keys chapter's drill: the reason to try this at all. {keysNumber} is that chapter's number, from the table of chapters (lib/doit/steps.ts). */
   removeDrill:
-    "This is the first half of chapter 4's drill: wipe, then restore from your words, to know the backup works.",
+    'This is the first half of the drill in chapter {keysNumber} of the Journey: wipe, then restore from your words, to know the backup works.',
   removeButton: 'Remove this wallet',
   removeAsk: 'Remove this wallet from this browser?',
   /**
@@ -162,7 +162,7 @@ export const es: Record<keyof typeof en, string> = {
   removeTitle: 'Quitar esta billetera de este navegador',
   removeLead: 'Quitarla la saca de este navegador. Sus monedas siguen en la red de práctica.',
   removeDrill:
-    'Es la primera mitad del ejercicio del capítulo 4: borrar y luego restaurar desde tus palabras, para saber que el respaldo funciona.',
+    'Es la primera mitad del ejercicio del capítulo {keysNumber} del Recorrido: borrar y luego restaurar desde tus palabras, para saber que el respaldo funciona.',
   removeButton: 'Quitar esta billetera',
   removeAsk: '¿Quitar esta billetera de este navegador?',
   removeBackPasskey:

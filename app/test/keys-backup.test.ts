@@ -2,7 +2,7 @@
 // step shows, what "Show the 12 words" leads to, what follows each way an
 // unlock can end, when words on screen must leave it and whether the screen
 // then says why, where "I have written them down" leads, and the address of
-// chapter 4.
+// the keys chapter.
 //
 // These are tests of the plain helpers. They say nothing about whether
 // Backup.svelte calls them as it should: that is what the browser scenarios
@@ -13,9 +13,9 @@ import { test } from 'node:test';
 import { LANGS, STEPS } from '@learnbitcoin/practice-contract';
 import type { Unlocked } from '../src/components/wallet/unlock-flow.ts';
 import { DEFAULT_CONFIG } from '../src/lib/config.ts';
+import { chapterOf } from '../src/lib/doit/steps.ts';
 import { pathFor } from '../src/lib/router.ts';
 import {
-  CHAPTER_PATH,
   afterUnlock,
   afterWritten,
   backupView,
@@ -276,15 +276,17 @@ test('afterWritten: back to the followed step, or to the overview', () => {
   }
 });
 
-// -- the address of chapter 4 ----------------------------------------------------------------
+// -- the address of the keys chapter -----------------------------------------------------------
 
-test('chapterUrl: chapter 4 on the main site, in the page\'s language', () => {
+test('chapterUrl: the keys chapter on the main site, in the page\'s language', () => {
   assert.equal(chapterUrl(DEFAULT_CONFIG.siteUrl, 'en'), 'https://www.learnbitcoin.com/journey/be-your-own-bank');
   assert.equal(chapterUrl(DEFAULT_CONFIG.siteUrl, 'es'), 'https://www.learnbitcoin.com/es/recorrido/se-tu-propio-banco');
+  // The two paths are the table of chapters': this screen keeps no copy of them.
+  const path = chapterOf('keys').path;
   for (const lang of LANGS) {
     // The site's addresses carry no slash at their end, and the host is never written here.
-    assert.ok(CHAPTER_PATH[lang].startsWith('/') && !CHAPTER_PATH[lang].endsWith('/'), lang);
-    assert.doesNotMatch(CHAPTER_PATH[lang], /learnbitcoin|https?:/, lang);
-    assert.equal(chapterUrl('http://localhost:1', lang), `http://localhost:1${CHAPTER_PATH[lang]}`);
+    assert.ok(path[lang].startsWith('/') && !path[lang].endsWith('/'), lang);
+    assert.doesNotMatch(path[lang], /learnbitcoin|https?:/, lang);
+    assert.equal(chapterUrl('http://localhost:1', lang), `http://localhost:1${path[lang]}`);
   }
 });

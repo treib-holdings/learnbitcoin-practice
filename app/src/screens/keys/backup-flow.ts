@@ -2,10 +2,12 @@
 // can check every one: which of its steps shows, what a press on "Show the
 // 12 words" leads to, what follows each way an unlock can end, when words
 // that are on screen must leave it and whether the screen then says why,
-// where "I have written them down" leads, and the address of chapter 4.
+// where "I have written them down" leads, and the address of the keys
+// chapter.
 
 import type { Lang, StepId } from '@learnbitcoin/practice-contract';
 import type { Unlocked } from '../../components/wallet/unlock-flow.ts';
+import { chapterOf } from '../../lib/doit/steps.ts';
 import type { Route } from '../../lib/router.ts';
 
 /**
@@ -119,16 +121,12 @@ export function afterWritten(followed: StepId | null): Route {
 }
 
 /**
- * Where chapter 4 of the main site's Journey is, in each language. The
- * exception paragraph answers a rule of that chapter, so the screen links
- * to it. Both pages exist; the site keeps its Spanish edition under /es.
+ * The address of the keys chapter of the main site's Journey, in the page's
+ * language. The exception paragraph answers a rule of that chapter, so the
+ * screen links to it. Both pages exist; the site keeps its Spanish edition
+ * under /es. The chapter's two paths are in the table of chapters
+ * (lib/doit/steps.ts). `siteUrl` comes without a slash at its end.
  */
-export const CHAPTER_PATH: Readonly<Record<Lang, string>> = {
-  en: '/journey/be-your-own-bank',
-  es: '/es/recorrido/se-tu-propio-banco',
-};
-
-/** The address of chapter 4 in the page's language. `siteUrl` comes without a slash at its end. */
 export function chapterUrl(siteUrl: string, lang: Lang): string {
-  return `${siteUrl}${CHAPTER_PATH[lang]}`;
+  return `${siteUrl}${chapterOf('keys').path[lang]}`;
 }

@@ -11,11 +11,14 @@
 // the name of a passkey this page has just made: the wallet hands it over as
 // it wrote it then, in whichever language the page had at that moment.
 //
-// The exception paragraph is here in full. Chapter 4 of the main site tells
-// its readers never to type a seed into a website, and this screen puts 12
-// words on a web page. The paragraph gives the one reason that makes this
-// page an exception: the words guard play money. It never argues that the
-// page can be trusted, because a scam page could say the same.
+// The exception paragraph is here in full. The keys chapter of the main
+// site's Journey tells its readers never to type a seed into a website, and
+// this screen puts 12 words on a web page. The paragraph gives the one
+// reason that makes this page an exception: the words guard play money. It
+// never argues that the page can be trusted, because a scam page could say
+// the same. Its last two sentences close the door the word "exception"
+// opens, and are the same, word for word, in the Restore screen's paragraph
+// (restore.ts) and in the short form (wordsException in wallet.ts).
 //
 // The Spanish here is a first draft that no native reviewer has read yet.
 
@@ -23,16 +26,16 @@ export const en = {
   // -- the screen before the words are shown --
   /** The heading of the part that shows the words. */
   wordsTitle: 'The 12 words',
-  /** The exception paragraph: three sentences, the reason in the middle one. */
+  /** The exception paragraph: four sentences, the reason in the second. {keysNumber} is the keys chapter's number, from the table of chapters (lib/doit/steps.ts). */
   exception:
-    'Chapter 4 of the Journey says never to type your seed into a website, and to keep it only on your wallet device and on backups you made yourself. This page is the one exception, because the 12 words here only guard play money, practice coins that are worth nothing. The words of a wallet that holds real bitcoin never go into a web page, this one included.',
+    "Chapter {keysNumber} of the Journey says never to type a wallet's words into a website. This page, which shows 12 words and on other screens asks you to type them, is the one exception, because the 12 words here only guard play money, practice coins that are worth nothing. The words of any wallet that is not a practice wallet never go into a web page, this one included. That includes the words of a wallet for real bitcoin, even an empty one.",
   /**
    * A link to that chapter on the main site, under the paragraph. It is kept
    * short: it stands at the start of a line of its own and must never reach
    * the line's end, where the arrow that marks an outside link could wrap
    * onto a line by itself.
    */
-  chapterLink: 'Chapter 4 of the Journey',
+  chapterLink: 'Chapter {keysNumber} of the Journey',
   /** What the reader should know before the words are on screen. */
   before:
     'These 12 words are the whole wallet. Anyone who sees them can spend its coins from any device. Check that nobody else can see your screen.',
@@ -108,7 +111,7 @@ export const en = {
 
   // -- the practice sheet: the main site's 12-word backup form, blank, for paper --
   //
-  // The form is the one chapter 4 of the Journey offers for a real wallet.
+  // The form is the main site's 12-word backup form for a real wallet.
   // The three lines printed on each card are the form's own, word for word:
   // its title and its two warnings. This is working copy: a copy pass comes later.
   cardTitle: 'A practice backup sheet to print',
@@ -131,8 +134,8 @@ export const en = {
 export const es: Record<keyof typeof en, string> = {
   wordsTitle: 'Las 12 palabras',
   exception:
-    'El capítulo 4 del Recorrido dice que nunca escribas tu frase semilla en un sitio web, y que solo debe vivir en tu dispositivo de billetera y en los respaldos que tú hiciste. Esta página es la única excepción, porque sus 12 palabras solo protegen dinero de juguete, monedas de práctica que no valen nada. Las palabras de una billetera con bitcoin de verdad nunca van en una página web, incluida esta.',
-  chapterLink: 'Capítulo 4 del Recorrido',
+    'El capítulo {keysNumber} del Recorrido dice que nunca escribas las palabras de una billetera en un sitio web. Esta página, que muestra 12 palabras y en otras pantallas te pide escribirlas, es la única excepción, porque sus 12 palabras solo protegen dinero de juguete, monedas de práctica que no valen nada. Las palabras de una billetera que no sea de práctica nunca van en una página web, incluida esta. Eso incluye las de una billetera para bitcoin de verdad, aunque esté vacía.',
+  chapterLink: 'Capítulo {keysNumber} del Recorrido',
   before:
     'Estas 12 palabras son la billetera entera. Quien las vea puede gastar sus monedas desde cualquier dispositivo. Revisa que nadie más pueda ver tu pantalla.',
   spokenAloud:

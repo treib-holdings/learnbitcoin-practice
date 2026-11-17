@@ -59,11 +59,12 @@
   import { focusHeading, navigate, router } from '../lib/router.svelte.ts';
   import { useWallet } from '../lib/wallet-context.ts';
   import { strings } from '../strings/index.ts';
+  import { withChapters } from './doit/view.ts';
   import FrontGate from './front/FrontGate.svelte';
   import {
-    chapterFourUrl,
     frontGate,
     keepView,
+    keysChapterUrl,
     restoreHeldBy,
     restoreView,
     type Gate,
@@ -275,8 +276,8 @@
              under the fields names both as its description, so a screen reader that goes from
              control to control reads them where the reader says "these are practice words". -->
         <div id="{id}-rules" class="space-y-6">
-          <Notice kind="caution" text={t.exception} data-testid="restore-exception">
-            <OutLink class={LONE_LINK} href={chapterFourUrl(wallet.config.siteUrl, router.lang)} text={t.chapter} />
+          <Notice kind="caution" text={withChapters(t.exception, router.lang)} data-testid="restore-exception">
+            <OutLink class={LONE_LINK} href={keysChapterUrl(wallet.config.siteUrl, router.lang)} text={withChapters(t.chapter, router.lang)} />
           </Notice>
           <Notice data-testid="restore-kept">
             <div class="space-y-2">

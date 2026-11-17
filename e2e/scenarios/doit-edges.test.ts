@@ -72,7 +72,7 @@ const es = strings.doit.es;
 
 const DRILL = 'prove-the-backup';
 const SEED = 'the-seed';
-const CHAPTER_4 = '/journey/be-your-own-bank';
+const KEYS_PAGE = '/journey/be-your-own-bank';
 
 /** The words of a wallet made without a passkey, as its record keeps them. */
 function wordsOf(record: { mnemonic?: string }): string[] {
@@ -115,7 +115,7 @@ scenario(
 
     // -- Away in the same tab, as "Back to the chapter" goes; and from there to the step again: a new document. --
     await page.page.goto(`${there}/chapter`, { waitUntil: 'load' });
-    await page.page.goto(`${s.url}/do/${DRILL}?from=${CHAPTER_4}`, { waitUntil: 'load' });
+    await page.page.goto(`${s.url}/do/${DRILL}?from=${KEYS_PAGE}`, { waitUntil: 'load' });
     await untilParts(page, ['ticked', 'now', 'later', 'later']);
     assert.equal(await documentMark(page), null, 'the step opened from the chapter is a page loaded anew');
 
@@ -136,7 +136,7 @@ scenario(
     assert.equal(await countOf(page, 'step-done'), 0);
     assert.equal(await page.text('step-action'), en.actRestore);
     assert.deepEqual(await linksInOpenPart(page), ['/restore']);
-    assert.equal(await hrefOf(page, 'step-back'), `${site}${CHAPTER_4}#do-${DRILL}`, 'the way back does not say "done"');
+    assert.equal(await hrefOf(page, 'step-back'), `${site}${KEYS_PAGE}#do-${DRILL}`, 'the way back does not say "done"');
     assert.deepEqual(stepsCounted(s), {}, 'nothing was counted as done');
     assert.equal((await noteOf(page))?.steps[DRILL]?.doneAt, undefined);
     assert.ok(!page.statusLog().includes(saidDone(DRILL)), page.statusLog().join(' | '));
@@ -146,7 +146,7 @@ scenario(
     await restoreHere(page, words);
     await page.waitFor('overview-restored');
     await untilStrip(page, DRILL, 'done');
-    assert.equal(await hrefOf(page, 'strip-chapter'), `${site}${CHAPTER_4}#done=${DRILL}`);
+    assert.equal(await hrefOf(page, 'strip-chapter'), `${site}${KEYS_PAGE}#done=${DRILL}`);
     assert.deepEqual(stepsCounted(s), { [DRILL]: 1 });
 
     await ends(

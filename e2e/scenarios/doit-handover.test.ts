@@ -9,9 +9,9 @@
 // back to the step, and back to the chapter. These scenarios follow that
 // way back.
 //
-//   1. the whole detour: from the card of "Pass it on" in chapter 3 with no
-//      wallet, through "Hold some" and back, with the note read at every
-//      turn and every address read to the character
+//   1. the whole detour: from the card of "Pass it on" in the payment
+//      chapter with no wallet, through "Hold some" and back, with the note
+//      read at every turn and every address read to the character
 //   2. the reader who gave up half-way, and the other roads into a detour
 //   3. a done step's link back names every done step of its chapter, and
 //      which buttons a done step's card has by the way the reader came
@@ -34,6 +34,7 @@
 
 import assert from 'node:assert/strict';
 import type { EventBody, Lang, StepId } from '@learnbitcoin/practice-contract';
+import type { ChapterKey } from '../../app/src/lib/doit/steps.ts';
 import { fill } from '../../app/src/lib/format.ts';
 import { strings } from '../../app/src/strings/index.ts';
 import { freshRecord, scenario, testRecord, type OpenedPage } from './helpers.ts';
@@ -62,6 +63,7 @@ import {
   PROGRESS_KEY,
   act,
   begin,
+  chapterName,
   doIt,
   ends,
   endsTwo,
@@ -91,17 +93,17 @@ const es = strings.doit.es;
 const receive = strings.receive.en;
 
 /** The pages of the three chapters that have steps, as the main site writes its own addresses. */
-const CHAPTER_2 = '/journey/what-bitcoin-actually-is';
-const CHAPTER_3 = '/journey/how-bitcoin-works';
-const CHAPTER_3_ES = '/es/recorrido/como-funciona-bitcoin';
-const CHAPTER_4 = '/journey/be-your-own-bank';
-const CHAPTER_4_ES = '/es/recorrido/se-tu-propio-banco';
+const BITCOIN_PAGE = '/journey/what-bitcoin-actually-is';
+const PAYMENT_PAGE = '/journey/how-bitcoin-works';
+const PAYMENT_PAGE_ES = '/es/recorrido/como-funciona-bitcoin';
+const KEYS_PAGE = '/journey/be-your-own-bank';
+const KEYS_PAGE_ES = '/es/recorrido/se-tu-propio-banco';
 
-/** The line under a step's title: the chapter it belongs to, and beside it the link back while the step is not done. */
-const chapterLine = (number: 2 | 3 | 4, lang: Lang = 'en'): string => {
-  const t = lang === 'en' ? en : es;
-  return `${fill(t.chapterHeading, { number: String(number), title: t[`chapter_${number}`] })} ${t.back}`;
-};
+/**
+ * The line under a step's title: the chapter it belongs to, and beside it the link back while the step is not
+ * done. The chapter is named by its key: its number and its title are the app's table's (doit-helpers.ts).
+ */
+const chapterLine = (key: ChapterKey, lang: Lang = 'en'): string => `${chapterName(key, lang)} ${(lang === 'en' ? en : es).back}`;
 
 /** `Back to "Pass it on"`: the words on the button that leads back to a step. */
 const backTo = (id: StepId, lang: Lang = 'en'): string => fill((lang === 'en' ? en : es).backTo, { step: titleOf(id, lang) });
@@ -200,19 +202,19 @@ const stripLinks = (page: OpenedPage): Promise<StripLinks> =>
 const ON_ONE_LINE: StripLinks = { lines: [1, 1], level: true, beside: true, inside: true };
 
 scenario(
-  'From a card in chapter 3 with no wallet, through "Hold some" and back: the need remembers the step the reader came for, "Back to the chapter" leads to the card they pressed all through the detour, the done "Hold some" leads back to their step first, and "Pass it on" ends with the link back to chapter 3 and no "Next step"',
+  'From a card in the payment chapter with no wallet, through "Hold some" and back: the need remembers the step the reader came for, "Back to the chapter" leads to the card they pressed all through the detour, the done "Hold some" leads back to their step first, and "Pass it on" ends with the link back to the payment chapter and no "Next step"',
   { localOnly: true, timeout: 240_000 },
   async (s) => {
     const site = s.stack.config.siteUrl;
-    /** The card the reader pressed: "Pass it on", on the English page of chapter 3. */
-    const CARD = `${site}${CHAPTER_3}#do-pass-it-on`;
-    const byCard = { started: true as const, from: CHAPTER_3 };
+    /** The card the reader pressed: "Pass it on", on the English page of the payment chapter. */
+    const CARD = `${site}${PAYMENT_PAGE}#do-pass-it-on`;
+    const byCard = { started: true as const, from: PAYMENT_PAGE };
 
     // -- 1. The chapter's card leads here. The step needs a wallet, and there is none: it names "Hold some". --
-    const reader = await begin(s, `/do/pass-it-on?from=${CHAPTER_3}`);
+    const reader = await begin(s, `/do/pass-it-on?from=${PAYMENT_PAGE}`);
     const { page } = reader;
     await untilParts(page, ['blocked', 'later', 'later']);
-    assert.equal(await page.text('step-chapter'), chapterLine(3));
+    assert.equal(await page.text('step-chapter'), chapterLine('payment'));
     assert.equal(await hrefOf(page, 'step-back'), CARD);
     assert.equal(await attributeOf(page, 'step-need', 'data-reason'), 'no-wallet');
     assert.ok((await page.text('step-need')).startsWith(en['need_no-wallet']));
@@ -242,9 +244,9 @@ scenario(
     assert.equal(written[0]?.followedAt, note?.followedAt, 'the press notes no time');
     assert.equal(await addressOf(page), '/do/hold-some');
     assert.equal(documentsOf(page), documents, 'a move inside the app');
-    // "Hold some" belongs to chapter 2, and says so. Its link back leads to the chapter the reader left: to the card they pressed.
+    // "Hold some" belongs to the bitcoin chapter, and says so. Its link back leads to the chapter the reader left: to the card they pressed.
     assert.equal(await page.text('step-title'), titleOf('hold-some'));
-    assert.equal(await page.text('step-chapter'), chapterLine(2));
+    assert.equal(await page.text('step-chapter'), chapterLine('bitcoin'));
     assert.equal(await hrefOf(page, 'step-back'), CARD);
     assert.deepEqual(
       await page.page.$eval(hook('step-back'), (link) => [link.getAttribute('referrerpolicy'), link.getAttribute('rel'), link.getAttribute('target')]),
@@ -336,7 +338,7 @@ scenario(
       { hook: 'step-list', words: en.allSteps, href: '/do', main: false },
     ];
     assert.deepEqual(await waysOf(page), led);
-    assert.equal(await page.text('step-chapter'), fill(en.chapterHeading, { number: '2', title: en.chapter_2 }), 'the link back stands on the card now, not in the chapter\'s line');
+    assert.equal(await page.text('step-chapter'), chapterName('bitcoin'), 'the link back stands on the card now, not in the chapter\'s line');
 
     // -- 9. Back to "Pass it on": its first part is ticked, and the next one is the payment. The memory stays. --
     await page.click('step-led');
@@ -374,16 +376,16 @@ scenario(
     const paying = note?.steps['pass-it-on'];
     assert.deepEqual(paying, { ...byCard, tx: paid.txid, sentAt: paying?.sentAt, parts: { 1: true, 2: true } });
 
-    // -- 11. Back to the step. The block comes, and the step is done. Its card: the link back to chapter 3 as
-    //        the main button, now saying that the step is done, and "All steps". No "Next step": the reader came
-    //        from the chapter, reads on there, and meets the next card where the chapter has it. --
+    // -- 11. Back to the step. The block comes, and the step is done. Its card: the link back to the payment
+    //        chapter as the main button, now saying that the step is done, and "All steps". No "Next step": the
+    //        reader came from the chapter, reads on there, and meets the next card where the chapter has it. --
     await page.click('sent-step');
     await arrivesAt(page, '/do/pass-it-on');
     await untilParts(page, ['ticked', 'ticked', 'now']);
     await s.network.nextBlock();
     await page.waitFor('step-done');
     assert.deepEqual(await waysOf(page), [
-      { hook: 'step-back', words: en.back, href: `${site}${CHAPTER_3}#done=pass-it-on`, main: true },
+      { hook: 'step-back', words: en.back, href: `${site}${PAYMENT_PAGE}#done=pass-it-on`, main: true },
       { hook: 'step-list', words: en.allSteps, href: '/do', main: false },
     ]);
     note = await noteOf(page);
@@ -395,7 +397,7 @@ scenario(
       following: null,
       steps: {
         'hold-some': { started: true, doneAt: holdDone, parts: { 1: true, 2: true, 3: true, 4: true } },
-        'pass-it-on': { started: true, doneAt: passDone, from: CHAPTER_3, parts: { 1: true, 2: true, 3: true } },
+        'pass-it-on': { started: true, doneAt: passDone, from: PAYMENT_PAGE, parts: { 1: true, 2: true, 3: true } },
       },
     });
     assert.doesNotMatch((await noteText(page)) ?? '', /cameFor/);
@@ -408,7 +410,7 @@ scenario(
     await pickStep(page, 'hold-some');
     await page.waitFor('step-done');
     assert.deepEqual(await waysOf(page), [
-      { hook: 'step-back', words: en.back, href: `${site}${CHAPTER_2}#done=hold-some`, main: true },
+      { hook: 'step-back', words: en.back, href: `${site}${BITCOIN_PAGE}#done=hold-some`, main: true },
       { hook: 'step-list', words: en.allSteps, href: '/do', main: false },
     ]);
 
@@ -446,17 +448,17 @@ scenario(
 );
 
 scenario(
-  'The reader who gave up half-way, and the other roads into a detour: "Hold some" opened from the list on a later day still leads back to the chapter the reader left and to their step; opened by its own card it leads to chapter 2; with a way back of its own beside the memory it never leads to chapter 2 while the detour lasts; on a road of three it leads to the card the reader pressed; a reader from the list is remembered nothing, and their press ends what an earlier road left; a restart keeps the memory and "Forget my progress" takes it',
+  'The reader who gave up half-way, and the other roads into a detour: "Hold some" opened from the list on a later day still leads back to the chapter the reader left and to their step; opened by its own card it leads to the bitcoin chapter; with a way back of its own beside the memory it never leads to the bitcoin chapter while the detour lasts; on a road of three it leads to the card the reader pressed; a reader from the list is remembered nothing, and their press ends what an earlier road left; a restart keeps the memory and "Forget my progress" takes it',
   { timeout: 200_000 },
   async (s) => {
     const site = s.stack.config.siteUrl;
-    const CARD = `${site}${CHAPTER_3}#do-pass-it-on`;
+    const CARD = `${site}${PAYMENT_PAGE}#do-pass-it-on`;
     const HOURS = 3_600_000;
     const at = Date.now();
     const record = freshRecord();
     assert.ok(record.mnemonic !== undefined);
     const words = record.mnemonic.split(' ');
-    const byCard = { started: true as const, from: CHAPTER_3 };
+    const byCard = { started: true as const, from: PAYMENT_PAGE };
     const allTicked = { 1: true as const, 2: true as const, 3: true as const, 4: true as const };
     /** The reader closed the tab on "Wallet made": a wallet, "Hold some" one part in and sent there by "Pass it on". */
     const halfWay = (followedAt: number): string =>
@@ -480,7 +482,7 @@ scenario(
     assert.deepEqual([await hrefOf(page, 'strip-back'), await hrefOf(page, 'strip-chapter')], ['/do/hold-some', CARD]);
 
     // -- Another day: no strip. The Overview leads to the list, which shows both steps as started. "Hold some"
-    //    goes on from part 2, and its link back still leads to the card in chapter 3. --
+    //    goes on from part 2, and its link back still leads to the card in the payment chapter. --
     await openWith(halfWay(at - 25 * HOURS), '/wallet', 'overview-do-link');
     await page.settle();
     assert.equal(await stripOf(page), null);
@@ -491,13 +493,13 @@ scenario(
     await pickStep(page, 'hold-some');
     counted.push(view('/do/hold-some'));
     await untilParts(page, ['ticked', 'now', 'later', 'later']);
-    assert.equal(await page.text('step-chapter'), chapterLine(2));
+    assert.equal(await page.text('step-chapter'), chapterLine('bitcoin'));
     assert.equal(await hrefOf(page, 'step-back'), CARD);
     let note = await noteOf(page);
     assert.deepEqual([note?.following, note?.steps], ['hold-some', { 'hold-some': { started: true, cameFor: 'pass-it-on', parts: { 1: true } }, 'pass-it-on': byCard }]);
-    // In Spanish too: the reader came from the English page of chapter 3, and is led back to it.
+    // In Spanish too: the reader came from the English page of the payment chapter, and is led back to it.
     await openWith(halfWay(at), '/es/do/hold-some', 'step-parts');
-    assert.equal(await page.text('step-chapter'), chapterLine(2, 'es'));
+    assert.equal(await page.text('step-chapter'), chapterLine('bitcoin', 'es'));
     assert.equal(await hrefOf(page, 'step-back'), CARD);
 
     // -- Done on that later day: it ends with the way back to their step, and the link back to their chapter. --
@@ -509,22 +511,22 @@ scenario(
       { hook: 'step-list', words: en.allSteps, href: '/do', main: false },
     ]);
 
-    // -- Opened by its own card in chapter 2: that is the later road. Every link back leads to chapter 2, the
-    //    done card's main button too, and the memory is gone from the note. --
-    await openWith(halfWay(at), `/do/hold-some?from=${CHAPTER_2}`, 'step-parts');
-    assert.equal(await hrefOf(page, 'step-back'), `${site}${CHAPTER_2}#do-hold-some`);
+    // -- Opened by its own card in the bitcoin chapter: that is the later road. Every link back leads to the
+    //    bitcoin chapter, the done card's main button too, and the memory is gone from the note. --
+    await openWith(halfWay(at), `/do/hold-some?from=${BITCOIN_PAGE}`, 'step-parts');
+    assert.equal(await hrefOf(page, 'step-back'), `${site}${BITCOIN_PAGE}#do-hold-some`);
     note = await noteOf(page);
-    assert.deepEqual(note?.steps, { 'hold-some': { started: true, from: CHAPTER_2, parts: { 1: true } }, 'pass-it-on': byCard });
-    await openWith(noteFor({ following: null, steps: { 'hold-some': holdDone, 'pass-it-on': byCard } }), `/do/hold-some?from=${CHAPTER_2}`, 'step-done');
+    assert.deepEqual(note?.steps, { 'hold-some': { started: true, from: BITCOIN_PAGE, parts: { 1: true } }, 'pass-it-on': byCard });
+    await openWith(noteFor({ following: null, steps: { 'hold-some': holdDone, 'pass-it-on': byCard } }), `/do/hold-some?from=${BITCOIN_PAGE}`, 'step-done');
     assert.deepEqual(await waysOf(page), [
-      { hook: 'step-back', words: en.back, href: `${site}${CHAPTER_2}#done=hold-some`, main: true },
+      { hook: 'step-back', words: en.back, href: `${site}${BITCOIN_PAGE}#done=hold-some`, main: true },
       { hook: 'step-list', words: en.allSteps, href: '/do', main: false },
     ]);
     assert.equal((await noteOf(page))?.steps['hold-some']?.cameFor, undefined);
 
     // -- With a way back of its own beside the memory (its card was pressed on an earlier day, and a need sent
-    //    the reader here now): the detour decides. No link leads to chapter 2 while it lasts. --
-    const both = { started: true as const, from: CHAPTER_2, cameFor: 'pass-it-on' as const, parts: { 1: true as const } };
+    //    the reader here now): the detour decides. No link leads to the bitcoin chapter while it lasts. --
+    const both = { started: true as const, from: BITCOIN_PAGE, cameFor: 'pass-it-on' as const, parts: { 1: true as const } };
     await openWith(noteFor({ following: 'hold-some', followedAt: at, steps: { 'hold-some': both, 'pass-it-on': byCard } }), '/do/hold-some', 'step-parts');
     assert.equal(await hrefOf(page, 'step-back'), CARD);
     assert.deepEqual((await noteOf(page))?.steps['hold-some'], both, 'an opening without a way back leaves both');
@@ -540,10 +542,11 @@ scenario(
     ]);
 
     // -- A road of three, by the real links. The wallet holds no coins and has sent nothing. The reader presses
-    //    the card of "There are no balances" on the Spanish page of chapter 3: its need leads to "Pass it on",
-    //    whose need leads on to "Hold some". On all three, "Back to the chapter" leads to the card they pressed. --
-    const pressed = `${site}${CHAPTER_3_ES}#do-no-balances`;
-    await openWith(null, `/do/no-balances?from=${CHAPTER_3_ES}`, 'step-need-link');
+    //    the card of "There are no balances" on the Spanish page of the payment chapter: its need leads to "Pass
+    //    it on", whose need leads on to "Hold some". On all three, "Back to the chapter" leads to the card they
+    //    pressed. --
+    const pressed = `${site}${PAYMENT_PAGE_ES}#do-no-balances`;
+    await openWith(null, `/do/no-balances?from=${PAYMENT_PAGE_ES}`, 'step-need-link');
     assert.equal(await attributeOf(page, 'step-need', 'data-reason'), 'nothing-sent');
     assert.equal(await page.text('step-need-link'), fill(en.actStep, { step: titleOf('pass-it-on') }));
     assert.equal(await hrefOf(page, 'step-back'), pressed);
@@ -552,7 +555,7 @@ scenario(
     counted.push(view('/do/pass-it-on'));
     await page.waitFor('step-need-link');
     assert.equal(await attributeOf(page, 'step-need', 'data-reason'), 'no-coins');
-    assert.equal(await page.text('step-chapter'), chapterLine(3));
+    assert.equal(await page.text('step-chapter'), chapterLine('payment'));
     assert.equal(await hrefOf(page, 'step-back'), pressed);
     await page.click('step-need-link');
     await arrivesAt(page, '/do/hold-some');
@@ -564,7 +567,7 @@ scenario(
     assert.deepEqual(note?.steps, {
       'hold-some': { started: true, cameFor: 'pass-it-on', parts: { 1: true } },
       'pass-it-on': { started: true, cameFor: 'no-balances' },
-      'no-balances': { started: true, from: CHAPTER_3_ES },
+      'no-balances': { started: true, from: PAYMENT_PAGE_ES },
     });
     // And on the strip of "Hold some", on a wallet screen.
     await act(page, '/wallet/receive');
@@ -575,7 +578,7 @@ scenario(
     // -- A reader who opened "Pass it on" from the wallet's own list is remembered nothing: the press of the
     //    need's link writes no step, "Hold some" leads to its own chapter, and its strip has the one link. --
     await openWith(null, '/do/pass-it-on', 'step-need-link');
-    assert.equal(await hrefOf(page, 'step-back'), `${site}${CHAPTER_3}#do-pass-it-on`);
+    assert.equal(await hrefOf(page, 'step-back'), `${site}${PAYMENT_PAGE}#do-pass-it-on`);
     const writes = await watchNoteWrites(page);
     await page.click('step-need-link');
     await arrivesAt(page, '/do/hold-some');
@@ -584,7 +587,7 @@ scenario(
     for (const each of await writes()) assert.doesNotMatch(JSON.stringify(each), /cameFor/);
     note = await noteOf(page);
     assert.deepEqual(note?.steps, { 'hold-some': { started: true, parts: { 1: true } }, 'pass-it-on': { started: true } });
-    assert.equal(await hrefOf(page, 'step-back'), `${site}${CHAPTER_2}#do-hold-some`);
+    assert.equal(await hrefOf(page, 'step-back'), `${site}${BITCOIN_PAGE}#do-hold-some`);
     await act(page, '/wallet/receive');
     counted.push(view('/wallet/receive'));
     await untilStrip(page, 'hold-some', 'part');
@@ -592,16 +595,17 @@ scenario(
     assert.equal(await countOf(page, 'strip-chapter'), 0, 'the strip of a step from the list is as it was');
 
     // -- And such a press ends what an earlier road left. On an earlier day the reader pressed the card of "The
-    //    waiting room" in chapter 3, was sent to "Hold some" and gave up there. Now they open "Prove the backup"
-    //    from the wallet's own list. It needs coins too, and sends them to "Hold some". This trip did not begin
-    //    at a card: "Hold some" must not lead them back to "The waiting room", nor to chapter 3. --
+    //    waiting room" in the payment chapter, was sent to "Hold some" and gave up there. Now they open "Prove
+    //    the backup" from the wallet's own list. It needs coins too, and sends them to "Hold some". This trip did
+    //    not begin at a card: "Hold some" must not lead them back to "The waiting room", nor to the payment
+    //    chapter. --
     const gaveUp = noteFor({
       following: 'hold-some',
       followedAt: at - 25 * HOURS,
       steps: { 'hold-some': { started: true, cameFor: 'waiting-room', parts: { 1: true } }, 'waiting-room': byCard },
     });
     await openWith(gaveUp, '/do/hold-some', 'step-parts');
-    assert.equal(await hrefOf(page, 'step-back'), `${site}${CHAPTER_3}#do-waiting-room`, 'until that press, "Hold some" leads to the card of the earlier day');
+    assert.equal(await hrefOf(page, 'step-back'), `${site}${PAYMENT_PAGE}#do-waiting-room`, 'until that press, "Hold some" leads to the card of the earlier day');
     await openWith(gaveUp, '/do/prove-the-backup', 'step-need-link');
     assert.equal(await attributeOf(page, 'step-need', 'data-reason'), 'no-coins');
     assert.equal(await hrefOf(page, 'step-need-link'), '/do/hold-some');
@@ -619,8 +623,8 @@ scenario(
     assert.doesNotMatch((await noteText(page)) ?? '', /cameFor/);
     // So "Hold some" is the step of a reader from the list: its link back leads to its own chapter, and its
     // strip has the one link.
-    assert.equal(await page.text('step-chapter'), chapterLine(2));
-    assert.equal(await hrefOf(page, 'step-back'), `${site}${CHAPTER_2}#do-hold-some`);
+    assert.equal(await page.text('step-chapter'), chapterLine('bitcoin'));
+    assert.equal(await hrefOf(page, 'step-back'), `${site}${BITCOIN_PAGE}#do-hold-some`);
     await act(page, '/wallet/receive');
     counted.push(view('/wallet/receive'));
     await untilStrip(page, 'hold-some', 'part');
@@ -628,7 +632,7 @@ scenario(
     assert.equal(await countOf(page, 'strip-chapter'), 0);
     // The step of the earlier day keeps its own way back, for the day the reader presses its card again.
     await openWith(await noteText(page), '/do/waiting-room', 'step-need-link');
-    assert.equal(await hrefOf(page, 'step-back'), `${site}${CHAPTER_3}#do-waiting-room`);
+    assert.equal(await hrefOf(page, 'step-back'), `${site}${PAYMENT_PAGE}#do-waiting-room`);
 
     // -- "Start this step again" keeps the memory, as it keeps a way back. (The note says two parts are ticked;
     //    the wallet holds no coins, so started again only the first ticks: the restart shows.) --
@@ -654,7 +658,7 @@ scenario(
     await pickStep(page, 'hold-some');
     counted.push(view('/do/hold-some'));
     await untilParts(page, ['ticked', 'now', 'later', 'later']);
-    assert.equal(await hrefOf(page, 'step-back'), `${site}${CHAPTER_2}#do-hold-some`);
+    assert.equal(await hrefOf(page, 'step-back'), `${site}${BITCOIN_PAGE}#do-hold-some`);
     assert.deepEqual((await noteOf(page))?.steps, { 'hold-some': { started: true, parts: { 1: true } } });
 
     assert.deepEqual(stepsCounted(s), {});
@@ -693,13 +697,13 @@ scenario(
     };
     const next = (id: StepId, lang: Lang = 'en'): string => fill((lang === 'en' ? en : es).next, { step: titleOf(id, lang) });
 
-    // -- Chapter 3, all three steps done from the wallet's own list, one "Next step" after the other. The link
-    //    back of each names all three, the one being left first: the chapter marks every card, and brings
-    //    that first one into view. A reader from the list is still offered "Next step". --
+    // -- The payment chapter, all three steps done from the wallet's own list, one "Next step" after the other.
+    //    The link back of each names all three, the one being left first: the chapter marks every card, and
+    //    brings that first one into view. A reader from the list is still offered "Next step". --
     const fromList = noteFor({ following: null, steps: { 'pass-it-on': done(3, 3), 'no-balances': done(3, 2), 'waiting-room': done(3, 1) } });
     await openWith(fromList, '/do/pass-it-on', 'step-done');
     assert.deepEqual(await waysOf(page), [
-      { hook: 'step-back', words: en.back, href: `${site}${CHAPTER_3}#done=pass-it-on,no-balances,waiting-room`, main: true },
+      { hook: 'step-back', words: en.back, href: `${site}${PAYMENT_PAGE}#done=pass-it-on,no-balances,waiting-room`, main: true },
       { hook: 'step-next', words: next('no-balances'), href: '/do/no-balances', main: false },
       { hook: 'step-list', words: en.allSteps, href: '/do', main: false },
     ]);
@@ -708,7 +712,7 @@ scenario(
     counted.push(view('/do/no-balances'));
     await page.waitFor('step-done');
     assert.deepEqual(await waysOf(page), [
-      { hook: 'step-back', words: en.back, href: `${site}${CHAPTER_3}#done=no-balances,pass-it-on,waiting-room`, main: true },
+      { hook: 'step-back', words: en.back, href: `${site}${PAYMENT_PAGE}#done=no-balances,pass-it-on,waiting-room`, main: true },
       { hook: 'step-next', words: next('waiting-room'), href: '/do/waiting-room', main: false },
       { hook: 'step-list', words: en.allSteps, href: '/do', main: false },
     ]);
@@ -718,24 +722,24 @@ scenario(
     await page.waitFor('step-done');
     // The chapter's last step: no next one.
     assert.deepEqual(await waysOf(page), [
-      { hook: 'step-back', words: en.back, href: `${site}${CHAPTER_3}#done=waiting-room,pass-it-on,no-balances`, main: true },
+      { hook: 'step-back', words: en.back, href: `${site}${PAYMENT_PAGE}#done=waiting-room,pass-it-on,no-balances`, main: true },
       { hook: 'step-list', words: en.allSteps, href: '/do', main: false },
     ]);
     // A step of another chapter that is done is never named: "Hold some" beside them changes nothing.
     await openWith(noteFor({ following: null, steps: { 'hold-some': done(4, 9), 'pass-it-on': done(3, 3), 'waiting-room': done(3, 1), 'no-balances': { started: true } } }), '/do/waiting-room', 'step-done');
-    assert.equal(await hrefOf(page, 'step-back'), `${site}${CHAPTER_3}#done=waiting-room,pass-it-on`);
+    assert.equal(await hrefOf(page, 'step-back'), `${site}${PAYMENT_PAGE}#done=waiting-room,pass-it-on`);
     // And a step that is not done names its own card, whatever else is done.
     await page.goto('/do/no-balances');
     await page.waitFor('step-parts');
     counted.push(view('/do/no-balances'));
-    assert.equal(await hrefOf(page, 'step-back'), `${site}${CHAPTER_3}#do-no-balances`);
+    assert.equal(await hrefOf(page, 'step-back'), `${site}${PAYMENT_PAGE}#do-no-balances`);
 
     // -- Reached by its card, from the chapter's Spanish page: the same longer ending, on that page, and no
     //    "Next step". The main button is the way back to the chapter. --
-    const byCard = noteFor({ following: null, steps: { 'pass-it-on': done(3, 2, { from: CHAPTER_3_ES }), 'no-balances': done(3, 1) } });
+    const byCard = noteFor({ following: null, steps: { 'pass-it-on': done(3, 2, { from: PAYMENT_PAGE_ES }), 'no-balances': done(3, 1) } });
     await openWith(byCard, '/do/pass-it-on', 'step-done');
     assert.deepEqual(await waysOf(page), [
-      { hook: 'step-back', words: en.back, href: `${site}${CHAPTER_3_ES}#done=pass-it-on,no-balances`, main: true },
+      { hook: 'step-back', words: en.back, href: `${site}${PAYMENT_PAGE_ES}#done=pass-it-on,no-balances`, main: true },
       { hook: 'step-list', words: en.allSteps, href: '/do', main: false },
     ]);
     // The other step of that note was opened from the list: it keeps its "Next step".
@@ -743,28 +747,28 @@ scenario(
     await page.waitFor('step-done');
     counted.push(view('/do/no-balances'));
     assert.deepEqual((await waysOf(page)).map((way) => way.hook), ['step-back', 'step-next', 'step-list']);
-    assert.equal(await hrefOf(page, 'step-back'), `${site}${CHAPTER_3}#done=no-balances,pass-it-on`);
+    assert.equal(await hrefOf(page, 'step-back'), `${site}${PAYMENT_PAGE}#done=no-balances,pass-it-on`);
 
     // -- On the strip of a step that was done on another screen: the same address as on its card. --
-    const onStrip = noteFor({ following: 'no-balances', followedAt: at, steps: { 'pass-it-on': done(3, 2), 'no-balances': done(3, 0, { from: CHAPTER_3 }), 'waiting-room': { started: true } } });
+    const onStrip = noteFor({ following: 'no-balances', followedAt: at, steps: { 'pass-it-on': done(3, 2), 'no-balances': done(3, 0, { from: PAYMENT_PAGE }), 'waiting-room': { started: true } } });
     await openWith(onStrip, '/', 'home-do-link');
     await untilStrip(page, 'no-balances', 'done');
-    assert.deepEqual([await hrefOf(page, 'strip-back'), await hrefOf(page, 'strip-chapter')], ['/do/no-balances', `${site}${CHAPTER_3}#done=no-balances,pass-it-on`]);
+    assert.deepEqual([await hrefOf(page, 'strip-back'), await hrefOf(page, 'strip-chapter')], ['/do/no-balances', `${site}${PAYMENT_PAGE}#done=no-balances,pass-it-on`]);
 
     // -- A detour inside one chapter, in Spanish. The reader pressed the card "Comprueba el respaldo" on the
-    //    Spanish page of chapter 4, and the line above its three word fields led to "La semilla". While that
-    //    step is not done, its link back leads to the card they pressed. --
-    const drill = { started: true as const, from: CHAPTER_4_ES };
+    //    Spanish page of the keys chapter, and the line above its three word fields led to "La semilla". While
+    //    that step is not done, its link back leads to the card they pressed. --
+    const drill = { started: true as const, from: KEYS_PAGE_ES };
     await openWith(noteFor({ following: 'the-seed', followedAt: at, steps: { 'the-seed': { started: true, cameFor: 'prove-the-backup' }, 'prove-the-backup': drill } }), '/es/do/the-seed', 'step-parts');
-    assert.equal(await page.text('step-chapter'), chapterLine(4, 'es'));
-    assert.equal(await hrefOf(page, 'step-back'), `${site}${CHAPTER_4_ES}#do-prove-the-backup`);
+    assert.equal(await page.text('step-chapter'), chapterLine('keys', 'es'));
+    assert.equal(await hrefOf(page, 'step-back'), `${site}${KEYS_PAGE_ES}#do-prove-the-backup`);
     // Done: it leads back to the reader's step first, by name. The link back to the chapter is second, and
     // marks this step on the page the reader left, which holds its card too.
     const seedDone = noteFor({ following: null, steps: { 'the-seed': done(3, 0, { cameFor: 'prove-the-backup', wallet: record.fingerprint }), 'prove-the-backup': drill } });
     await openWith(seedDone, '/es/do/the-seed', 'step-done');
     assert.deepEqual(await waysOf(page), [
       { hook: 'step-led', words: backTo('prove-the-backup', 'es'), href: '/es/do/prove-the-backup', main: true },
-      { hook: 'step-back', words: es.back, href: `${site}${CHAPTER_4_ES}#done=the-seed`, main: false },
+      { hook: 'step-back', words: es.back, href: `${site}${KEYS_PAGE_ES}#done=the-seed`, main: false },
       { hook: 'step-list', words: es.allSteps, href: '/es/do', main: false },
     ]);
     assert.equal(backTo('prove-the-backup', 'es'), 'Volver a "Comprueba el respaldo"');
@@ -774,18 +778,18 @@ scenario(
     counted.push(view('/do/the-seed'));
     assert.deepEqual(await waysOf(page), [
       { hook: 'step-led', words: backTo('prove-the-backup'), href: '/do/prove-the-backup', main: true },
-      { hook: 'step-back', words: en.back, href: `${site}${CHAPTER_4_ES}#done=the-seed`, main: false },
+      { hook: 'step-back', words: en.back, href: `${site}${KEYS_PAGE_ES}#done=the-seed`, main: false },
       { hook: 'step-list', words: en.allSteps, href: '/do', main: false },
     ]);
-    // And in chapter 3: "Pass it on", which a need of "There are no balances" led to, with "The waiting room" done as well.
+    // And in the payment chapter: "Pass it on", which a need of "There are no balances" led to, with "The waiting room" done as well.
     const inside = noteFor({
       following: null,
-      steps: { 'pass-it-on': done(3, 0, { cameFor: 'no-balances' }), 'no-balances': { started: true, from: CHAPTER_3 }, 'waiting-room': done(3, 4) },
+      steps: { 'pass-it-on': done(3, 0, { cameFor: 'no-balances' }), 'no-balances': { started: true, from: PAYMENT_PAGE }, 'waiting-room': done(3, 4) },
     });
     await openWith(inside, '/do/pass-it-on', 'step-done');
     assert.deepEqual(await waysOf(page), [
       { hook: 'step-led', words: backTo('no-balances'), href: '/do/no-balances', main: true },
-      { hook: 'step-back', words: en.back, href: `${site}${CHAPTER_3}#done=pass-it-on,waiting-room`, main: false },
+      { hook: 'step-back', words: en.back, href: `${site}${PAYMENT_PAGE}#done=pass-it-on,waiting-room`, main: false },
       { hook: 'step-list', words: en.allSteps, href: '/do', main: false },
     ]);
 
@@ -804,10 +808,10 @@ scenario(
     assert.ok(record.mnemonic !== undefined);
     const words = record.mnemonic.split(' ');
     const counted: EventBody[] = [];
-    const card = `${site}${CHAPTER_3}#do-no-balances`;
+    const card = `${site}${PAYMENT_PAGE}#do-no-balances`;
 
     // -- A step under way that was reached by its card: on every screen but its own, both ways back. --
-    const byCard = noteFor({ following: 'no-balances', followedAt: at, steps: { 'no-balances': { started: true, from: CHAPTER_3 } } });
+    const byCard = noteFor({ following: 'no-balances', followedAt: at, steps: { 'no-balances': { started: true, from: PAYMENT_PAGE } } });
     const reader = await begin(s, '/wallet', { record, storage: { [PROGRESS_KEY]: byCard } });
     const { page } = reader;
     counted.push(view('/wallet'));
@@ -863,13 +867,13 @@ scenario(
     const byNeed = noteFor({
       following: 'hold-some',
       followedAt: at,
-      steps: { 'hold-some': { started: true, cameFor: 'pass-it-on', parts: { 1: true } }, 'pass-it-on': { started: true, from: CHAPTER_3_ES } },
+      steps: { 'hold-some': { started: true, cameFor: 'pass-it-on', parts: { 1: true } }, 'pass-it-on': { started: true, from: PAYMENT_PAGE_ES } },
     });
     await openWith(byNeed, '/wallet/receive', 'receive-address');
-    await both('/wallet/receive', 'hold-some', `${site}${CHAPTER_3_ES}#do-pass-it-on`);
+    await both('/wallet/receive', 'hold-some', `${site}${PAYMENT_PAGE_ES}#do-pass-it-on`);
     await toSection(page, '/wallet/settings');
     counted.push(view('/wallet/settings'));
-    await both('/wallet/settings', 'hold-some', `${site}${CHAPTER_3_ES}#do-pass-it-on`);
+    await both('/wallet/settings', 'hold-some', `${site}${PAYMENT_PAGE_ES}#do-pass-it-on`);
 
     // -- A step opened from the wallet's own list: the one link, as it was. --
     await openWith(noteFor({ following: 'no-balances', followedAt: at, steps: { 'no-balances': { started: true } } }), '/wallet/receive', 'receive-address');
@@ -881,7 +885,7 @@ scenario(
     const doneFromList = noteFor({ following: 'no-balances', followedAt: at, steps: { 'no-balances': { started: true, doneAt: at, parts: { 1: true, 2: true, 3: true } } } });
     await openWith(doneFromList, '/wallet/receive', 'receive-address');
     await untilStrip(page, 'no-balances', 'done');
-    assert.deepEqual([await hrefOf(page, 'strip-back'), await hrefOf(page, 'strip-chapter')], ['/do/no-balances', `${site}${CHAPTER_3}#done=no-balances`]);
+    assert.deepEqual([await hrefOf(page, 'strip-back'), await hrefOf(page, 'strip-chapter')], ['/do/no-balances', `${site}${PAYMENT_PAGE}#done=no-balances`]);
 
     // -- The footer's link to the main site. It opens the main site's home page in a new tab, and its words say
     //    so: it does not read as the way back. For a reader who follows no step it is the same, and there is no strip. --
@@ -917,13 +921,13 @@ scenario(
         const t = lang === 'en' ? en : es;
         const what = `${width} px, ${lang}`;
         // With a wallet that holds no coins: "Pass it on", reached by its card, says what is missing first.
-        const under = noteFor({ following: 'pass-it-on', followedAt: at, steps: { 'pass-it-on': { started: true, from: CHAPTER_3_ES } } });
+        const under = noteFor({ following: 'pass-it-on', followedAt: at, steps: { 'pass-it-on': { started: true, from: PAYMENT_PAGE_ES } } });
         await openWith(under, `${prefix}/wallet/receive`, 'receive-address');
         const strip = await untilStrip(page, 'pass-it-on', 'need');
         // The narrow form: the step, what is missing in the place of "1 of 3", and the two links.
         assert.ok(strip.text.startsWith(`${titleOf('pass-it-on', lang)} ${needs[lang]}`), `${what}: ${strip.text}`);
         assert.deepEqual([await page.text('strip-back'), await page.text('strip-chapter')], [t.stripBack, t.back], what);
-        assert.equal(await hrefOf(page, 'strip-chapter'), `${site}${CHAPTER_3_ES}#do-pass-it-on`, what);
+        assert.equal(await hrefOf(page, 'strip-chapter'), `${site}${PAYMENT_PAGE_ES}#do-pass-it-on`, what);
         assert.deepEqual(await stripLinks(page), ON_ONE_LINE, `${what}, with a wallet`);
         assert.equal(await page.sidewaysScroll(), 0, `${what}, with a wallet: the page scrolls sideways`);
       }
@@ -931,7 +935,7 @@ scenario(
     // Without a wallet: "Hold some", which a need of "Pass it on" sent the reader to, on Home.
     await page.goto('/robots.txt');
     await page.store(RECORD_KEY, null);
-    const sent = noteFor({ following: 'hold-some', followedAt: at, steps: { 'hold-some': { started: true, cameFor: 'pass-it-on' }, 'pass-it-on': { started: true, from: CHAPTER_3 } } });
+    const sent = noteFor({ following: 'hold-some', followedAt: at, steps: { 'hold-some': { started: true, cameFor: 'pass-it-on' }, 'pass-it-on': { started: true, from: PAYMENT_PAGE } } });
     for (const width of [320, 375]) {
       await page.page.setViewport({ width, height: 667, deviceScaleFactor: 1 });
       for (const lang of ['en', 'es'] as const) {
@@ -941,7 +945,7 @@ scenario(
         await openWith(sent, home, 'home-do-link');
         await untilStrip(page, 'hold-some', 'part');
         assert.deepEqual([await page.text('strip-back'), await page.text('strip-chapter')], [t.stripBack, t.back], what);
-        assert.equal(await hrefOf(page, 'strip-chapter'), `${site}${CHAPTER_3}#do-pass-it-on`, what);
+        assert.equal(await hrefOf(page, 'strip-chapter'), `${site}${PAYMENT_PAGE}#do-pass-it-on`, what);
         assert.deepEqual(await stripLinks(page), ON_ONE_LINE, `${what}, without a wallet`);
         assert.equal(await page.sidewaysScroll(), 0, `${what}, without a wallet: the page scrolls sideways`);
       }
@@ -1316,7 +1320,7 @@ scenario(
     //    ("There are no balances": making a wallet ticks no part of it.) --
     const DAY_AGO = Date.now() - 25 * 3_600_000;
     await empty();
-    await page.store(PROGRESS_KEY, noteFor({ following: 'no-balances', followedAt: DAY_AGO, steps: { 'no-balances': { started: true, from: CHAPTER_3 } } }));
+    await page.store(PROGRESS_KEY, noteFor({ following: 'no-balances', followedAt: DAY_AGO, steps: { 'no-balances': { started: true, from: PAYMENT_PAGE } } }));
     await page.goto('/new');
     await page.waitFor('create-words');
     counted.push(view('/new'));
@@ -1327,13 +1331,13 @@ scenario(
     counted.push(view('/wallet'));
     await page.settle();
     assert.equal(await stripOf(page), null);
-    assert.deepEqual((await noteOf(page))?.steps, { 'no-balances': { started: true, from: CHAPTER_3 } });
+    assert.deepEqual((await noteOf(page))?.steps, { 'no-balances': { started: true, from: PAYMENT_PAGE } });
 
     // -- "Hold some", last followed as long ago: no strip on Create either. But making the wallet is its first
     //    part, and a part of the followed step ticked is that step followed again: the strip is back on
     //    "Wallet made", and the button leads to the step it shows. --
     await empty();
-    await page.store(PROGRESS_KEY, noteFor({ following: 'hold-some', followedAt: DAY_AGO, steps: { 'hold-some': { started: true, from: CHAPTER_2 } } }));
+    await page.store(PROGRESS_KEY, noteFor({ following: 'hold-some', followedAt: DAY_AGO, steps: { 'hold-some': { started: true, from: BITCOIN_PAGE } } }));
     await page.goto('/new');
     await page.waitFor('create-words');
     counted.push(view('/new'));
@@ -1346,7 +1350,7 @@ scenario(
     await arrivesAt(page, '/do/hold-some');
     counted.push(view('/do/hold-some'));
     await untilParts(page, ['ticked', 'now', 'later', 'later']);
-    assert.deepEqual((await noteOf(page))?.steps, { 'hold-some': { started: true, from: CHAPTER_2, parts: { 1: true } } });
+    assert.deepEqual((await noteOf(page))?.steps, { 'hold-some': { started: true, from: BITCOIN_PAGE, parts: { 1: true } } });
 
     assert.deepEqual(stepsCounted(s), {});
     await ends(s, reader, counted, {
@@ -1404,15 +1408,16 @@ scenario(
     };
 
     // -- 1. The drill's link to "The seed", pressed from the keyboard. The reader came from the Spanish page of
-    //       chapter 4 and pressed the card "Comprueba el respaldo". Their wallet holds coins, and they have no
-    //       paper copy of its words: the line over the three word fields names the step where one is made. --
+    //       the keys chapter and pressed the card "Comprueba el respaldo". Their wallet holds coins, and they
+    //       have no paper copy of its words: the line over the three word fields names the step where one is
+    //       made. --
     const record = freshRecord();
     assert.ok(record.mnemonic !== undefined);
     const words = record.mnemonic.split(' ');
     const funding = s.standIn.fund(record.firstAddress, 100_000);
-    const card = `${site}${CHAPTER_4_ES}#do-prove-the-backup`;
-    const drill = { started: true as const, from: CHAPTER_4_ES };
-    const reader = await begin(s, `/es/do/prove-the-backup?from=${CHAPTER_4_ES}`, { record });
+    const card = `${site}${KEYS_PAGE_ES}#do-prove-the-backup`;
+    const drill = { started: true as const, from: KEYS_PAGE_ES };
+    const reader = await begin(s, `/es/do/prove-the-backup?from=${KEYS_PAGE_ES}`, { record });
     const { page } = reader;
     const counted: EventBody[] = [view('/es/do/prove-the-backup')];
     await page.waitFor('step-paper-link');
@@ -1439,7 +1444,7 @@ scenario(
     assert.equal(await addressOf(page), '/es/do/the-seed');
     // "La semilla" belongs to the same chapter. Its link back leads to the card the reader pressed, on the
     // step's own screen and on the strip of the wallet's screens.
-    assert.equal(await page.text('step-chapter'), chapterLine(4, 'es'));
+    assert.equal(await page.text('step-chapter'), chapterLine('keys', 'es'));
     assert.equal(await hrefOf(page, 'step-back'), card);
     await act(page, '/es/wallet/backup');
     counted.push(view('/es/wallet/backup'));
@@ -1450,11 +1455,11 @@ scenario(
     //       step it leads to is named the step the reader came for, and nothing else changes: this tab stays
     //       where it is, "The seed" is not started, and the drill is still the step that is followed. --
     for (const how of USES) {
-      const path = `/do/prove-the-backup?from=${CHAPTER_4}`;
+      const path = `/do/prove-the-backup?from=${KEYS_PAGE}`;
       const { before, after } = await fresh(page, path, 'step-paper-link', how);
       counted.push(view('/do/prove-the-backup'));
-      assert.deepEqual(before?.steps, { 'prove-the-backup': { started: true, from: CHAPTER_4 } }, how);
-      assert.deepEqual(after, { ...before, steps: { 'the-seed': { cameFor: 'prove-the-backup' }, 'prove-the-backup': { started: true, from: CHAPTER_4 } } }, how);
+      assert.deepEqual(before?.steps, { 'prove-the-backup': { started: true, from: KEYS_PAGE } }, how);
+      assert.deepEqual(after, { ...before, steps: { 'the-seed': { cameFor: 'prove-the-backup' }, 'prove-the-backup': { started: true, from: KEYS_PAGE } } }, how);
     }
 
     // -- 3. The button of a need. A reader with no wallet opens "Pass it on" from the wallet's own list: that
@@ -1470,11 +1475,11 @@ scenario(
       assert.equal(await noteText(first), fromList, `${how}: nothing is written for a reader from the list`);
       assert.equal(await addressOf(first), '/do/pass-it-on');
     }
-    // The reader who pressed the card of "Pass it on" in chapter 3: each way writes the step they came for.
-    const CARD = `${site}${CHAPTER_3}#do-pass-it-on`;
-    const byCard = { started: true as const, from: CHAPTER_3 };
+    // The reader who pressed the card of "Pass it on" in the payment chapter: each way writes the step they came for.
+    const CARD = `${site}${PAYMENT_PAGE}#do-pass-it-on`;
+    const byCard = { started: true as const, from: PAYMENT_PAGE };
     for (const how of USES) {
-      const { before, after } = await fresh(first, `/do/pass-it-on?from=${CHAPTER_3}`, 'step-need-link', how);
+      const { before, after } = await fresh(first, `/do/pass-it-on?from=${PAYMENT_PAGE}`, 'step-need-link', how);
       cardCounted.push(view('/do/pass-it-on'));
       assert.deepEqual(before?.steps, { 'pass-it-on': byCard }, how);
       assert.deepEqual(after, { ...before, steps: { 'hold-some': { cameFor: 'pass-it-on' }, 'pass-it-on': byCard } }, how);
@@ -1482,13 +1487,13 @@ scenario(
 
     // -- 4. The tab that the middle button opens: another tab of the same browser, at the link's address. It
     //       finds the step the reader came for in the note. "Hold some" there leads back to the card they
-    //       pressed in chapter 3, on its own screen and on the strip, and not to chapter 2. --
+    //       pressed in the payment chapter, on its own screen and on the strip, and not to the bitcoin chapter. --
     assert.equal(await hrefOf(first, 'step-need-link'), '/do/hold-some');
     const tab = await standBy(s, { context: first.context, timeout: 30_000 });
     const opened: Reader = { page: tab, requests: watchEventRequests(tab) };
     await tab.goto('/do/hold-some');
     await untilParts(tab, ['now', 'later', 'later', 'later']);
-    assert.equal(await tab.text('step-chapter'), chapterLine(2));
+    assert.equal(await tab.text('step-chapter'), chapterLine('bitcoin'));
     assert.equal(await hrefOf(tab, 'step-back'), CARD);
     note = await noteOf(tab);
     assert.deepEqual([note?.following, note?.steps], ['hold-some', { 'hold-some': { started: true, cameFor: 'pass-it-on' }, 'pass-it-on': byCard }]);

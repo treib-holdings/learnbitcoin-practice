@@ -149,7 +149,7 @@
       {/if}
     {/if}
 
-    <!-- The steps that go with the main site's chapters are done in this wallet: one line, and the way to them. -->
+    <!-- This wallet has steps that go with some chapters of the main site's Journey: one line, and the way to them. -->
     <p class="text-pretty text-sm leading-relaxed text-ink-600" data-testid="overview-do">
       {d.overviewLine}
       <TextLink href={router.link({ name: 'do' })} data-testid="overview-do-link">{d.overviewLink}</TextLink>
