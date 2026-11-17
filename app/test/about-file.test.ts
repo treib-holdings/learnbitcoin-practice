@@ -257,7 +257,7 @@ test('the dist guard passes the build as it is, and fails it without about.txt, 
     cpSync(DIST, copy, { recursive: true });
     const whole = guard(copy);
     assert.equal(whole.code, 0, whole.said);
-    assert.match(whole.said, /^ok: .* passes the dist guard \(1 script file, 1 stylesheet, nothing inline, _headers, licenses\.md, about\.txt\)\s*$/);
+    assert.match(whole.said, /^ok: .* passes the dist guard \(1 script file, 1 stylesheet, nothing inline, _headers, licenses\.md, about\.txt, the share picture\)\s*$/);
 
     // One byte changed behind the mark, anywhere: an older copy of the table is not the table.
     const changed = Buffer.from(bytes);

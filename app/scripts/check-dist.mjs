@@ -146,6 +146,30 @@ if (!existsSync(join(dist, 'licenses.md')) || statSync(join(dist, 'licenses.md')
   problems.push('licenses.md is missing or empty (build.license in vite.config.ts writes it)');
 }
 
+// The picture a link preview shows. index.html names it by its whole address on the wallet's own host
+// (og:image), and a site that makes previews fetches it from there: so the file has to be in the build,
+// under the path of that address, and it has to be a PNG, as the page says it is.
+const shareImage = tags.find((tag) => tag.name === 'meta' && tag.attrs.get('property') === 'og:image')?.attrs.get('content');
+if (shareImage === undefined) {
+  problems.push('index.html names no share picture (a <meta property="og:image">): a link to the wallet would show no card');
+} else {
+  let sharePath = null;
+  try {
+    sharePath = new URL(shareImage).pathname;
+  } catch {
+    problems.push(`index.html: the share picture's address is not a whole address: ${shareImage}`);
+  }
+  if (sharePath !== null) {
+    const shareFile = join(dist, sharePath);
+    const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    if (!existsSync(shareFile) || !statSync(shareFile).isFile()) {
+      problems.push(`index.html names ${shareImage} as its share picture, and the build holds no ${sharePath.slice(1)}`);
+    } else if (!readFileSync(shareFile).subarray(0, PNG.length).equals(PNG)) {
+      problems.push(`${sharePath.slice(1)} is not a PNG file, and index.html says the share picture is one`);
+    }
+  }
+}
+
 // The About page's string table, as a text file. The page's <noscript> lines send a reader without
 // JavaScript there for what the wallet keeps, sends and counts: so it has to be in the build, and
 // behind its first three bytes it has to be the table itself, byte for byte, never an older copy of it.
@@ -175,4 +199,4 @@ if (!existsSync(join(dist, 'about.txt'))) {
 }
 
 if (problems.length > 0) fail();
-console.log(`ok: ${dist} passes the dist guard (1 script file, 1 stylesheet, nothing inline, _headers, licenses.md, about.txt)`);
+console.log(`ok: ${dist} passes the dist guard (1 script file, 1 stylesheet, nothing inline, _headers, licenses.md, about.txt, the share picture)`);
