@@ -12,7 +12,8 @@ language.
 
 **Status:** the practice network runs. The wallet app in this repository is
 built and tested against a stand-in of that network. It is live at
-practice.learnbitcoin.com, and not yet linked from the main site.
+practice.learnbitcoin.com. The Journey on LearnBitcoin.com opens its steps
+from "Do it" cards, and the site's Learn menu links the wallet.
 Six guided "Do it" steps (under `/do`) take a reader through what the site's
 Journey teaches: hold some, pass it on, see that there are no balances, wait
 for a block, write down the 12 words, prove the backup. Nothing here holds value.
